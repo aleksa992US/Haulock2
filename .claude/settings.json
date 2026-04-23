@@ -8,7 +8,11 @@
       "Bash(git push *)",
       "Bash(git fetch *)",
       "Bash(gh auth *)",
-      "Bash(file public/*.png)"
+      "Bash(file public/*.png)",
+      "Bash(xxd)",
+      "Bash(pbcopy)",
+      "Bash(pbpaste)",
+      "Bash(echo \"Length in clipboard: $\\(pbpaste)"
     ]
   }
 }

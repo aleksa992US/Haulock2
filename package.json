@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
+    "@stripe/react-stripe-js": "^6.2.0",
+    "@stripe/stripe-js": "^9.3.1",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.104.1",
     "disposable-email-domains": "^1.0.62",
@@ -21,7 +23,8 @@
     "next": "14.2.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "resend": "^6.12.2"
+    "resend": "^6.12.2",
+    "stripe": "^22.0.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",

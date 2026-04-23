@@ -51,7 +51,10 @@ export async function ocrDocument(
   if (!projectId || !processorId) throw new Error('Document AI env vars are not set');
 
   const auth = getAuthClient();
-  const token = await auth.getAccessToken();
+  // google-auth-library v10+ returns { token, res } — not a plain string.
+  // Normalise so `Bearer <token>` is always a real OAuth access token.
+  const tokenResp = await auth.getAccessToken();
+  const token = typeof tokenResp === 'string' ? tokenResp : tokenResp?.token;
   if (!token) throw new Error('Failed to get Google access token');
 
   const url = `https://${location}-documentai.googleapis.com/v1/projects/${projectId}/locations/${location}/processors/${processorId}:process`;
@@ -72,7 +75,16 @@ export async function ocrDocument(
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => '');
-    throw new Error(`Document AI ${res.status}: ${errBody.slice(0, 400)}`);
+    // Log the full body server-side so we can diagnose auth errors from logs.
+    console.error('[google-docai] Document AI error:', {
+      status: res.status,
+      projectId,
+      location,
+      processorId,
+      url,
+      body: errBody,
+    });
+    throw new Error(`Document AI ${res.status}: ${errBody.slice(0, 2000)}`);
   }
 
   const data = await res.json();

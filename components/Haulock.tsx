@@ -464,11 +464,12 @@ function Landing({ navigate }: any) {
             <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Pricing</div>
             <h2 className="text-4xl md:text-6xl serif italic leading-tight text-white">One prevented scam pays for 3 years.</h2>
           </div>
-          <div className="grid md:grid-cols-3 gap-5 max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-7xl mx-auto">
             {Object.values(PLANS).map((p) => (
-              <PriceCard key={p.id} tier={p.label} price={p.price} cta={p.id === 'free' ? 'Start free' : `Choose ${p.label}`} desc={p.desc} popular={p.popular} features={p.features} onClick={() => navigate('signup')} />
+              <PriceCard key={p.id} tier={p.label} price={p.price} annual={p.priceAnnual} cta={p.id === 'free' ? 'Start free' : `Choose ${p.label}`} desc={p.desc} popular={p.popular} features={p.features} onClick={() => navigate('signup')} />
             ))}
           </div>
+          <div className="text-center mt-6 text-white/55 text-xs mono">All paid plans: monthly or annual (save 2 months). Cancel anytime.</div>
         </div>
       </section>
 
@@ -502,7 +503,7 @@ function Landing({ navigate }: any) {
           <button onClick={() => navigate('signup')} className="group px-10 py-5 bg-[#0B1E3F] text-white text-lg font-medium rounded-full hover:bg-[#0B1E3F]/90 transition inline-flex items-center gap-2 card-shadow-lg">
             Check any broker or carrier free <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition" />
           </button>
-          <div className="mt-6 text-sm text-[#0B1E3F]/50">No credit card required. 5 free lookups / month.</div>
+          <div className="mt-6 text-sm text-[#0B1E3F]/50">No credit card required. 3 free lookups / month.</div>
         </div>
       </section>
 
@@ -770,16 +771,18 @@ function FeatureCard({ icon: Icon, iconBg, title, desc, stat, statLabel }: any) 
   );
 }
 
-function PriceCard({ tier, price, desc, features, popular, cta, onClick }: any) {
+function PriceCard({ tier, price, annual, desc, features, popular, cta, onClick }: any) {
   if (popular) {
     return (
-      <div className="relative p-7 rounded-2xl border bg-white text-[#0B1E3F] border-[#FF6B35] scale-105 card-shadow-lg">
+      <div className="relative p-7 rounded-2xl border bg-white text-[#0B1E3F] border-[#FF6B35] lg:scale-105 card-shadow-lg">
         <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#FF6B35] text-white text-xs mono uppercase tracking-wider rounded-full">Most popular</div>
         <div className="text-sm uppercase tracking-wider mb-2 text-[#0B1E3F]/60">{tier}</div>
-        <div className="flex items-baseline gap-1 mb-2">
+        <div className="flex items-baseline gap-1">
           <div className="serif italic text-5xl text-[#0B1E3F]">{price}</div>
           <div className="text-[#0B1E3F]/60">/mo</div>
         </div>
+        {annual && annual !== '$0' && <div className="text-xs mono text-[#16A34A] mb-2">or {annual}/yr</div>}
+        {(!annual || annual === '$0') && <div className="mb-2" />}
         <div className="text-sm mb-6 text-[#0B1E3F]/70">{desc}</div>
         <button onClick={onClick} className="w-full py-3 rounded-full font-medium mb-6 transition bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90">{cta}</button>
         <div className="space-y-2.5">
@@ -795,10 +798,12 @@ function PriceCard({ tier, price, desc, features, popular, cta, onClick }: any) 
   return (
     <div className="relative p-7 rounded-2xl border bg-white/10 border-white/20 text-white backdrop-blur">
       <div className="text-sm uppercase tracking-wider mb-2 text-white/70">{tier}</div>
-      <div className="flex items-baseline gap-1 mb-2">
+      <div className="flex items-baseline gap-1">
         <div className="serif italic text-5xl text-white">{price}</div>
         <div className="text-white/70">/mo</div>
       </div>
+      {annual && annual !== '$0' && <div className="text-xs mono text-[#FF6B35] mb-2">or {annual}/yr</div>}
+      {(!annual || annual === '$0') && <div className="mb-2" />}
       <div className="text-sm mb-6 text-white/80">{desc}</div>
       <button onClick={onClick} className="w-full py-3 rounded-full font-medium mb-6 transition bg-white text-[#0B1E3F] hover:bg-white/90">{cta}</button>
       <div className="space-y-2.5">
@@ -1067,7 +1072,7 @@ function Signup({ navigate, loginAs }: any) {
   };
 
   return (
-    <AuthShell title="Start free" subtitle="5 broker lookups per month. No credit card required." navigate={navigate}>
+    <AuthShell title="Start free" subtitle="3 broker / carrier lookups per month. No credit card required." navigate={navigate}>
       <form onSubmit={onSubmit} className="space-y-4">
         <Field label="Full name" name="name" placeholder="Your name" autoComplete="name" />
         <Field label="Company name" name="company" placeholder="Your trucking company" autoComplete="organization" />
@@ -1198,11 +1203,40 @@ function Pricing({ navigate }: any) {
 
 function Plan({ user, setPlan }: any) {
   const [pending, setPending] = useState<string | null>(null);
+  const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly');
+  const [error, setError] = useState<string | null>(null);
   const current = (user?.plan || '').toLowerCase();
+  const hasStripeCustomer = Boolean(user?.id && (user?.stripeCustomerId || user?.planChangedAt));
   const tiers = Object.values(PLANS);
+
+  const openPortal = async () => {
+    setError(null);
+    try {
+      const r = await fetch('/api/stripe/portal', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Portal failed (${r.status})`);
+      if (j.url) window.location.href = j.url;
+    } catch (err: any) {
+      setError(err?.message || 'Could not open billing portal');
+    }
+  };
+
   const choose = async (id: string) => {
-    setPending(id);
-    try { await setPlan(id); } finally { setPending(null); }
+    setError(null);
+    if (id === 'free') {
+      // Downgrades on a paid plan go through Stripe Portal so the subscription
+      // is properly cancelled. Free-to-free / no-customer: flip metadata locally.
+      if (PAID_PLANS.has(current)) { await openPortal(); return; }
+      setPending(id);
+      try { await setPlan(id); } finally { setPending(null); }
+      return;
+    }
+    // Paid plans → embedded checkout. Paid-to-paid plan change also routes through
+    // the portal because Stripe handles proration there.
+    if (PAID_PLANS.has(current) && id !== current) { await openPortal(); return; }
+    if (typeof window !== 'undefined') {
+      window.location.href = `/checkout/${id}?billing=${billing}`;
+    }
   };
   return (
     <div className="space-y-8 text-[#0B1E3F]">
@@ -1211,19 +1245,35 @@ function Plan({ user, setPlan }: any) {
         <h1 className="text-4xl serif italic text-[#0B1E3F]">{current ? 'Manage your plan' : 'Choose your plan'}</h1>
         <p className="text-[#0B1E3F]/60 mt-2 max-w-xl">{current ? `You're currently on the ${current.charAt(0).toUpperCase() + current.slice(1)} plan. Upgrade or downgrade any time.` : 'Pick the plan that fits how you work. Start free — upgrade when you need more.'}</p>
       </div>
-      <div className="grid md:grid-cols-3 gap-5">
+      <div className="flex items-center gap-2">
+        <div className="inline-flex bg-white border border-[#0B1E3F]/15 rounded-full p-1">
+          <button onClick={() => setBilling('monthly')} className={`px-4 py-1.5 rounded-full text-sm transition ${billing === 'monthly' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/70 hover:text-[#0B1E3F]'}`}>Monthly</button>
+          <button onClick={() => setBilling('annual')} className={`px-4 py-1.5 rounded-full text-sm transition flex items-center gap-1.5 ${billing === 'annual' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/70 hover:text-[#0B1E3F]'}`}>
+            Annual <span className="text-[10px] mono px-1.5 py-0.5 rounded-full bg-[#16A34A]/15 text-[#16A34A]">save 2mo</span>
+          </button>
+        </div>
+        {error && <span className="text-sm text-[#DC2626]">{error}</span>}
+      </div>
+
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
         {tiers.map((p) => {
           const isCurrent = current === p.id;
           const isPending = pending === p.id;
+          const displayPrice = billing === 'annual' && p.priceAnnualNum > 0 ? p.priceAnnual : p.price;
+          const displaySuffix = billing === 'annual' && p.priceAnnualNum > 0 ? '/yr' : '/mo';
           return (
             <div key={p.id} className={`relative p-8 rounded-2xl border bg-white text-[#0B1E3F] flex flex-col ${p.popular ? 'border-[#FF6B35] card-shadow-lg' : 'border-[#0B1E3F]/10 card-shadow'} ${isCurrent ? 'ring-2 ring-[#0B1E3F]' : ''}`}>
               {p.popular && !isCurrent && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#FF6B35] text-white text-xs mono uppercase tracking-wider rounded-full">Most popular</div>}
               {isCurrent && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#0B1E3F] text-white text-xs mono uppercase tracking-wider rounded-full">Current plan</div>}
               <div className="text-sm uppercase tracking-wider mb-2 text-[#0B1E3F]/60">{p.label}</div>
-              <div className="flex items-baseline gap-1 mb-2">
-                <div className="text-5xl serif italic text-[#0B1E3F]">{p.price}</div>
-                <div className="text-[#0B1E3F]/60">/mo</div>
+              <div className="flex items-baseline gap-1">
+                <div className="text-5xl serif italic text-[#0B1E3F]">{displayPrice}</div>
+                <div className="text-[#0B1E3F]/60">{displaySuffix}</div>
               </div>
+              {billing === 'monthly' && p.priceAnnualNum > 0 && (
+                <div className="text-xs mono text-[#16A34A] mb-2">or {p.priceAnnual}/yr</div>
+              )}
+              {(billing === 'annual' || p.priceAnnualNum === 0) && <div className="mb-2" />}
               <div className="text-sm mb-6 text-[#0B1E3F]/70">{p.desc}</div>
               <button
                 onClick={() => choose(p.id)}
@@ -1253,7 +1303,7 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isPaid = current === 'carrier' || current === 'fleet';
+  const isPaid = PAID_PLANS.has(current);
 
   const startLeave = () => {
     setError(null);
@@ -1476,21 +1526,22 @@ function TeamTab({ navigate, user }: any) {
   if (!t) return <div className="py-8 text-sm text-[#0B1E3F]/60">Loading…</div>;
 
   if (!t.team) {
-    const isPaid = user?.plan === 'carrier' || user?.plan === 'fleet';
+    const isPaid = PAID_PLANS.has(user?.plan);
+    const planLabel = PLAN_DETAILS[user?.plan]?.label || 'team';
     return (
       <div>
         <h2 className="text-xl font-semibold text-[#0B1E3F] mb-3">Team</h2>
         {isPaid ? (
           <>
-            <p className="text-sm text-[#0B1E3F]/70 mb-6">You&rsquo;re on the <strong className="capitalize">{user.plan}</strong> plan but no team has been set up yet. Click below to create your team — you&rsquo;ll be the owner and can invite members right away.</p>
+            <p className="text-sm text-[#0B1E3F]/70 mb-6">You&rsquo;re on the <strong>{planLabel}</strong> plan but no team has been set up yet. Click below to create your team — you&rsquo;ll be the owner and can invite members right away.</p>
             {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
             <button onClick={setupTeam} disabled={creating} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 disabled:opacity-60">
-              {creating ? 'Setting up…' : `Set up my ${user.plan === 'fleet' ? 'Fleet' : 'Carrier'} team`}
+              {creating ? 'Setting up…' : `Set up my ${planLabel} team`}
             </button>
           </>
         ) : (
           <>
-            <p className="text-sm text-[#0B1E3F]/70 mb-6">You aren&rsquo;t on a team yet. Pick the <strong>Carrier</strong> or <strong>Fleet</strong> plan and a team will be created for you. Then invite members from this tab.</p>
+            <p className="text-sm text-[#0B1E3F]/70 mb-6">You aren&rsquo;t on a team yet. Pick a paid plan (<strong>Carrier</strong>, <strong>Team</strong>, or <strong>Fleet</strong>) and a team will be created for you. Then invite members from this tab.</p>
             <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-medium hover:bg-[#FF6B35]/90">Choose a plan</button>
           </>
         )}
@@ -1573,6 +1624,113 @@ function TeamTab({ navigate, user }: any) {
   );
 }
 
+function FmcsaStatsCard() {
+  const [stats, setStats] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch('/api/admin/fmcsa-stats');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setStats(j);
+    } catch (e: any) {
+      setError(e?.message || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const d = stats?.window?.day;
+  const h = stats?.window?.hour;
+  const w = stats?.window?.week;
+  const errRate = d && d.total ? (d.errors / d.total) : 0;
+  const throttled = d?.throttled429 ?? 0;
+  const healthTone =
+    throttled > 0 ? 'danger' :
+    errRate > 0.1 ? 'warn' :
+    'good';
+  const healthLabel =
+    throttled > 0 ? `${throttled} throttled (429)` :
+    errRate > 0.1 ? `${Math.round(errRate * 100)}% errors` :
+    'Healthy';
+  const healthColor =
+    healthTone === 'danger' ? '#DC2626' :
+    healthTone === 'warn' ? '#F59E0B' :
+    '#16A34A';
+
+  const cacheHitPct = d?.cacheHitRate != null ? Math.round(d.cacheHitRate * 100) : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">FMCSA API observability</div>
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] mono uppercase tracking-wider" style={{ backgroundColor: `${healthColor}1a`, color: healthColor }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: healthColor }} />
+            {healthLabel}
+          </span>
+        </div>
+        <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <Stat label="Last hour" value={h?.total ?? '—'} sub={h != null && h.errors > 0 ? `${h.errors} err` : null} />
+        <Stat label="Last 24 h" value={d?.total ?? '—'} sub={d != null ? `${d.ok ?? 0} ok · ${d.errors ?? 0} err` : null} />
+        <Stat label="Last 7 days" value={w?.total ?? '—'} />
+        <Stat label="Avg latency" value={d?.avgDurationMs != null ? `${d.avgDurationMs} ms` : '—'} />
+        <Stat label="Cache hit rate" value={cacheHitPct != null ? `${cacheHitPct}%` : '—'} sub={cacheHitPct != null ? '24h · lookups / FMCSA' : null} />
+      </div>
+
+      {throttled > 0 && (
+        <div className="mb-4 p-3 bg-[#DC2626]/10 border border-[#DC2626]/30 rounded-lg text-sm text-[#0B1E3F]">
+          <strong className="text-[#DC2626]">FMCSA is rate-limiting you.</strong> {throttled} HTTP 429 response{throttled === 1 ? '' : 's'} in the last 24h. Consider raising cache TTL or adding a global daily budget.
+        </div>
+      )}
+
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Last 10 FMCSA calls</div>
+      <div className="border border-[#0B1E3F]/10 rounded-lg overflow-hidden">
+        <div className="grid grid-cols-[1fr_80px_80px_120px] gap-2 px-3 py-2 bg-[#0B1E3F]/5 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">
+          <div>Path</div><div>Status</div><div className="text-right">Duration</div><div className="text-right">When</div>
+        </div>
+        {stats?.recent?.length ? (
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {stats.recent.map((ev: any, i: number) => (
+              <div key={i} className="grid grid-cols-[1fr_80px_80px_120px] gap-2 px-3 py-2 text-xs items-center">
+                <div className="mono truncate text-[#0B1E3F]/80" title={ev.error || ev.path || ''}>{ev.path || '—'}</div>
+                <div className="mono text-xs" style={{ color: ev.http_status === 429 ? '#DC2626' : ev.status === 'ok' ? '#16A34A' : '#F59E0B' }}>
+                  {ev.http_status || (ev.status === 'ok' ? 200 : 'err')}
+                </div>
+                <div className="mono text-xs text-right text-[#0B1E3F]/60">{ev.duration_ms != null ? `${ev.duration_ms} ms` : '—'}</div>
+                <div className="mono text-xs text-right text-[#0B1E3F]/60">{timeAgo(ev.created_at)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="px-3 py-6 text-center text-xs text-[#0B1E3F]/50">No FMCSA calls logged yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: any; sub?: string | null }) {
+  return (
+    <div className="p-3 bg-[#0B1E3F]/5 rounded-lg">
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{label}</div>
+      <div className="text-xl font-semibold text-[#0B1E3F] mt-0.5">{value}</div>
+      {sub && <div className="text-[10px] mono text-[#0B1E3F]/50 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
 function AdminPage({ navigate }: any) {
   const [users, setUsers] = useState<any[] | null>(null);
   const [filter, setFilter] = useState('');
@@ -1635,6 +1793,8 @@ function AdminPage({ navigate }: any) {
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Scans this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.scansThisMonth}</div></div>
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Watchlist rows</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.watchlist}</div></div>
       </div>
+
+      <FmcsaStatsCard />
 
       <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
         <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email, name, company, or MC…" className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40" />
@@ -3362,8 +3522,12 @@ function Alerts({ navigate }: any) {
 const PLAN_DETAILS: Record<string, { label: string; price: string }> = {
   free: { label: 'Free', price: '$0/mo' },
   carrier: { label: 'Carrier', price: '$49/mo' },
-  fleet: { label: 'Fleet', price: '$149/mo' },
+  team: { label: 'Team', price: '$99/mo' },
+  fleet: { label: 'Fleet', price: '$249/mo' },
 };
+
+const PLAN_LADDER = ['free', 'carrier', 'team', 'fleet'] as const;
+const PAID_PLANS = new Set(['carrier', 'team', 'fleet']);
 
 function ApiKeysTab({ user, navigate }: any) {
   const [keys, setKeys] = useState<any[] | null>(null);
@@ -3632,7 +3796,7 @@ function NotificationsTab({ user }: any) {
 }
 
 function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
-  const isPaid = planId === 'carrier' || planId === 'fleet';
+  const isPaid = PAID_PLANS.has(planId);
   const memberSince = user?.createdAt ? new Date(user.createdAt) : null;
   const planSince = user?.planChangedAt ? new Date(user.planChangedAt) : memberSince;
   const fmt = (d: Date | null) => d ? d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
@@ -3644,13 +3808,15 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
         <div className="text-xs mono text-[#0B1E3F]/50">Account {user?.id ? `· ${String(user.id).slice(0, 8)}` : ''}</div>
       </div>
 
-      <div className="mb-6 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/25 rounded-xl flex items-start gap-3 text-[#0B1E3F]">
-        <AlertTriangle className="w-4 h-4 mt-0.5 text-[#FF6B35] flex-shrink-0" />
-        <div className="text-sm">
-          <div className="font-medium mb-0.5">Stripe billing is not yet live.</div>
-          <div className="text-[#0B1E3F]/70">Paid plans are saved to your profile. You won&apos;t be charged until billing launches — your invoices and payment method will appear here automatically when it does.</div>
+      {!isPaid && (
+        <div className="mb-6 p-4 bg-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-xl flex items-start gap-3 text-[#0B1E3F]">
+          <Lock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <div className="text-sm">
+            <div className="font-medium mb-0.5">You&apos;re on the Free plan.</div>
+            <div className="text-[#0B1E3F]/70">Upgrade to unlock unlimited lookups, rate con scans, and team members. Your invoices and payment method will appear here automatically.</div>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-4 mb-6">
         <div className="p-5 bg-[#0B1E3F]/5 rounded-xl">
@@ -3661,7 +3827,7 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
                 <div className="text-3xl serif italic text-[#0B1E3F]">{plan.label}</div>
                 <div className="text-[#0B1E3F]/60">· {plan.price}</div>
               </div>
-              <div className="text-sm text-[#0B1E3F]/60">{planId === 'free' ? '5 lookups / month · no card required' : 'Will become active when Stripe billing launches'}</div>
+              <div className="text-sm text-[#0B1E3F]/60">{planId === 'free' ? '3 lookups / month · no card required' : 'Will become active when Stripe billing launches'}</div>
             </>
           ) : (
             <>
@@ -3695,27 +3861,21 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
         </div>
       </div>
 
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">Invoices &amp; billing history</div>
-          <button disabled className="text-xs mono text-[#0B1E3F]/40 flex items-center gap-1 cursor-not-allowed" title="Available once Stripe billing is active">
-            <Download className="w-3 h-3" /> Download all
-          </button>
-        </div>
-        <div className="border border-[#0B1E3F]/10 rounded-xl overflow-hidden">
-          <div className="grid grid-cols-4 gap-3 px-4 py-2.5 bg-[#0B1E3F]/5 text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">
-            <div>Date</div>
-            <div>Description</div>
-            <div className="text-right">Amount</div>
-            <div className="text-right">Status</div>
+      {isPaid && (
+        <div className="mb-6 p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl">
+          <div className="flex items-start gap-3 mb-3">
+            <FileText className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="font-semibold text-[#0B1E3F] mb-1">Invoices &amp; payment method live in Stripe</div>
+              <div className="text-sm text-[#0B1E3F]/70">
+                Click below to open your secure Stripe billing portal — update your card, download every invoice,
+                switch between monthly and annual, or cancel. You return here when you&apos;re done.
+              </div>
+            </div>
           </div>
-          <div className="p-10 text-center text-sm text-[#0B1E3F]/55">
-            <FileText className="w-8 h-8 mx-auto mb-3 text-[#0B1E3F]/25" />
-            <div className="font-medium text-[#0B1E3F]/80 mb-1">No invoices yet</div>
-            <div className="text-xs">{isPaid ? 'Your first invoice will appear here when Stripe billing launches.' : 'You\'re on the Free plan — no invoices to show.'}</div>
-          </div>
+          <BillingPortalButton />
         </div>
-      </div>
+      )}
 
       <div className="flex flex-wrap gap-2 pt-2 border-t border-[#0B1E3F]/10">
         {upgradeTarget && <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Upgrade to {upgradeTarget}</button>}
@@ -3725,11 +3885,39 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
   );
 }
 
+function BillingPortalButton() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const openPortal = async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch('/api/stripe/portal', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Portal failed (${r.status})`);
+      if (j.url) window.location.href = j.url;
+    } catch (err: any) {
+      setError(err?.message || 'Could not open billing portal');
+      setLoading(false);
+    }
+  };
+  return (
+    <div>
+      <button onClick={openPortal} disabled={loading} className="px-5 py-2.5 bg-[#16A34A] text-white rounded-full text-sm font-medium hover:bg-[#16A34A]/90 transition disabled:opacity-60 flex items-center gap-2">
+        {loading && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+        {loading ? 'Opening…' : 'Open billing portal'}
+      </button>
+      {error && <div className="mt-2 text-sm text-[#DC2626]">{error}</div>}
+    </div>
+  );
+}
+
 function SettingsPage({ user, navigate, initialTab }: any) {
   const [tab, setTab] = useState(initialTab || 'profile');
   const planId = (user?.plan || '').toLowerCase();
   const plan = PLAN_DETAILS[planId];
-  const upgradeTarget = planId === 'free' ? 'Carrier' : planId === 'carrier' ? 'Fleet' : null;
+  const ladderIdx = PLAN_LADDER.indexOf(planId as any);
+  const nextPlan = ladderIdx >= 0 && ladderIdx < PLAN_LADDER.length - 1 ? PLAN_LADDER[ladderIdx + 1] : null;
+  const upgradeTarget = nextPlan ? PLAN_DETAILS[nextPlan]?.label ?? null : null;
   return (
     <div className="space-y-8 text-[#0B1E3F]">
       <div>

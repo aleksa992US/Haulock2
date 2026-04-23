@@ -29,6 +29,21 @@ create index if not exists fmcsa_cache_cached_at_idx on public.fmcsa_cache(cache
 alter table public.fmcsa_cache enable row level security;
 -- Only the service role writes to this table; no user-facing policies needed.
 
+-- Per-call FMCSA observability log. One row per outgoing call to FMCSA
+-- (not per user request — cache hits don't log here).
+create table if not exists public.fmcsa_events (
+  id bigserial primary key,
+  path text,
+  status text not null,        -- 'ok' | 'error'
+  http_status int,
+  duration_ms int,
+  error text,
+  created_at timestamptz not null default now()
+);
+create index if not exists fmcsa_events_created_idx on public.fmcsa_events(created_at desc);
+alter table public.fmcsa_events enable row level security;
+-- Service-role only.
+
 create table if not exists public.api_keys (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,

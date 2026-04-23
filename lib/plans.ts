@@ -1,4 +1,4 @@
-export type PlanId = 'free' | 'carrier' | 'fleet';
+export type PlanId = 'free' | 'carrier' | 'team' | 'fleet';
 
 export type PlanLimits = {
   fmcsaLookups: number | null; // null = unlimited
@@ -10,8 +10,10 @@ export type PlanLimits = {
 export type Plan = {
   id: PlanId;
   label: string;
-  price: string;
-  priceNum: number;
+  price: string;          // display monthly
+  priceNum: number;       // monthly, in dollars
+  priceAnnual: string;    // display annual total
+  priceAnnualNum: number; // annual, in dollars
   desc: string;
   limits: PlanLimits;
   features: string[];
@@ -24,14 +26,16 @@ export const PLANS: Record<PlanId, Plan> = {
     label: 'Free',
     price: '$0',
     priceNum: 0,
-    desc: '5 lookups/month. Basic risk score.',
-    limits: { fmcsaLookups: 5, rateConScans: 1, watchlist: 3, users: 1 },
+    priceAnnual: '$0',
+    priceAnnualNum: 0,
+    desc: 'Try it. 3 lookups/month.',
+    limits: { fmcsaLookups: 3, rateConScans: 0, watchlist: 1, users: 1 },
     features: [
-      '5 broker lookups / month',
-      '1 rate con scan / month',
-      'Up to 3 watchlist entries',
+      '3 broker / carrier lookups / month',
+      '1 watchlist entry',
       'Basic risk score',
-      'Community feed (read-only)',
+      'Community fraud feed (read-only)',
+      'No rate con scans',
     ],
   },
   carrier: {
@@ -39,34 +43,56 @@ export const PLANS: Record<PlanId, Plan> = {
     label: 'Carrier',
     price: '$49',
     priceNum: 49,
-    desc: 'For owner-ops & small fleets.',
+    priceAnnual: '$490',
+    priceAnnualNum: 490,
+    desc: 'For owner-ops & 1-truck shops.',
     popular: true,
-    limits: { fmcsaLookups: null, rateConScans: 25, watchlist: 25, users: 1 },
+    limits: { fmcsaLookups: null, rateConScans: 15, watchlist: 25, users: 1 },
     features: [
-      'Unlimited broker lookups',
-      '25 rate con scans / month',
+      'Unlimited broker / carrier lookups',
+      '15 rate con scans / month',
       'Up to 25 watchlist entries',
       'Full risk reports',
       'Email & in-app alerts',
+      'API access',
       '1 user',
+    ],
+  },
+  team: {
+    id: 'team',
+    label: 'Team',
+    price: '$99',
+    priceNum: 99,
+    priceAnnual: '$990',
+    priceAnnualNum: 990,
+    desc: 'Small fleets & dispatch shops (2–9 trucks).',
+    limits: { fmcsaLookups: null, rateConScans: 75, watchlist: 100, users: 3 },
+    features: [
+      'Everything in Carrier',
+      '75 rate con scans / month',
+      'Up to 100 watchlist entries',
+      '3 users (shared quota)',
+      'Priority email alerts',
+      'Watchlist change-history reports',
     ],
   },
   fleet: {
     id: 'fleet',
     label: 'Fleet',
-    price: '$149',
-    priceNum: 149,
-    desc: 'Growing carriers, 10–150 trucks.',
-    limits: { fmcsaLookups: null, rateConScans: 250, watchlist: 250, users: 5 },
+    price: '$249',
+    priceNum: 249,
+    priceAnnual: '$2,490',
+    priceAnnualNum: 2490,
+    desc: 'Growing carriers & brokerages (10+ trucks).',
+    limits: { fmcsaLookups: null, rateConScans: null, watchlist: null, users: 10 },
     features: [
-      'Unlimited broker lookups',
-      '250 rate con scans / month',
-      'Up to 250 watchlist entries',
-      'Everything in Carrier',
+      'Everything in Team',
+      'Unlimited rate con scans',
+      'Unlimited watchlist entries',
+      '10 users',
       'Bulk verify (CSV)',
-      'API access',
-      '5 users',
       'Priority support',
+      'Quarterly fraud trend report',
     ],
   },
 };

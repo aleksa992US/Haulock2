@@ -98,11 +98,45 @@ export function parseQuery(raw: string): ParsedQuery | null {
   return { kind: 'name', value: q };
 }
 
+async function logFmcsaEvent(ev: { path: string; status: 'ok' | 'error'; httpStatus: number | null; durationMs: number; error?: string }): Promise<void> {
+  try {
+    const { getServiceSupabase } = await import('./supabase/service');
+    const svc = getServiceSupabase();
+    if (!svc) return;
+    await svc.from('fmcsa_events').insert({
+      path: ev.path,
+      status: ev.status,
+      http_status: ev.httpStatus,
+      duration_ms: ev.durationMs,
+      error: ev.error ?? null,
+    });
+  } catch { /* logging must never block a lookup */ }
+}
+
 async function fmcsaFetch(path: string, webKey: string): Promise<any> {
   const url = `${FMCSA_BASE}${path}${path.includes('?') ? '&' : '?'}webKey=${encodeURIComponent(webKey)}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-  if (!res.ok) throw new Error(`FMCSA ${res.status}: ${await res.text().catch(() => res.statusText)}`);
-  return res.json();
+  const started = Date.now();
+  let httpStatus: number | null = null;
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    httpStatus = res.status;
+    if (!res.ok) {
+      const body = await res.text().catch(() => res.statusText);
+      throw new Error(`FMCSA ${res.status}: ${body}`);
+    }
+    const json = await res.json();
+    logFmcsaEvent({ path, status: 'ok', httpStatus, durationMs: Date.now() - started });
+    return json;
+  } catch (err) {
+    logFmcsaEvent({
+      path,
+      status: 'error',
+      httpStatus,
+      durationMs: Date.now() - started,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 function pickCarrier(json: any): any | null {

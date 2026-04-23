@@ -32,6 +32,13 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Google service account / credential JSONs — NEVER commit these
+*-service-account*.json
+*-serviceaccount*.json
+*-credentials*.json
+*.gserviceaccount.json
+totemic-phoenix-*.json
+
 # vercel
 .vercel
 
