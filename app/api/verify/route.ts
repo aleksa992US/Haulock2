@@ -10,6 +10,7 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { findCarrierWebsite, nameMatchesDomain } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
+import { checkUserRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,6 +45,17 @@ export async function GET(req: Request) {
         cached: true,
         cachedAt: cached[0].created_at,
       });
+    }
+  }
+
+  // Per-user burst rate limit (admins bypass).
+  if (user && !(await isAdmin(user.email))) {
+    const rl = await checkUserRateLimit(user.id);
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: `Too many lookups — slow down. ${rl.count}/${rl.limit} in the last minute.`, code: 'rate_limited', retryAfter: rl.retryAfter },
+        { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+      );
     }
   }
 

@@ -31,7 +31,7 @@ export async function POST(req: Request) {
   const override = typeof meta.notification_email === 'string' ? meta.notification_email.trim() : '';
   const toAddress = override || user.email;
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
   const { subject, html } = highRiskAlertTemplate({ report, siteUrl });
 
   try {

@@ -3449,10 +3449,16 @@ function ApiKeysTab({ user, navigate }: any) {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-[#0B1E3F] mb-2">API keys</h2>
+      <div className="flex items-start justify-between gap-4 mb-2">
+        <h2 className="text-xl font-semibold text-[#0B1E3F]">API keys</h2>
+        <a href="/docs/api" target="_blank" rel="noreferrer" className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/70 hover:text-[#0B1E3F] flex items-center gap-1.5 transition">
+          <FileText className="w-3.5 h-3.5" /> Documentation
+        </a>
+      </div>
       <p className="text-sm text-[#0B1E3F]/65 max-w-2xl mb-6">
         Integrate Haulock into your TMS, dispatch software, or scripts. Usage through the API counts against your monthly plan quota —{' '}
-        <span className="font-medium text-[#0B1E3F]">{limit == null ? 'unlimited' : `${limit} lookups/mo on ${planLabel}`}</span>.
+        <span className="font-medium text-[#0B1E3F]">{limit == null ? 'unlimited' : `${limit} lookups/mo on ${planLabel}`}</span>.{' '}
+        Full reference: <a href="/docs/api" target="_blank" rel="noreferrer" className="underline text-[#0B1E3F] hover:text-[#FF6B35]">docs/api</a>.
       </p>
 
       {revealed && (
@@ -3533,7 +3539,7 @@ function ApiKeysTab({ user, navigate }: any) {
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">How to use</div>
         <div className="bg-[#0B1E3F] rounded-xl p-5 overflow-x-auto">
           <pre className="text-xs mono text-white/90 whitespace-pre">{`curl -H "Authorization: Bearer YOUR_API_KEY" \\
-  "${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/verify?q=MC-123456"`}</pre>
+  "https://haulock.com/api/v1/verify?q=MC-123456"`}</pre>
         </div>
         <div className="mt-3 text-xs text-[#0B1E3F]/60 space-y-1">
           <div>• Endpoint: <span className="mono text-[#0B1E3F]">GET /api/v1/verify?q=&lt;MC, DOT, or company name&gt;</span></div>

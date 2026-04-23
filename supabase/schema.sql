@@ -18,6 +18,17 @@ create table if not exists public.lookups (
 alter table public.lookups add column if not exists source text not null default 'quick';
 alter table public.lookups add column if not exists hidden_at timestamptz;
 
+-- Global FMCSA response cache — shared across every user so repeated lookups
+-- of the same MC/DOT don't burn FMCSA API quota. Populated by the server.
+create table if not exists public.fmcsa_cache (
+  cache_key text primary key,
+  response jsonb not null,
+  cached_at timestamptz not null default now()
+);
+create index if not exists fmcsa_cache_cached_at_idx on public.fmcsa_cache(cached_at);
+alter table public.fmcsa_cache enable row level security;
+-- Only the service role writes to this table; no user-facing policies needed.
+
 create table if not exists public.api_keys (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,

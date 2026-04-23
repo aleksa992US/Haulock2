@@ -227,17 +227,87 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
   };
 }
 
+// ------------------------------------------------------------------
+// Shared FMCSA response cache (Supabase-backed, TTL) + in-process
+// request dedup. Prevents N users from causing N FMCSA calls for the
+// same MC/DOT and keeps us under QCMobile rate limits.
+// ------------------------------------------------------------------
+
+const FMCSA_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const inflight = new Map<string, Promise<any>>();
+
+function cacheKeyFor(query: ParsedQuery): string {
+  return `${query.kind}:${query.value.toLowerCase()}`;
+}
+
+async function readCachedFmcsa(key: string): Promise<any | null> {
+  try {
+    // Dynamic import to keep the Edge-free boundary sane.
+    const { getServiceSupabase } = await import('./supabase/service');
+    const svc = getServiceSupabase();
+    if (!svc) return null;
+    const { data } = await svc
+      .from('fmcsa_cache')
+      .select('response,cached_at')
+      .eq('cache_key', key)
+      .limit(1)
+      .maybeSingle();
+    if (!data) return null;
+    const age = Date.now() - new Date(data.cached_at).getTime();
+    if (age > FMCSA_CACHE_TTL_MS) return null;
+    return data.response;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedFmcsa(key: string, response: any): Promise<void> {
+  try {
+    const { getServiceSupabase } = await import('./supabase/service');
+    const svc = getServiceSupabase();
+    if (!svc) return;
+    await svc.from('fmcsa_cache').upsert(
+      { cache_key: key, response, cached_at: new Date().toISOString() },
+      { onConflict: 'cache_key' },
+    );
+  } catch {
+    /* cache write errors are non-fatal */
+  }
+}
+
 export async function lookupCarrier(query: ParsedQuery): Promise<CarrierReport> {
   const webKey = process.env.FMCSA_WEB_KEY;
   if (!webKey) return mockCarrier(query);
 
-  let path: string;
-  if (query.kind === 'dot') path = `/${encodeURIComponent(query.value)}`;
-  else if (query.kind === 'mc') path = `/docket-number/${encodeURIComponent(query.value)}`;
-  else path = `/name/${encodeURIComponent(query.value)}`;
+  const key = cacheKeyFor(query);
+
+  // 1. Global shared cache (24h TTL) — serves every user.
+  const cached = await readCachedFmcsa(key);
+  if (cached) {
+    const normalized = normalize(cached, query);
+    if (normalized) return normalized;
+  }
+
+  // 2. In-flight dedup — concurrent requests for the same key wait on one FMCSA call.
+  let promise = inflight.get(key);
+  if (!promise) {
+    let path: string;
+    if (query.kind === 'dot') path = `/${encodeURIComponent(query.value)}`;
+    else if (query.kind === 'mc') path = `/docket-number/${encodeURIComponent(query.value)}`;
+    else path = `/name/${encodeURIComponent(query.value)}`;
+    promise = fmcsaFetch(path, webKey)
+      .then(async (raw) => {
+        await writeCachedFmcsa(key, raw);
+        return raw;
+      })
+      .finally(() => {
+        inflight.delete(key);
+      });
+    inflight.set(key, promise);
+  }
 
   try {
-    const raw = await fmcsaFetch(path, webKey);
+    const raw = await promise;
     const normalized = normalize(raw, query);
     if (!normalized) throw new Error('Carrier not found in FMCSA response');
     return normalized;
