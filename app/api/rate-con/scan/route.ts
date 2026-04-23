@@ -174,7 +174,7 @@ export async function POST(req: Request) {
     source: 'ratecon' as const,
     data: merged,
   };
-  await supabase.from('lookups').insert(row).catch(() => null);
+  try { await supabase.from('lookups').insert(row); } catch {}
 
   return NextResponse.json(merged);
 }
