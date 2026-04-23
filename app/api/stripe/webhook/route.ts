@@ -79,7 +79,12 @@ export async function POST(req: Request) {
       const meta = haulockMeta(invoice);
       if (!meta.isHaulock || !meta.userId) break;
       if (invoice.billing_reason === 'subscription_create') {
-        const priceId = invoice.lines?.data?.[0]?.price?.id;
+        // Stripe SDK v22 changed InvoiceLineItem — the price id can live on
+        // `line.price.id` (older shape) or `line.pricing.price_details.price`
+        // (newer shape). Read both defensively.
+        const line: any = invoice.lines?.data?.[0];
+        const priceId: string | undefined =
+          line?.price?.id || line?.pricing?.price_details?.price;
         const mapped = planFromPriceId(priceId);
         const nextPlan = mapped?.plan || meta.plan || 'free';
         await setUserPlan(meta.userId, nextPlan);

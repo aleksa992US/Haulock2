@@ -1,6 +1,11 @@
 import { getServiceSupabase } from './supabase/service';
 
-export type RateCheckResult = { ok: true } | { ok: false; retryAfter: number; count: number; limit: number };
+export type RateCheckResult = {
+  ok: boolean;
+  retryAfter: number;
+  count: number;
+  limit: number;
+};
 
 const DEFAULT_PER_MINUTE = 30;
 
@@ -14,7 +19,8 @@ export async function checkUserRateLimit(
   windowMs: number = 60_000,
 ): Promise<RateCheckResult> {
   const svc = getServiceSupabase();
-  if (!svc) return { ok: true };
+  const retryAfter = Math.ceil(windowMs / 1000);
+  if (!svc) return { ok: true, retryAfter, count: 0, limit: perMinute };
 
   const since = new Date(Date.now() - windowMs).toISOString();
   const { count } = await svc
@@ -24,8 +30,5 @@ export async function checkUserRateLimit(
     .gte('created_at', since);
 
   const used = count ?? 0;
-  if (used >= perMinute) {
-    return { ok: false, retryAfter: Math.ceil(windowMs / 1000), count: used, limit: perMinute };
-  }
-  return { ok: true };
+  return { ok: used < perMinute, retryAfter, count: used, limit: perMinute };
 }

@@ -7,7 +7,7 @@ import {
   Users, Settings, LogOut, ChevronRight, ArrowRight, Lock, Zap, Database, Eye, Flag,
   Clock, MapPin, Phone, Mail, Building2, Download, Share2, Plus, BarChart3, Menu,
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
-  Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key,
+  Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
@@ -669,6 +669,90 @@ function HeroDashboardMockup() {
   );
 }
 
+function RateConScanProgress({ fileName }: { fileName?: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Date.now() - start), 250);
+    return () => clearInterval(t);
+  }, []);
+
+  // Each stage is a rough estimate tuned to observed backend timing (~45-60s total).
+  // The server runs these sequentially up to Claude, then FMCSA + domain + Google Places
+  // in parallel, then final scoring. We reflect that in the timeline.
+  const stages = [
+    { key: 'upload', label: 'Uploading PDF', desc: 'Sending securely to our server', icon: Upload, start: 0, end: 1500 },
+    { key: 'ocr', label: 'Reading document with Google Document AI', desc: 'Extracting text from every page', icon: ScanLine, start: 1500, end: 18000 },
+    { key: 'ai', label: 'Analyzing with Claude AI', desc: 'Identifying broker, MC, email, and stylistic fraud signals', icon: Sparkles, start: 18000, end: 30000 },
+    { key: 'fmcsa', label: 'Cross-checking FMCSA registry', desc: 'Authority status, insurance, crash history', icon: Shield, start: 30000, end: 42000 },
+    { key: 'enrich', label: 'Verifying domain, website & Google Business', desc: 'WHOIS age, MX/SPF, social profiles, address match', icon: Globe, start: 30000, end: 48000 },
+    { key: 'score', label: 'Finalizing risk score', desc: 'Combining all signals into a verdict', icon: Target, start: 48000, end: 58000 },
+  ];
+  const totalMs = 58000;
+
+  const progressPct = Math.min(99, Math.round((elapsed / totalMs) * 100));
+  const seconds = Math.floor(elapsed / 1000);
+
+  const stageState = (s: typeof stages[number]) => {
+    if (elapsed >= s.end) return 'done';
+    if (elapsed >= s.start) return 'active';
+    return 'pending';
+  };
+
+  return (
+    <div className="text-left max-w-xl mx-auto">
+      <div className="flex items-center gap-4 mb-6">
+        <div className="w-12 h-12 rounded-xl bg-[#FF6B35]/10 flex items-center justify-center flex-shrink-0">
+          <div className="w-5 h-5 border-2 border-[#FF6B35]/30 border-t-[#FF6B35] rounded-full animate-spin" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-lg font-semibold text-[#0B1E3F]">Scanning rate confirmation…</div>
+          <div className="text-xs text-[#0B1E3F]/60 truncate">{fileName || 'Your uploaded file'} · {seconds}s elapsed</div>
+        </div>
+      </div>
+
+      <div className="h-1.5 bg-[#0B1E3F]/8 rounded-full overflow-hidden mb-6">
+        <div
+          className="h-full bg-gradient-to-r from-[#FF6B35] to-[#F59E0B] transition-all duration-300 ease-linear"
+          style={{ width: `${progressPct}%` }}
+        />
+      </div>
+
+      <div className="space-y-2">
+        {stages.map((s) => {
+          const state = stageState(s);
+          const Icon = s.icon;
+          return (
+            <div key={s.key} className={`flex items-start gap-3 p-3 rounded-xl transition ${state === 'active' ? 'bg-[#0B1E3F]/5' : ''}`}>
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition ${
+                state === 'done' ? 'bg-[#16A34A] text-white'
+                  : state === 'active' ? 'bg-[#FF6B35] text-white'
+                  : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/30'
+              }`}>
+                {state === 'done'
+                  ? <CheckCircle2 className="w-4 h-4" />
+                  : state === 'active'
+                    ? <div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                    : <Icon className="w-3.5 h-3.5" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm font-medium ${state === 'pending' ? 'text-[#0B1E3F]/40' : 'text-[#0B1E3F]'}`}>{s.label}</div>
+                <div className={`text-xs ${state === 'pending' ? 'text-[#0B1E3F]/30' : 'text-[#0B1E3F]/55'}`}>{s.desc}</div>
+              </div>
+              {state === 'done' && <div className="text-[10px] mono uppercase tracking-wider text-[#16A34A] mt-1">Done</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex items-start gap-2 p-3 bg-[#F59E0B]/10 border border-[#F59E0B]/25 rounded-lg text-xs text-[#0B1E3F]">
+        <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-[#F59E0B] flex-shrink-0" />
+        <div>Please stay on this page — scanning takes 30-60 seconds. Leaving or refreshing cancels the scan and still counts against your quota.</div>
+      </div>
+    </div>
+  );
+}
+
 function RateConMockup() {
   return (
     <div className="relative">
@@ -1177,23 +1261,27 @@ function Pricing({ navigate }: any) {
             <h1 className="text-5xl md:text-7xl serif italic text-[#0B1E3F] mb-4">Simple, fair pricing.</h1>
             <p className="text-xl text-[#0B1E3F]/60 max-w-2xl mx-auto">One prevented scam pays for 3 years. Start free, upgrade when you need more.</p>
           </div>
-          <div className="grid md:grid-cols-3 gap-5 max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-7xl mx-auto">
             {Object.values(PLANS).map((p) => (
-              <div key={p.id} className={`relative p-8 rounded-2xl border bg-white text-[#0B1E3F] ${p.popular ? 'border-[#FF6B35] scale-105 card-shadow-lg' : 'border-[#0B1E3F]/10 card-shadow'}`}>
+              <div key={p.id} className={`relative p-7 rounded-2xl border bg-white text-[#0B1E3F] flex flex-col ${p.popular ? 'border-[#FF6B35] lg:scale-105 card-shadow-lg' : 'border-[#0B1E3F]/10 card-shadow'}`}>
                 {p.popular && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#FF6B35] text-white text-xs mono uppercase tracking-wider rounded-full">Most popular</div>}
                 <div className="text-sm uppercase tracking-wider mb-2 text-[#0B1E3F]/60">{p.label}</div>
-                <div className="flex items-baseline gap-1 mb-2">
+                <div className="flex items-baseline gap-1">
                   <div className="text-5xl serif italic text-[#0B1E3F]">{p.price}</div>
                   <div className="text-[#0B1E3F]/60">/mo</div>
                 </div>
+                {p.priceAnnualNum > 0
+                  ? <div className="text-xs mono text-[#16A34A] mb-2">or {p.priceAnnual}/yr (save 2 months)</div>
+                  : <div className="mb-2" />}
                 <div className="text-sm mb-6 text-[#0B1E3F]/70">{p.desc}</div>
-                <button onClick={() => navigate('signup')} className="w-full py-3 rounded-full font-medium mb-6 bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90">{p.id === 'free' ? 'Start free' : `Choose ${p.label}`}</button>
-                <div className="space-y-2.5">
-                  {p.features.map((f, j) => <div key={j} className="flex items-center gap-2 text-sm text-[#0B1E3F]"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" />{f}</div>)}
+                <button onClick={() => navigate('signup')} className="w-full py-3 rounded-full font-medium mb-6 bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 transition">{p.id === 'free' ? 'Start free' : `Choose ${p.label}`}</button>
+                <div className="space-y-2.5 flex-1">
+                  {p.features.map((f, j) => <div key={j} className="flex items-start gap-2 text-sm text-[#0B1E3F]"><CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0 mt-0.5" />{f}</div>)}
                 </div>
               </div>
             ))}
           </div>
+          <div className="text-center mt-6 text-[#0B1E3F]/60 text-xs mono">All paid plans: monthly or annual (save 2 months). Cancel anytime. No card required for Free.</div>
         </div>
       </section>
       <Footer />
@@ -2482,21 +2570,25 @@ function VerifyTool({ navigate }: any) {
                 if (f) { setRcFile(f); scanRateCon(f); }
               }}
             />
-            <div className="w-16 h-16 bg-[#0B1E3F]/5 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              {rcLoading ? <div className="w-6 h-6 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <FileText className="w-8 h-8 text-[#0B1E3F]/50" />}
-            </div>
-            <div className="text-lg font-medium text-[#0B1E3F] mb-2">
-              {rcLoading ? 'Scanning rate confirmation…' : rcFile ? rcFile.name : 'Drop a rate confirmation here'}
-            </div>
-            <div className="text-sm text-[#0B1E3F]/60 mb-6">
-              {rcLoading ? 'OCR → AI extraction → FMCSA + domain cross-check. Can take up to 60 seconds for large PDFs — don’t refresh.' : 'PDF or image — we’ll extract, verify the broker, and cross-check email + address in seconds.'}
-            </div>
-            {!rcLoading && (
-              <span className="inline-block px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">
-                Choose file
-              </span>
+            {rcLoading ? (
+              <RateConScanProgress fileName={rcFile?.name} />
+            ) : (
+              <>
+                <div className="w-16 h-16 bg-[#0B1E3F]/5 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <FileText className="w-8 h-8 text-[#0B1E3F]/50" />
+                </div>
+                <div className="text-lg font-medium text-[#0B1E3F] mb-2">
+                  {rcFile ? rcFile.name : 'Drop a rate confirmation here'}
+                </div>
+                <div className="text-sm text-[#0B1E3F]/60 mb-6">
+                  PDF or image — we&rsquo;ll extract, verify the broker, and cross-check email + address in seconds.
+                </div>
+                <span className="inline-block px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">
+                  Choose file
+                </span>
+                <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 10MB</div>
+              </>
             )}
-            <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 10MB</div>
           </label>
           {rcError && <div className="mt-4 text-sm text-[#DC2626]">{rcError}</div>}
           <div className="mt-8 pt-6 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60 leading-relaxed">
@@ -2835,19 +2927,64 @@ function Report({ report, navigate }: any) {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Rate con extraction</h2>
-              <div className="text-sm text-[#0B1E3F]/60 mt-1">Fields Claude pulled from the uploaded PDF</div>
+              <div className="text-sm text-[#0B1E3F]/60 mt-1">What Claude pulled from the PDF — we verify the broker above.</div>
             </div>
             <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${r.rateCon.fraud_score >= 61 ? 'bg-[#DC2626]/10 text-[#DC2626]' : r.rateCon.fraud_score >= 31 ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>
               AI fraud score · {r.rateCon.fraud_score}/100
             </div>
           </div>
+
+          <div className="grid md:grid-cols-2 gap-5 mb-6">
+            {/* BROKER — the party to verify */}
+            <div className="p-4 bg-[#FF6B35]/5 border border-[#FF6B35]/25 rounded-xl">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#FF6B35] text-white">Broker (sender)</span>
+                <span className="text-[11px] text-[#0B1E3F]/55">Verified above ↑</span>
+              </div>
+              <div className="space-y-2">
+                {[
+                  { label: 'Name', val: r.rateCon.broker_name },
+                  { label: 'MC', val: r.rateCon.broker_mc ? `MC-${r.rateCon.broker_mc}` : null },
+                  { label: 'DOT', val: r.rateCon.broker_dot ? `DOT-${r.rateCon.broker_dot}` : null },
+                  { label: 'Email', val: r.rateCon.broker_email },
+                  { label: 'Phone', val: r.rateCon.broker_phone },
+                ].filter((i) => i.val).map((i, idx) => (
+                  <div key={idx} className="flex items-start justify-between gap-3 text-sm">
+                    <div className="text-[#0B1E3F]/55 text-xs mono uppercase tracking-wider mt-0.5">{i.label}</div>
+                    <div className="font-semibold text-[#0B1E3F] text-right truncate">{i.val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* CARRIER — the user themselves */}
+            <div className="p-4 bg-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-xl">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0B1E3F] text-white">Carrier (you)</span>
+                <span className="text-[11px] text-[#0B1E3F]/55">Rate con addressed to</span>
+              </div>
+              {(r.rateCon.carrier_name || r.rateCon.carrier_mc || r.rateCon.carrier_dot) ? (
+                <div className="space-y-2">
+                  {[
+                    { label: 'Name', val: r.rateCon.carrier_name },
+                    { label: 'MC', val: r.rateCon.carrier_mc ? `MC-${String(r.rateCon.carrier_mc).replace(/[^0-9]/g,'')}` : null },
+                    { label: 'DOT', val: r.rateCon.carrier_dot ? `DOT-${String(r.rateCon.carrier_dot).replace(/[^0-9]/g,'')}` : null },
+                  ].filter((i) => i.val).map((i, idx) => (
+                    <div key={idx} className="flex items-start justify-between gap-3 text-sm">
+                      <div className="text-[#0B1E3F]/55 text-xs mono uppercase tracking-wider mt-0.5">{i.label}</div>
+                      <div className="font-semibold text-[#0B1E3F] text-right truncate">{i.val}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-[#0B1E3F]/55">No carrier details visible on this rate con.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Load details</div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
             {[
-              { label: 'Broker name', val: r.rateCon.broker_name },
-              { label: 'MC number', val: r.rateCon.broker_mc ? `MC-${r.rateCon.broker_mc}` : null },
-              { label: 'DOT number', val: r.rateCon.broker_dot ? `DOT-${r.rateCon.broker_dot}` : null },
-              { label: 'Email', val: r.rateCon.broker_email },
-              { label: 'Phone', val: r.rateCon.broker_phone },
               { label: 'Load ID', val: r.rateCon.load_id },
               { label: 'Rate', val: r.rateCon.rate_amount != null ? `$${Number(r.rateCon.rate_amount).toLocaleString()}` : null },
               { label: 'Origin', val: r.rateCon.origin },

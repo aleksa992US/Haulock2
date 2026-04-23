@@ -14,11 +14,18 @@ export function isAnthropicConfigured(): boolean {
 }
 
 export type RateConExtraction = {
+  // BROKER = the company that issued/sent the rate con. This is who the carrier
+  // (the user uploading the PDF) wants to verify for fraud.
   broker_name: string | null;
   broker_mc: string | null;
   broker_dot: string | null;
   broker_email: string | null;
   broker_phone: string | null;
+  // CARRIER = the company being offered the load (the user). We capture this
+  // separately so we don't confuse it with the broker in the FMCSA lookup.
+  carrier_name: string | null;
+  carrier_mc: string | null;
+  carrier_dot: string | null;
   load_id: string | null;
   rate_amount: number | null;
   rate_currency: string | null;
@@ -36,9 +43,16 @@ export type RateConExtraction = {
 
 const MODEL = 'claude-haiku-4-5-20251001';
 
-const SYSTEM_PROMPT = `You are a freight fraud analyst. You receive raw OCR text extracted from a broker's rate confirmation document. Your job is to:
+const SYSTEM_PROMPT = `You are a freight fraud analyst. You receive raw OCR text extracted from a broker's rate confirmation document.
 
-1) Extract structured fields about the broker and the load.
+CRITICAL: A rate confirmation ALWAYS has TWO distinct parties. Identify them precisely:
+- BROKER = the company that issued/sent the rate con. Usually at the very top (letterhead, logo). Their name often appears near the "rate confirmation" title. This party has broker authority (MC docket number). You must return THEIR MC/DOT in the broker_* fields.
+- CARRIER = the trucking company being offered the load. Usually listed under a section titled "Carrier", "Carrier Information", "To:", "Truck:", or similar. This party has motor carrier authority and will actually move the freight. You must return THEIR MC/DOT in the carrier_* fields.
+
+NEVER swap them. If you only see one set of MC/DOT numbers and the document is clearly a broker rate con, assume those numbers belong to the broker. If two sets are visible, the one on the sender letterhead = broker, the one under "Carrier"/"To" section = carrier.
+
+Your job:
+1) Extract structured fields for the broker, the carrier, and the load.
 2) Score the document 0-100 for fraud signals based on writing style, urgency language, grammar oddities, mismatched formatting, and suspicious payment terms.
 
 Return ONLY a JSON object matching this exact schema, no prose, no markdown code fences:
@@ -48,6 +62,9 @@ Return ONLY a JSON object matching this exact schema, no prose, no markdown code
   "broker_dot": string | null,
   "broker_email": string | null,
   "broker_phone": string | null,
+  "carrier_name": string | null,
+  "carrier_mc": string | null,
+  "carrier_dot": string | null,
   "load_id": string | null,
   "rate_amount": number | null,
   "rate_currency": string | null,
@@ -116,6 +133,9 @@ export async function analyzeRateCon(ocrText: string): Promise<RateConExtraction
     broker_dot: parsed.broker_dot ?? null,
     broker_email: parsed.broker_email ?? null,
     broker_phone: parsed.broker_phone ?? null,
+    carrier_name: parsed.carrier_name ?? null,
+    carrier_mc: parsed.carrier_mc ?? null,
+    carrier_dot: parsed.carrier_dot ?? null,
     load_id: parsed.load_id ?? null,
     rate_amount: typeof parsed.rate_amount === 'number' ? parsed.rate_amount : null,
     rate_currency: parsed.rate_currency ?? null,
