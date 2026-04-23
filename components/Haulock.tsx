@@ -1816,6 +1816,100 @@ function FmcsaStatsCard() {
   );
 }
 
+function StripeOverviewCard() {
+  const [data, setData] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch('/api/admin/stripe-overview');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setData(j);
+    } catch (e: any) {
+      setError(e?.message || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const fmtMoney = (cents: number, currency = 'USD') =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">Stripe subscriptions</div>
+        <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        <Stat label="MRR (est.)" value={data ? fmtMoney(data.totals.mrr_cents, data.totals.currency) : '—'} sub="From active subs" />
+        <Stat label="Active" value={data?.totals?.active ?? '—'} />
+        <Stat label="Past due" value={data?.totals?.past_due ?? '—'} sub="Needs follow-up" />
+        <Stat label="Canceled" value={data?.totals?.canceled ?? '—'} />
+        <Stat label="New (30d)" value={data?.totals?.new_last_30d ?? '—'} />
+      </div>
+
+      {data?.planBreakdown && (
+        <div className="flex flex-wrap gap-2 mb-5">
+          {Object.entries(data.planBreakdown).map(([plan, count]) => (
+            <span key={plan} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0B1E3F]/5 text-xs mono">
+              <span className="uppercase tracking-wider text-[#0B1E3F]/60">{plan}</span>
+              <span className="font-semibold text-[#0B1E3F]">{String(count)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Recent subscriptions</div>
+      <div className="border border-[#0B1E3F]/10 rounded-lg overflow-hidden">
+        <div className="grid grid-cols-[1fr_100px_90px_90px_100px] gap-2 px-3 py-2 bg-[#0B1E3F]/5 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">
+          <div>Customer</div>
+          <div>Plan</div>
+          <div>Status</div>
+          <div className="text-right">MRR</div>
+          <div className="text-right">Created</div>
+        </div>
+        {data?.recent?.length ? (
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {data.recent.map((s: any) => {
+              const statusColor = s.status === 'active' || s.status === 'trialing' ? '#16A34A' : s.status === 'past_due' || s.status === 'unpaid' ? '#F59E0B' : '#DC2626';
+              return (
+                <div key={s.id} className="grid grid-cols-[1fr_100px_90px_90px_100px] gap-2 px-3 py-2 text-xs items-center">
+                  <div className="truncate" title={s.customer_email || s.id}>
+                    <div className="text-[#0B1E3F] font-medium truncate">{s.customer_name || s.customer_email || '—'}</div>
+                    {s.customer_email && s.customer_name && (
+                      <div className="text-[10px] text-[#0B1E3F]/55 truncate">{s.customer_email}</div>
+                    )}
+                  </div>
+                  <div className="mono text-[#0B1E3F]/80 capitalize">{s.plan || '—'}{s.billing ? ` · ${s.billing === 'annual' ? 'yr' : 'mo'}` : ''}</div>
+                  <div className="mono text-xs" style={{ color: statusColor }}>{s.status}</div>
+                  <div className="mono text-xs text-right text-[#0B1E3F]/70">
+                    {s.amount != null ? fmtMoney(s.billing === 'annual' ? Math.round(s.amount / 12) : s.amount, s.currency) : '—'}
+                  </div>
+                  <div className="mono text-xs text-right text-[#0B1E3F]/60">{timeAgo(new Date(s.created * 1000).toISOString())}</div>
+                </div>
+              );
+            })}
+          </div>
+        ) : loading ? (
+          <div className="px-3 py-6 text-center text-xs text-[#0B1E3F]/50">Loading…</div>
+        ) : (
+          <div className="px-3 py-6 text-center text-xs text-[#0B1E3F]/50">No Haulock subscriptions yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FmcsaPrewarmCard() {
   const [stats, setStats] = useState<{ total: number; staleOver30Days: number; oldest: string | null; newest: string | null } | null>(null);
   const [input, setInput] = useState('');
@@ -1985,6 +2079,8 @@ function AdminPage({ navigate }: any) {
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Scans this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.scansThisMonth}</div></div>
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Watchlist rows</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.watchlist}</div></div>
       </div>
+
+      <StripeOverviewCard />
 
       <FmcsaStatsCard />
 
@@ -4053,11 +4149,34 @@ function NotificationsTab({ user }: any) {
   );
 }
 
-function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
+function BillingTab({ user, navigate, planId: metaPlanId, plan: metaPlan, upgradeTarget }: any) {
+  // Stripe is the source of truth for subscription state. Fetch on mount and
+  // override anything stale in user_metadata.
+  const [subState, setSubState] = useState<any | null>(null);
+  const [subLoading, setSubLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/stripe/subscription');
+        const j = await r.json();
+        if (!cancelled && r.ok) setSubState(j);
+      } catch { /* non-fatal */ }
+      finally { if (!cancelled) setSubLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const stripePlanId: string = subState?.plan || metaPlanId;
+  const planId = stripePlanId;
+  const plan = PLAN_DETAILS[planId];
   const isPaid = PAID_PLANS.has(planId);
+  const hasRealStripeSub = Boolean(subState?.hasSubscription);
   const memberSince = user?.createdAt ? new Date(user.createdAt) : null;
   const planSince = user?.planChangedAt ? new Date(user.planChangedAt) : memberSince;
   const fmt = (d: Date | null) => d ? d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
+  const fmtMoney = (cents: number | null | undefined, currency = 'USD') =>
+    cents == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
 
   return (
     <div>
@@ -4066,7 +4185,11 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
         <div className="text-xs mono text-[#0B1E3F]/50">Account {user?.id ? `· ${String(user.id).slice(0, 8)}` : ''}</div>
       </div>
 
-      {!isPaid && (
+      {subLoading && (
+        <div className="mb-6 p-4 bg-[#0B1E3F]/5 rounded-xl text-sm text-[#0B1E3F]/60">Checking your subscription with Stripe…</div>
+      )}
+
+      {!subLoading && !isPaid && (
         <div className="mb-6 p-4 bg-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-xl flex items-start gap-3 text-[#0B1E3F]">
           <Lock className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <div className="text-sm">
@@ -4119,30 +4242,40 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
         </div>
       </div>
 
-      {isPaid && user?.stripeCustomerId && (
+      {!subLoading && hasRealStripeSub && (
         <div className="mb-6 p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl">
           <div className="flex items-start gap-3 mb-3">
             <FileText className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
             <div>
-              <div className="font-semibold text-[#0B1E3F] mb-1">Invoices &amp; payment method live in Stripe</div>
-              <div className="text-sm text-[#0B1E3F]/70">
-                Click below to open your secure Stripe billing portal — update your card, download every invoice,
-                switch between monthly and annual, or cancel. You return here when you&apos;re done.
+              <div className="font-semibold text-[#0B1E3F] mb-1">Subscription active in Stripe</div>
+              <div className="text-sm text-[#0B1E3F]/70 space-y-0.5">
+                <div>
+                  Plan: <span className="font-semibold text-[#0B1E3F]">{PLAN_DETAILS[subState.plan]?.label || subState.plan}</span> · {subState.interval === 'year' ? 'Annual' : 'Monthly'} · {fmtMoney(subState.amount, subState.currency)}{subState.interval === 'year' ? '/yr' : '/mo'}
+                </div>
+                <div>Status: <span className="mono text-[#16A34A]">{subState.status}</span>{subState.cancelAtPeriodEnd && subState.cancelAt ? <> · cancels {new Date(subState.cancelAt * 1000).toLocaleDateString()}</> : null}</div>
+                {subState.currentPeriodEnd && <div>Next renewal: {new Date(subState.currentPeriodEnd * 1000).toLocaleDateString()}</div>}
               </div>
             </div>
           </div>
-          <BillingPortalButton />
+          <div className="flex flex-wrap gap-2">
+            <BillingPortalButton />
+            {subState.latestInvoiceUrl && (
+              <a href={subState.latestInvoiceUrl} target="_blank" rel="noreferrer" className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white text-[#0B1E3F] rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 transition">
+                View latest invoice
+              </a>
+            )}
+          </div>
         </div>
       )}
 
-      {isPaid && !user?.stripeCustomerId && (
+      {!subLoading && !hasRealStripeSub && PAID_PLANS.has(metaPlanId) && (
         <div className="mb-6 p-5 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-xl">
           <div className="flex items-start gap-3 mb-3">
             <AlertTriangle className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
             <div>
               <div className="font-semibold text-[#0B1E3F] mb-1">Subscription not active yet</div>
               <div className="text-sm text-[#0B1E3F]/70">
-                Your plan is set to <strong>{plan?.label}</strong> in your profile, but you haven&apos;t completed Stripe checkout yet — so there&apos;s no invoice or billing history to show. Complete checkout to activate billing.
+                Your profile lists <strong>{metaPlan?.label}</strong>, but Stripe has no active subscription for you. Complete checkout to activate billing.
               </div>
             </div>
           </div>
