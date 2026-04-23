@@ -91,17 +91,19 @@ export async function GET() {
   } catch {}
   const scored = scoreCarrier(carrier);
 
-  await supabase.from('lookups').insert({
-    user_id: me.id,
-    query: queryStr,
-    name: scored.name,
-    mc: scored.mc || ownMc || null,
-    dot: scored.dot || ownDot || null,
-    score: scored.score,
-    verdict: scored.verdict,
-    source: 'auto',
-    data: scored,
-  }).then(() => null).catch(() => null);
+  try {
+    await supabase.from('lookups').insert({
+      user_id: me.id,
+      query: queryStr,
+      name: scored.name,
+      mc: scored.mc || ownMc || null,
+      dot: scored.dot || ownDot || null,
+      score: scored.score,
+      verdict: scored.verdict,
+      source: 'auto',
+      data: scored,
+    });
+  } catch {}
 
   return NextResponse.json({ ownMc: ownMc || null, ownDot: ownDot || null, report: scored });
 }
