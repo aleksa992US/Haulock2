@@ -27,6 +27,41 @@ export default function CheckoutPage() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [promoCode, setPromoCode] = useState('');
+  const [appliedCode, setAppliedCode] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [totals, setTotals] = useState<{
+    currency: string;
+    subtotal: number | null;
+    discount: number;
+    tax: number;
+    total: number | null;
+  } | null>(null);
+
+  const createSubscription = async (code: string | null) => {
+    setLoading(true); setError(null); setClientSecret(null);
+    try {
+      const r = await fetch('/api/stripe/create-subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: plan!.id, billing, ...(code ? { promoCode: code } : {}) }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Checkout init failed (${r.status})`);
+      if (j.totals) setTotals(j.totals);
+      // 100%-off coupon — subscription already active, no card needed.
+      if (j.noPaymentNeeded) {
+        window.location.href = `/settings?checkout=success&promo=${encodeURIComponent(code || '')}`;
+        return;
+      }
+      setClientSecret(j.clientSecret);
+      if (code) setAppliedCode(code); else setAppliedCode(null);
+    } catch (err: any) {
+      setError(err?.message || 'Checkout init failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!plan || plan.id === 'free') {
@@ -34,29 +69,24 @@ export default function CheckoutPage() {
       setLoading(false);
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch('/api/stripe/create-subscription', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plan: plan.id, billing }),
-        });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || `Checkout init failed (${r.status})`);
-        if (!cancelled) {
-          setClientSecret(j.clientSecret);
-          setLoading(false);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setError(err?.message || 'Checkout init failed');
-          setLoading(false);
-        }
-      }
-    })();
-    return () => { cancelled = true; };
+    createSubscription(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, billing]);
+
+  const applyPromo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = promoCode.trim();
+    if (!code) return;
+    setApplying(true);
+    await createSubscription(code);
+    setApplying(false);
+  };
+
+  const removePromo = async () => {
+    setPromoCode('');
+    setAppliedCode(null);
+    await createSubscription(null);
+  };
 
   const appearance = useMemo(() => ({
     theme: 'flat' as const,
@@ -85,6 +115,11 @@ export default function CheckoutPage() {
 
   const price = billing === 'annual' ? plan.priceAnnual : plan.price;
   const priceSuffix = billing === 'annual' ? '/yr' : '/mo';
+
+  const fmtMoney = (cents: number, currency = 'USD') =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
+  const hasDiscount = totals && totals.discount > 0;
+  const actualTotal = totals?.total != null ? fmtMoney(totals.total, totals.currency) : null;
 
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
@@ -119,7 +154,7 @@ export default function CheckoutPage() {
 
             {clientSecret && (
               <Elements stripe={getStripePromise()} options={{ clientSecret, appearance }}>
-                <CheckoutForm plan={plan.label} price={price} billing={billing} />
+                <CheckoutForm plan={plan.label} price={price} billing={billing} actualTotal={actualTotal} />
               </Elements>
             )}
           </div>
@@ -128,14 +163,64 @@ export default function CheckoutPage() {
             <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Order summary</div>
             <div className="text-2xl font-semibold mb-1">Haulock {plan.label}</div>
             <div className="text-sm text-[#0B1E3F]/65 mb-4">{plan.desc}</div>
-            <div className="flex items-baseline gap-1 mb-4">
-              <div className="text-4xl serif italic text-[#0B1E3F]">{price}</div>
-              <div className="text-[#0B1E3F]/60">{priceSuffix}</div>
+            <div className="flex items-baseline gap-1 mb-1">
+              <div className={`text-4xl serif italic ${hasDiscount ? 'text-[#0B1E3F]/40 line-through decoration-2' : 'text-[#0B1E3F]'}`}>{price}</div>
+              <div className={`${hasDiscount ? 'text-[#0B1E3F]/40 line-through' : 'text-[#0B1E3F]/60'}`}>{priceSuffix}</div>
             </div>
-            {billing === 'monthly' && plan.priceAnnualNum > 0 && (
+            {hasDiscount && totals && (
+              <div className="space-y-1 mb-4 text-sm">
+                <div className="flex justify-between text-[#0B1E3F]/70">
+                  <span>Subtotal</span>
+                  <span>{fmtMoney(totals.subtotal || 0, totals.currency)}</span>
+                </div>
+                <div className="flex justify-between text-[#16A34A]">
+                  <span>Discount ({appliedCode})</span>
+                  <span>−{fmtMoney(totals.discount, totals.currency)}</span>
+                </div>
+                {totals.tax > 0 && (
+                  <div className="flex justify-between text-[#0B1E3F]/70">
+                    <span>Tax</span>
+                    <span>{fmtMoney(totals.tax, totals.currency)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-2 mt-2 border-t border-[#0B1E3F]/10 font-semibold text-[#0B1E3F]">
+                  <span>Total due today</span>
+                  <span className="text-lg">{actualTotal}</span>
+                </div>
+              </div>
+            )}
+            {!hasDiscount && billing === 'monthly' && plan.priceAnnualNum > 0 && (
               <div className="text-xs mono text-[#16A34A] mb-4">Save {Math.round((1 - plan.priceAnnualNum / (plan.priceNum * 12)) * 100)}% with annual → <a href={`/checkout/${plan.id}?billing=annual`} className="underline">{plan.priceAnnual}/yr</a></div>
             )}
-            <div className="pt-4 border-t border-[#0B1E3F]/10 space-y-1.5">
+
+            <div className="pt-4 mt-4 border-t border-[#0B1E3F]/10">
+              {appliedCode ? (
+                <div className="flex items-center justify-between gap-2 p-3 bg-[#16A34A]/10 border border-[#16A34A]/30 rounded-lg">
+                  <div className="text-sm text-[#0B1E3F]">
+                    <span className="text-xs mono uppercase tracking-wider text-[#16A34A] mr-2">Code applied</span>
+                    <span className="font-semibold">{appliedCode}</span>
+                  </div>
+                  <button type="button" onClick={removePromo} className="text-xs text-[#0B1E3F]/60 hover:text-[#DC2626] transition">Remove</button>
+                </div>
+              ) : (
+                <form onSubmit={applyPromo}>
+                  <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 block mb-2">Promo code <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional)</span></label>
+                  <div className="flex gap-2">
+                    <input
+                      value={promoCode}
+                      onChange={(e) => setPromoCode(e.target.value)}
+                      placeholder="TESTFREE"
+                      className="flex-1 px-3 py-2 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F] text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
+                    />
+                    <button type="submit" disabled={!promoCode.trim() || applying} className="px-3 py-2 bg-[#0B1E3F] text-white rounded-lg text-xs font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-50">
+                      {applying ? '…' : 'Apply'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            <div className="pt-4 mt-4 border-t border-[#0B1E3F]/10 space-y-1.5">
               {plan.features.slice(0, 5).map((f, i) => (
                 <div key={i} className="text-sm text-[#0B1E3F]/75 flex items-start gap-2">
                   <span className="mt-1 w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0" />
@@ -150,7 +235,7 @@ export default function CheckoutPage() {
   );
 }
 
-function CheckoutForm({ plan, price, billing }: { plan: string; price: string; billing: Billing }) {
+function CheckoutForm({ plan, price, billing, actualTotal }: { plan: string; price: string; billing: Billing; actualTotal?: string | null }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -184,10 +269,10 @@ function CheckoutForm({ plan, price, billing }: { plan: string; price: string; b
         className="w-full py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-60 flex items-center justify-center gap-2"
       >
         {submitting && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-        {submitting ? 'Processing…' : `Subscribe · ${price}${billing === 'annual' ? '/yr' : '/mo'}`}
+        {submitting ? 'Processing…' : `Subscribe · ${actualTotal ? `${actualTotal} today` : `${price}${billing === 'annual' ? '/yr' : '/mo'}`}`}
       </button>
       <div className="text-xs text-[#0B1E3F]/50 text-center">
-        Secure payment · Powered by Stripe · You&apos;ll be charged {price}{billing === 'annual' ? ' per year' : ' per month'} by Haulock. Cancel anytime.
+        Secure payment · Powered by Stripe · {actualTotal ? `You'll be charged ${actualTotal} today` : `You'll be charged ${price}${billing === 'annual' ? ' per year' : ' per month'} by Haulock`}. Cancel anytime.
       </div>
     </form>
   );

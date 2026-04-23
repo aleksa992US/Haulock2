@@ -116,8 +116,10 @@ async function logFmcsaEvent(ev: { path: string; status: 'ok' | 'error'; httpSta
 async function fmcsaFetch(path: string, webKey: string): Promise<any> {
   const url = `${FMCSA_BASE}${path}${path.includes('?') ? '&' : '?'}webKey=${encodeURIComponent(webKey)}`;
 
-  // FMCSA's public API is flaky — retry 5xx and network errors with short backoff.
-  const maxAttempts = 3;
+  // FMCSA's public API is flaky — many hiccups are transient (single digit seconds).
+  // Be aggressive on retries: 5 attempts with jittered exponential backoff, 8s per
+  // attempt cap. Worst-case total budget ≈ 30s, leaves room for other checks.
+  const maxAttempts = 5;
   let lastError: Error | null = null;
   let lastHttpStatus: number | null = null;
 
@@ -126,7 +128,7 @@ async function fmcsaFetch(path: string, webKey: string): Promise<any> {
     let httpStatus: number | null = null;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12_000); // 12s per attempt
+      const timeoutId = setTimeout(() => controller.abort(), 8_000); // 8s per attempt
       const res = await fetch(url, {
         headers: { Accept: 'application/json' },
         cache: 'no-store',
@@ -143,7 +145,7 @@ async function fmcsaFetch(path: string, webKey: string): Promise<any> {
       }
 
       const body = await res.text().catch(() => res.statusText);
-      const retryable = res.status >= 500 && res.status !== 501;
+      const retryable = res.status >= 500 || res.status === 429 || res.status === 408;
       const err = new Error(`FMCSA ${res.status}: ${body.slice(0, 200)}`);
       logFmcsaEvent({
         path,
@@ -166,8 +168,10 @@ async function fmcsaFetch(path: string, webKey: string): Promise<any> {
       if (attempt === maxAttempts) throw lastError;
     }
 
-    // Exponential backoff: 400ms, 1200ms
-    await new Promise((r) => setTimeout(r, 400 * Math.pow(3, attempt - 1)));
+    // Jittered exponential backoff: ~500ms, 1s, 2s, 4s with +/-25% jitter.
+    const base = 500 * Math.pow(2, attempt - 1);
+    const jitter = base * 0.25 * (Math.random() * 2 - 1);
+    await new Promise((r) => setTimeout(r, Math.round(base + jitter)));
   }
 
   throw lastError || new Error(`FMCSA call failed after ${maxAttempts} attempts (last status ${lastHttpStatus})`);
@@ -301,14 +305,22 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
 // same MC/DOT and keeps us under QCMobile rate limits.
 // ------------------------------------------------------------------
 
-const FMCSA_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Cache NEVER expires — once a carrier is in our DB it stays. For carriers we've
+// seen before, FMCSA outages are invisible. Records older than this threshold
+// trigger a background refresh so the NEXT user gets fresh data, but the current
+// user is always served immediately.
+const FMCSA_REFRESH_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const inflight = new Map<string, Promise<any>>();
+
+// Tracks background refreshes so we don't fire multiple concurrent refreshes for
+// the same key. Different from `inflight` which holds foreground awaits.
+const refreshing = new Set<string>();
 
 function cacheKeyFor(query: ParsedQuery): string {
   return `${query.kind}:${query.value.toLowerCase()}`;
 }
 
-async function readCachedFmcsa(key: string, allowStale = false): Promise<any | null> {
+async function readCachedFmcsa(key: string): Promise<{ response: any; ageMs: number } | null> {
   try {
     // Dynamic import to keep the Edge-free boundary sane.
     const { getServiceSupabase } = await import('./supabase/service');
@@ -321,10 +333,7 @@ async function readCachedFmcsa(key: string, allowStale = false): Promise<any | n
       .limit(1)
       .maybeSingle();
     if (!data) return null;
-    if (allowStale) return data.response;
-    const age = Date.now() - new Date(data.cached_at).getTime();
-    if (age > FMCSA_CACHE_TTL_MS) return null;
-    return data.response;
+    return { response: data.response, ageMs: Date.now() - new Date(data.cached_at).getTime() };
   } catch {
     return null;
   }
@@ -344,34 +353,56 @@ async function writeCachedFmcsa(key: string, response: any): Promise<void> {
   }
 }
 
+function pathFor(query: ParsedQuery): string {
+  if (query.kind === 'dot') return `/${encodeURIComponent(query.value)}`;
+  if (query.kind === 'mc') return `/docket-number/${encodeURIComponent(query.value)}`;
+  return `/name/${encodeURIComponent(query.value)}`;
+}
+
+// Kick off a non-blocking refresh for a cache key. Deduped per key.
+function scheduleBackgroundRefresh(key: string, query: ParsedQuery, webKey: string) {
+  if (refreshing.has(key)) return;
+  refreshing.add(key);
+  fmcsaFetch(pathFor(query), webKey)
+    .then(async (raw) => {
+      const normalized = normalize(raw, query);
+      if (normalized) await writeCachedFmcsa(key, raw);
+    })
+    .catch(() => { /* swallow — we already served the user from cache */ })
+    .finally(() => { refreshing.delete(key); });
+}
+
 export async function lookupCarrier(query: ParsedQuery): Promise<CarrierReport> {
   const webKey = process.env.FMCSA_WEB_KEY;
   if (!webKey) return mockCarrier(query);
 
   const key = cacheKeyFor(query);
 
-  // 1. Global shared cache (24h TTL) — serves every user.
+  // 1. Persistent cache (NEVER EXPIRES). If we have this carrier in our DB, serve it
+  //    immediately — FMCSA outages become invisible. If the record is older than
+  //    FMCSA_REFRESH_AFTER_MS we kick off a background refresh so the next lookup
+  //    gets fresh data, but the current user still gets instant response.
   const cached = await readCachedFmcsa(key);
   if (cached) {
-    const normalized = normalize(cached, query);
-    if (normalized) return normalized;
+    const normalized = normalize(cached.response, query);
+    if (normalized) {
+      if (cached.ageMs > FMCSA_REFRESH_AFTER_MS) {
+        scheduleBackgroundRefresh(key, query, webKey);
+      }
+      return normalized;
+    }
   }
 
-  // 2. In-flight dedup — concurrent requests for the same key wait on one FMCSA call.
+  // 2. Cache miss — first time anyone's asked about this carrier. Hit FMCSA.
+  //    In-flight dedup: concurrent requests for the same key share one outgoing call.
   let promise = inflight.get(key);
   if (!promise) {
-    let path: string;
-    if (query.kind === 'dot') path = `/${encodeURIComponent(query.value)}`;
-    else if (query.kind === 'mc') path = `/docket-number/${encodeURIComponent(query.value)}`;
-    else path = `/name/${encodeURIComponent(query.value)}`;
-    promise = fmcsaFetch(path, webKey)
+    promise = fmcsaFetch(pathFor(query), webKey)
       .then(async (raw) => {
         await writeCachedFmcsa(key, raw);
         return raw;
       })
-      .finally(() => {
-        inflight.delete(key);
-      });
+      .finally(() => { inflight.delete(key); });
     inflight.set(key, promise);
   }
 
@@ -381,29 +412,11 @@ export async function lookupCarrier(query: ParsedQuery): Promise<CarrierReport> 
     if (!normalized) throw new Error('Carrier not found in FMCSA response');
     return normalized;
   } catch (err) {
-    // FMCSA is down or slow. Try to serve stale cached data (even if >24h old) before falling
-    // back to demo data — real-but-stale beats made-up-but-fresh for risk decisions.
-    const stale = await readCachedFmcsa(key, true);
-    if (stale) {
-      const normalized = normalize(stale, query);
-      if (normalized) {
-        normalized.flags.push({
-          sev: 'info',
-          title: 'FMCSA temporarily unavailable — showing cached data',
-          desc: err instanceof Error ? err.message : 'Unknown error',
-          pts: 0,
-        });
-        return normalized;
-      }
-    }
-    const fallback = mockCarrier(query);
-    fallback.flags.push({
-      sev: 'info',
-      title: 'FMCSA lookup failed — showing demo data',
-      desc: err instanceof Error ? err.message : 'Unknown error',
-      pts: 0,
-    });
-    return fallback;
+    // Cache miss AND FMCSA is down — we have nothing real to serve. Surface a proper
+    // error so the caller can show a retry UI. No fabricated data.
+    throw new Error(
+      `FMCSA is temporarily unavailable and we have no cached record for this identifier. ${err instanceof Error ? err.message : 'Unknown error'}`,
+    );
   }
 }
 

@@ -107,12 +107,18 @@ export async function POST(req: Request) {
 
   const carrierPromise: Promise<CarrierReport | null> = parsed
     ? (async () => {
-        const c = await lookupCarrier(parsed);
-        if (c?.address) {
-          const addressCheck = await checkAddress(c.address, c.name);
-          if (addressCheck.configured) c.addressCheck = addressCheck;
+        try {
+          const c = await lookupCarrier(parsed);
+          if (c?.address) {
+            const addressCheck = await checkAddress(c.address, c.name);
+            if (addressCheck.configured) c.addressCheck = addressCheck;
+          }
+          return c;
+        } catch {
+          // FMCSA couldn't verify — let the route fall back to Claude's extracted data
+          // and show the proper "unavailable" banner rather than failing the whole scan.
+          return null;
         }
-        return c;
       })()
     : Promise.resolve(null);
 
@@ -132,6 +138,18 @@ export async function POST(req: Request) {
     verdict: 'low' as const,
     flags: [],
   };
+
+  // When FMCSA fails (mockCarrier fallback kicked in), the hardcoded mock returns
+  // an unrelated demo name like "Summit Logistics Inc" that doesn't match the broker
+  // the user is trying to verify. Overlay Claude's extraction on top of the mock so
+  // the report at least reflects the actual rate con content. The "FMCSA lookup
+  // failed" flag is still present, so the UI banner correctly warns the user.
+  if (carrier.source === 'mock') {
+    if (extraction.broker_name) carrier.name = extraction.broker_name;
+    if (extraction.broker_mc) carrier.mc = String(extraction.broker_mc).replace(/[^0-9]/g, '') || carrier.mc;
+    if (extraction.broker_dot) carrier.dot = String(extraction.broker_dot).replace(/[^0-9]/g, '') || carrier.dot;
+    if (extraction.broker_phone) carrier.phone = extraction.broker_phone;
+  }
 
   // 5) Inject Claude stylistic flag into carrier flags
   if (extraction.fraud_score >= 61) {

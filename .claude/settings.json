@@ -12,7 +12,9 @@
       "Bash(xxd)",
       "Bash(pbcopy)",
       "Bash(pbpaste)",
-      "Bash(echo \"Length in clipboard: $\\(pbpaste)"
+      "Bash(echo \"Length in clipboard: $\\(pbpaste)",
+      "Bash(awk -F= '{print $1 \" = \" \\(length\\($2\\) > 0 ? \"SET \\(\"length\\($2\\)\" chars\\)\" : \"EMPTY\"\\)}')",
+      "Bash(pkill -f \"next dev\")"
     ]
   }
 }

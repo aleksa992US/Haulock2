@@ -89,7 +89,19 @@ export async function GET(req: Request) {
     }
   }
 
-  const carrier = await lookupCarrier(parsed);
+  let carrier;
+  try {
+    carrier = await lookupCarrier(parsed);
+  } catch (err: any) {
+    return NextResponse.json(
+      {
+        error: 'FMCSA is temporarily unavailable. Please try again in a minute.',
+        code: 'upstream_unavailable',
+        detail: err?.message,
+      },
+      { status: 503, headers: { 'Retry-After': '30' } },
+    );
+  }
   if (carrier.address) {
     const addressCheck = await checkAddress(carrier.address, carrier.name);
     if (addressCheck.configured) carrier.addressCheck = addressCheck;

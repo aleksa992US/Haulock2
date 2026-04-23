@@ -49,6 +49,7 @@ function userFromSession(u: any): any {
     dot: meta.dot || '',
     plan: meta.plan || '',
     planChangedAt: meta.plan_changed_at || null,
+    stripeCustomerId: meta.stripe_customer_id || null,
     fleet_size: meta.fleet_size || 1,
     createdAt: u.created_at || null,
     notificationEmail: meta.notification_email || '',
@@ -1294,7 +1295,7 @@ function Plan({ user, setPlan }: any) {
   const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly');
   const [error, setError] = useState<string | null>(null);
   const current = (user?.plan || '').toLowerCase();
-  const hasStripeCustomer = Boolean(user?.id && (user?.stripeCustomerId || user?.planChangedAt));
+  const hasStripeCustomer = Boolean(user?.stripeCustomerId);
   const tiers = Object.values(PLANS);
 
   const openPortal = async () => {
@@ -1311,17 +1312,23 @@ function Plan({ user, setPlan }: any) {
 
   const choose = async (id: string) => {
     setError(null);
+
+    // Free plan selection:
+    //  - Has real Stripe subscription → portal (so Stripe can properly cancel)
+    //  - No Stripe customer → just flip metadata locally
     if (id === 'free') {
-      // Downgrades on a paid plan go through Stripe Portal so the subscription
-      // is properly cancelled. Free-to-free / no-customer: flip metadata locally.
-      if (PAID_PLANS.has(current)) { await openPortal(); return; }
+      if (PAID_PLANS.has(current) && hasStripeCustomer) { await openPortal(); return; }
       setPending(id);
       try { await setPlan(id); } finally { setPending(null); }
       return;
     }
-    // Paid plans → embedded checkout. Paid-to-paid plan change also routes through
-    // the portal because Stripe handles proration there.
-    if (PAID_PLANS.has(current) && id !== current) { await openPortal(); return; }
+
+    // Paid plan selection:
+    //  - Has real Stripe subscription AND picking a different paid plan → portal
+    //    (Stripe handles proration / upgrade/downgrade there)
+    //  - No Stripe customer yet (plan metadata is stale or never subscribed) →
+    //    treat as a fresh checkout. This is the common path on first real purchase.
+    if (PAID_PLANS.has(current) && hasStripeCustomer && id !== current) { await openPortal(); return; }
     if (typeof window !== 'undefined') {
       window.location.href = `/checkout/${id}?billing=${billing}`;
     }
@@ -1809,6 +1816,103 @@ function FmcsaStatsCard() {
   );
 }
 
+function FmcsaPrewarmCard() {
+  const [stats, setStats] = useState<{ total: number; staleOver30Days: number; oldest: string | null; newest: string | null } | null>(null);
+  const [input, setInput] = useState('');
+  const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadStats = async () => {
+    try {
+      const r = await fetch('/api/admin/fmcsa-prewarm');
+      if (!r.ok) return;
+      setStats(await r.json());
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { loadStats(); }, []);
+
+  const run = async () => {
+    setError(null); setResult(null);
+    const identifiers = input.split(/[\s,;\n]+/).map((s) => s.trim()).filter(Boolean);
+    if (!identifiers.length) { setError('Paste at least one MC or DOT number.'); return; }
+    if (identifiers.length > 200) { setError(`Up to 200 at a time. You pasted ${identifiers.length}.`); return; }
+    setLoading(true);
+    try {
+      const r = await fetch('/api/admin/fmcsa-prewarm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifiers }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setResult(j);
+      loadStats();
+    } catch (err: any) {
+      setError(err?.message || 'Prewarm failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString() : '—';
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">FMCSA cache · permanent storage</div>
+          <div className="text-sm text-[#0B1E3F]/70 mt-1">Carriers in your cache are served instantly even when FMCSA&apos;s API is down.</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <Stat label="Carriers cached" value={stats?.total ?? '—'} />
+        <Stat label="Needs refresh (30d+)" value={stats?.staleOver30Days ?? '—'} sub="Auto-refreshed in background" />
+        <Stat label="Oldest record" value={stats ? fmtDate(stats.oldest) : '—'} />
+        <Stat label="Newest record" value={stats ? fmtDate(stats.newest) : '—'} />
+      </div>
+
+      <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Pre-warm by MC or DOT</div>
+      <div className="text-sm text-[#0B1E3F]/65 mb-2">Paste up to 200 MC or DOT numbers (space, comma, semicolon, or newline separated). We&apos;ll fetch each from FMCSA and cache permanently.</div>
+      <textarea
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        placeholder={'MC-226104\nDOT-1827493\nMC-612443\nMC-921870'}
+        rows={5}
+        className="w-full px-4 py-2.5 mb-3 bg-white border border-[#0B1E3F]/15 rounded-lg font-mono text-sm focus:outline-none focus:border-[#0B1E3F] text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
+      />
+
+      <div className="flex items-center gap-3">
+        <button onClick={run} disabled={loading} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-60 flex items-center gap-2">
+          {loading && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+          {loading ? 'Warming cache…' : 'Warm cache'}
+        </button>
+        <div className="text-xs text-[#0B1E3F]/55">Takes ~1-2 seconds per carrier. Safe to run repeatedly.</div>
+      </div>
+
+      {error && <div className="mt-3 text-sm text-[#DC2626]">{error}</div>}
+      {result && (
+        <div className="mt-4 p-4 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl">
+          <div className="text-sm font-medium text-[#0B1E3F]">
+            {result.succeeded} succeeded · {result.failed} failed{result.alreadyCached ? ` · ${result.alreadyCached} already cached` : ''}
+          </div>
+          {result.errors?.length > 0 && (
+            <details className="mt-2 text-xs text-[#0B1E3F]/70">
+              <summary className="cursor-pointer">Show failures ({result.errors.length})</summary>
+              <div className="mt-2 space-y-1 mono">
+                {result.errors.slice(0, 20).map((e: any, i: number) => (
+                  <div key={i}>{e.identifier} → {e.error}</div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Stat({ label, value, sub }: { label: string; value: any; sub?: string | null }) {
   return (
     <div className="p-3 bg-[#0B1E3F]/5 rounded-lg">
@@ -1883,6 +1987,8 @@ function AdminPage({ navigate }: any) {
       </div>
 
       <FmcsaStatsCard />
+
+      <FmcsaPrewarmCard />
 
       <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
         <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email, name, company, or MC…" className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40" />
@@ -2476,6 +2582,8 @@ function VerifyTool({ navigate }: any) {
           const j = await r.json();
           if (!r.ok) {
             if (r.status === 402) throw new Error(j?.error || 'Monthly lookup limit reached. Upgrade your plan for more.');
+            if (r.status === 503) throw new Error(j?.error || 'FMCSA is temporarily unavailable. Please try again in a minute.');
+            if (r.status === 429) throw new Error(j?.error || 'Too many lookups — slow down and try again shortly.');
             throw new Error(j?.error || `Lookup failed (${r.status})`);
           }
           return j;
@@ -2726,10 +2834,15 @@ function Report({ report, navigate }: any) {
               )}
             </div>
             {r.source === 'mock' && (
-              <div className="mt-2 text-xs mono text-[#F59E0B]">
-                {(r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title))
-                  ? 'FMCSA servers are slow or down right now — this report uses demo data. Try again in a minute.'
-                  : 'Demo data — set FMCSA_WEB_KEY in .env.local for live lookups.'}
+              <div className="mt-2 p-3 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg text-xs text-[#0B1E3F] max-w-xl">
+                {(r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title)) ? (
+                  <>
+                    <div className="font-semibold text-[#F59E0B] mb-1 mono uppercase tracking-wider text-[10px]">FMCSA unavailable</div>
+                    <div>Identity fields (name, MC, DOT) show what Claude pulled from your PDF. Authority status, insurance, crash history, and fleet size below are placeholder demo values — retry in a minute to get FMCSA&apos;s real data.</div>
+                  </>
+                ) : (
+                  <>Demo data — set FMCSA_WEB_KEY in .env.local for live lookups.</>
+                )}
               </div>
             )}
             {r.cached && (
@@ -3480,6 +3593,8 @@ function SearchHistory({ navigate }: any) {
           const j = await r.json();
           if (!r.ok) {
             if (r.status === 402) throw new Error(j?.error || 'Monthly lookup limit reached. Upgrade your plan.');
+            if (r.status === 503) throw new Error(j?.error || 'FMCSA is temporarily unavailable. Please try again in a minute.');
+            if (r.status === 429) throw new Error(j?.error || 'Too many lookups — slow down and try again shortly.');
             throw new Error(j?.error || `Lookup failed (${r.status})`);
           }
           return j;
@@ -4004,7 +4119,7 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
         </div>
       </div>
 
-      {isPaid && (
+      {isPaid && user?.stripeCustomerId && (
         <div className="mb-6 p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl">
           <div className="flex items-start gap-3 mb-3">
             <FileText className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
@@ -4017,6 +4132,21 @@ function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
             </div>
           </div>
           <BillingPortalButton />
+        </div>
+      )}
+
+      {isPaid && !user?.stripeCustomerId && (
+        <div className="mb-6 p-5 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-xl">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertTriangle className="w-5 h-5 text-[#F59E0B] mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="font-semibold text-[#0B1E3F] mb-1">Subscription not active yet</div>
+              <div className="text-sm text-[#0B1E3F]/70">
+                Your plan is set to <strong>{plan?.label}</strong> in your profile, but you haven&apos;t completed Stripe checkout yet — so there&apos;s no invoice or billing history to show. Complete checkout to activate billing.
+              </div>
+            </div>
+          </div>
+          <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-medium hover:bg-[#FF6B35]/90 transition">Complete checkout</button>
         </div>
       )}
 
@@ -4056,17 +4186,50 @@ function BillingPortalButton() {
 
 function SettingsPage({ user, navigate, initialTab }: any) {
   const [tab, setTab] = useState(initialTab || 'profile');
+  const [checkoutSuccess, setCheckoutSuccess] = useState<{ promo: string | null } | null>(null);
   const planId = (user?.plan || '').toLowerCase();
   const plan = PLAN_DETAILS[planId];
   const ladderIdx = PLAN_LADDER.indexOf(planId as any);
   const nextPlan = ladderIdx >= 0 && ladderIdx < PLAN_LADDER.length - 1 ? PLAN_LADDER[ladderIdx + 1] : null;
   const upgradeTarget = nextPlan ? PLAN_DETAILS[nextPlan]?.label ?? null : null;
+
+  // When Stripe redirects back after checkout with ?checkout=success, jump to
+  // the Billing tab, show a thank-you banner, and strip the URL params so a
+  // refresh doesn't keep showing the banner.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('checkout') === 'success') {
+      setTab('billing');
+      setCheckoutSuccess({ promo: params.get('promo') });
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   return (
     <div className="space-y-8 text-[#0B1E3F]">
       <div>
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Settings</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Your account.</h1>
       </div>
+
+      {checkoutSuccess && (
+        <div className="bg-[#16A34A]/5 border border-[#16A34A]/30 rounded-2xl p-6 flex items-start gap-4 card-shadow">
+          <div className="w-12 h-12 rounded-full bg-[#16A34A] flex items-center justify-center flex-shrink-0">
+            <CheckCircle2 className="w-6 h-6 text-white" />
+          </div>
+          <div className="flex-1">
+            <div className="text-xl font-semibold text-[#0B1E3F] mb-1">Payment successful — welcome to Haulock.</div>
+            <div className="text-sm text-[#0B1E3F]/70">
+              Your subscription is live in Stripe{checkoutSuccess.promo ? <> (promo <span className="mono font-semibold">{checkoutSuccess.promo}</span> applied)</> : null}.
+              A receipt has been emailed to <span className="mono text-[#0B1E3F]">{user?.email}</span>. Your plan will activate locally as soon as the Stripe webhook reaches this server. If you&apos;re testing on localhost with live keys, the webhook fires to your production URL, not here — deploy or visit haulock.com to see it sync.
+            </div>
+          </div>
+          <button onClick={() => setCheckoutSuccess(null)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F] transition" aria-label="Dismiss">
+            <XCircle className="w-5 h-5" />
+          </button>
+        </div>
+      )}
       <div className="grid md:grid-cols-4 gap-8">
         <div className="space-y-1">
           {['profile', 'billing', 'team', 'api', 'notifications'].map((t) => (
