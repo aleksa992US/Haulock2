@@ -26,12 +26,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ skipped: 'Not high risk' }, { status: 200 });
   }
 
+  // Delivery preference: notification_email overrides profile email if set.
+  const meta = user.user_metadata || {};
+  const override = typeof meta.notification_email === 'string' ? meta.notification_email.trim() : '';
+  const toAddress = override || user.email;
+
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
   const { subject, html } = highRiskAlertTemplate({ report, siteUrl });
 
   try {
-    const sent = await sendEmail({ to: user.email, subject, html });
-    return NextResponse.json({ ok: true, id: sent?.id ?? null });
+    const sent = await sendEmail({ to: toAddress, subject, html });
+    return NextResponse.json({ ok: true, id: sent?.id ?? null, sentTo: toAddress });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Send failed' }, { status: 500 });
   }

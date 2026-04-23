@@ -7,7 +7,7 @@ import {
   Users, Settings, LogOut, ChevronRight, ArrowRight, Lock, Zap, Database, Eye, Flag,
   Clock, MapPin, Phone, Mail, Building2, Download, Share2, Plus, BarChart3, Menu,
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
-  Facebook, Instagram, Linkedin, Twitter, Youtube, Globe,
+  Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
@@ -48,7 +48,13 @@ function userFromSession(u: any): any {
     mc: meta.mc || '',
     dot: meta.dot || '',
     plan: meta.plan || '',
+    planChangedAt: meta.plan_changed_at || null,
     fleet_size: meta.fleet_size || 1,
+    createdAt: u.created_at || null,
+    notificationEmail: meta.notification_email || '',
+    notifyWatchlist: meta.notify_watchlist !== false,
+    notifyWeeklyDigest: meta.notify_weekly_digest !== false,
+    notifyCommunity: meta.notify_community !== false,
   };
 }
 
@@ -121,7 +127,7 @@ export default function Haulock() {
   const setPlan = async (plan: string) => {
     const sb = getSupabase();
     if (sb) {
-      const { data, error } = await sb.auth.updateUser({ data: { plan } });
+      const { data, error } = await sb.auth.updateUser({ data: { plan, plan_changed_at: new Date().toISOString() } });
       if (!error && data.user) setUser(userFromSession(data.user));
       // Mirror the plan to the team (auto-creates a team for the owner if missing).
       fetch('/api/team/sync-plan', {
@@ -190,11 +196,11 @@ function Landing({ navigate }: any) {
               Know who&apos;s on the <span className="serif italic">other end</span> of the rate con.
             </h1>
             <p className="fade-up fade-up-3 text-lg md:text-xl text-[#0B1E3F]/70 max-w-xl mb-10 leading-relaxed">
-              Haulock verifies every broker in seconds. Flags double-brokers, identity fraud, and ghost MCs before you ever hook the trailer.
+              Verify any broker or carrier in seconds. Cross-checks FMCSA, the company website, social presence, and Google Business listing — catching double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.
             </p>
             <div className="fade-up fade-up-4 flex flex-col sm:flex-row gap-3 mb-12">
               <button onClick={() => navigate('signup')} className="group px-7 py-4 bg-[#0B1E3F] text-white text-base font-medium rounded-full hover:bg-[#0B1E3F]/90 transition flex items-center justify-center gap-2 card-shadow-lg">
-                Check a broker free <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+                Check any broker or carrier free <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
               </button>
               <button className="group px-7 py-4 border border-[#0B1E3F]/20 bg-white text-[#0B1E3F] text-base font-medium rounded-full hover:bg-[#0B1E3F]/5 transition flex items-center justify-center gap-2">
                 <PlayCircle className="w-4 h-4" /> Watch 60-sec demo
@@ -202,7 +208,7 @@ function Landing({ navigate }: any) {
             </div>
             <div className="fade-up fade-up-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-[#0B1E3F]/60">
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> Official FMCSA data</div>
-              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 4,200+ carriers</div>
+              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 4,200+ carriers & brokers</div>
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> No credit card</div>
             </div>
           </div>
@@ -217,14 +223,14 @@ function Landing({ navigate }: any) {
           {[...Array(2)].map((_, round) => (
             <div key={round} className="flex gap-16 items-center">
               {[
-                { mc: 'MC-847291', v: 'HIGH RISK', color: '#DC2626' },
-                { mc: 'MC-226104', v: 'VERIFIED', color: '#16A34A' },
-                { mc: 'MC-498732', v: 'CAUTION', color: '#F59E0B' },
-                { mc: 'MC-329184', v: 'HIGH RISK', color: '#DC2626' },
-                { mc: 'MC-671823', v: 'VERIFIED', color: '#16A34A' },
-                { mc: 'MC-552817', v: 'HIGH RISK', color: '#DC2626' },
-                { mc: 'MC-112739', v: 'CAUTION', color: '#F59E0B' },
-                { mc: 'MC-283910', v: 'HIGH RISK', color: '#DC2626' },
+                { mc: 'MC-847•••', v: 'HIGH RISK', color: '#DC2626' },
+                { mc: 'MC-226•••', v: 'VERIFIED', color: '#16A34A' },
+                { mc: 'MC-498•••', v: 'CAUTION', color: '#F59E0B' },
+                { mc: 'MC-329•••', v: 'HIGH RISK', color: '#DC2626' },
+                { mc: 'MC-671•••', v: 'VERIFIED', color: '#16A34A' },
+                { mc: 'MC-552•••', v: 'HIGH RISK', color: '#DC2626' },
+                { mc: 'MC-112•••', v: 'CAUTION', color: '#F59E0B' },
+                { mc: 'MC-283•••', v: 'HIGH RISK', color: '#DC2626' },
               ].map((item, i) => (
                 <div key={i} className="flex items-center gap-3 text-sm shrink-0">
                   <span className="mono" style={{ color: 'rgba(11,30,63,0.6)' }}>{item.mc}</span>
@@ -241,8 +247,8 @@ function Landing({ navigate }: any) {
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <BigStat value="$47M" label="prevented fraud losses" />
-            <BigStat value="4,247" label="active carriers" />
-            <BigStat value="287K" label="broker lookups / month" />
+            <BigStat value="4,247" label="active carriers & brokers" />
+            <BigStat value="287K" label="verifications / month" />
             <BigStat value="94%" label="fraud detection rate" />
           </div>
         </div>
@@ -268,8 +274,8 @@ function Landing({ navigate }: any) {
               <div className="flex items-center justify-between mb-6">
                 <div className="text-[#0B1E3F]">
                   <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1">Haulock scan · 2.1s</div>
-                  <div className="text-2xl font-semibold text-[#0B1E3F]">Acme Freight Brokers LLC</div>
-                  <div className="text-sm mono text-[#0B1E3F]/50">MC-847291 · DOT-3291847</div>
+                  <div className="text-2xl font-semibold text-[#0B1E3F]">Westport Logistics Group LLC</div>
+                  <div className="text-sm mono text-[#0B1E3F]/50">MC-637••• · DOT-3019•••</div>
                 </div>
                 <RiskGauge score={78} size="sm" />
               </div>
@@ -306,15 +312,18 @@ function Landing({ navigate }: any) {
       <section id="product" className="py-24 px-6 bg-[#F5F3EE] text-[#0B1E3F] scroll-mt-20">
         <div className="max-w-7xl mx-auto">
           <div className="mb-16 max-w-2xl">
-            <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Three layers of protection</div>
+            <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— What we check</div>
             <h2 className="text-4xl md:text-5xl leading-tight text-[#0B1E3F]">
-              Built for carriers who&apos;ve already <span className="serif italic">been burned.</span>
+              Built for carriers and brokers who&apos;ve already <span className="serif italic">been burned.</span>
             </h2>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
-            <FeatureCard icon={Search} iconBg="#0B1E3F" title="Instant broker verification" desc="Paste an MC or DOT. Get a risk score, authority age, insurance, and full history in under 3 seconds." stat="2.1s" statLabel="avg. lookup time" />
-            <FeatureCard icon={FileText} iconBg="#FF6B35" title="Rate con analyzer" desc="Drop a PDF. We extract the broker, verify email domains, and flag spoofed identities automatically." stat="94%" statLabel="fraud detection rate" />
-            <FeatureCard icon={Radio} iconBg="#16A34A" title="Live community network" desc="Real-time feed of scams reported by other carriers. Get alerted the moment a broker on your watchlist is flagged." stat="4,200+" statLabel="verified reports" />
+            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Paste an MC, DOT, or company name. Get authority status, age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="2.1s" statLabel="avg. lookup time" />
+            <FeatureCard icon={Globe} iconBg="#FF6B35" title="Website & domain check" desc="We find the counterparty's real website, check WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
+            <FeatureCard icon={Users} iconBg="#16A34A" title="Social media footprint" desc="Scans Facebook, LinkedIn, Twitter/X, Instagram, YouTube, and TikTok for the company's presence. Real companies leave a trail. Ghost identities don't." stat="6" statLabel="platforms matched" />
+            <FeatureCard icon={MapPin} iconBg="#0B1E3F" title="Google Business address" desc="Cross-checks the FMCSA-registered address against Google Places. Flags UPS Store mailboxes, residential homes, and addresses shared by unrelated businesses." stat="Places" statLabel="real-world match" />
+            <FeatureCard icon={FileText} iconBg="#FF6B35" title="Rate con analyzer" desc="Drop a PDF. We extract the broker, verify the email domain against the registered MC, and flag spoofed letterheads and impersonated identities automatically." stat="94%" statLabel="fraud detection rate" />
+            <FeatureCard icon={Radio} iconBg="#16A34A" title="Community fraud network" desc="Real-time feed of scams reported by other carriers and brokers. Get alerted the moment a counterparty on your watchlist is flagged by someone in the network." stat="4,200+" statLabel="verified reports" />
           </div>
         </div>
       </section>
@@ -329,9 +338,9 @@ function Landing({ navigate }: any) {
             </div>
             <div className="space-y-4">
               {[
-                { n: '01', icon: Zap, title: 'Enter MC, DOT, or drop a rate con', desc: 'Works with any identifier. Type it, paste it, or drop a PDF. Upload even works from your phone in the cab.' },
-                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority, insurance, address history, community reports, email domain age, and more.' },
-                { n: '03', icon: Target, title: 'Get a score and a clear verdict', desc: 'Plain English. No jargon. "Book this load" or "Walk away." Share with your dispatcher in one click.' },
+                { n: '01', icon: Zap, title: 'Enter MC, DOT, company name, or drop a rate con', desc: 'Works with any identifier — for a broker or a carrier. Type it, paste it, or drop a PDF. Upload works from your phone in the cab or the desk.' },
+                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority & insurance, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, community reports, and more.' },
+                { n: '03', icon: Target, title: 'Get a score and a clear verdict', desc: 'Plain English. No jargon. "Book this load" or "Walk away." Share with your dispatcher or ops team in one click.' },
               ].map((step, i) => (
                 <div key={i} className="group bg-white border border-[#0B1E3F]/10 rounded-2xl p-7 hover:border-[#0B1E3F]/20 transition card-shadow text-[#0B1E3F]">
                   <div className="flex items-start gap-5">
@@ -420,9 +429,9 @@ function Landing({ navigate }: any) {
           <div className="text-xs mono uppercase tracking-[0.2em] text-[#0B1E3F]/50 mb-5 text-center">— 14 data sources, cross-checked in 2.1 seconds</div>
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-3">
             {[
-              'FMCSA SAFER', 'L&I authority', 'MCS-150', 'Insurance filings', 'BOC-3 process agents',
-              'DOT inspection history', 'Crash reports', 'Authority history', 'Address registry',
-              'Email domain age', 'Community fraud feed', 'OFAC sanctions', 'State LLC registries', 'WHOIS records',
+              'FMCSA SAFER', 'L&I authority status', 'MCS-150 filings', 'Insurance filings', 'Crash & inspection history',
+              'Authority history', 'Company website', 'Domain WHOIS', 'DNS (MX / SPF)', 'Google Safe Browsing',
+              'Google Business address', 'Social profiles (6 platforms)', 'Disposable email registry', 'Community fraud feed',
             ].map((src, i) => (
               <span key={i} className="px-3 py-1.5 bg-[#F5F3EE] border border-[#0B1E3F]/10 rounded-full text-xs mono text-[#0B1E3F]/70">
                 {src}
@@ -471,10 +480,10 @@ function Landing({ navigate }: any) {
           </div>
           <div className="space-y-3">
             {[
-              { q: 'Where does Haulock get its broker data?', a: 'Directly from FMCSA (the official federal motor carrier database), plus a proprietary community-reported fraud network with 4,200+ verified carriers.' },
-              { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Those tools are built for brokers vetting carriers. Haulock is built for carriers vetting brokers — the direction fraud usually flows.' },
+              { q: 'Where does Haulock get its data?', a: 'FMCSA for authority, insurance, and safety history. WHOIS and DNS for domain age and email infrastructure. Google Places for address verification. Public social networks for company footprint. Plus a proprietary community-reported fraud network with 4,200+ verified carriers and brokers.' },
+              { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools only vet in one direction — brokers checking carriers. Haulock works both ways: carriers verifying brokers, brokers verifying carriers, and either side verifying shippers. Fraud flows both directions.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings.' },
-              { q: 'Does it work for freight brokers too?', a: 'Yes. Brokers use Haulock to vet other brokers and shippers before entering co-brokering relationships.' },
+              { q: 'Does it work for freight brokers?', a: 'Yes — Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, and to vet other brokers before entering co-brokering relationships. Same website, social, and Google Business checks apply in both directions.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS.' },
             ].map((faq, i) => <FaqItem key={i} {...faq} />)}
           </div>
@@ -488,10 +497,10 @@ function Landing({ navigate }: any) {
             Don&apos;t get caught hauling for a ghost.
           </h2>
           <p className="text-xl text-[#0B1E3F]/60 mb-12 max-w-xl mx-auto">
-            Join 4,200+ carriers who check every broker before booking.
+            Join 4,200+ carriers and brokers who verify every counterparty before booking.
           </p>
           <button onClick={() => navigate('signup')} className="group px-10 py-5 bg-[#0B1E3F] text-white text-lg font-medium rounded-full hover:bg-[#0B1E3F]/90 transition inline-flex items-center gap-2 card-shadow-lg">
-            Check a broker free <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition" />
+            Check any broker or carrier free <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition" />
           </button>
           <div className="mt-6 text-sm text-[#0B1E3F]/50">No credit card required. 5 free lookups / month.</div>
         </div>
@@ -502,12 +511,110 @@ function Landing({ navigate }: any) {
   );
 }
 
+const HERO_SCENARIOS: Array<{
+  name: string;
+  mc: string;
+  dot: string;
+  score: number;
+  badgeLabel: string;
+  badgeColor: string;
+  verdictTitle: string;
+  verdictLine: string;
+  verdictTone: 'danger' | 'warn' | 'good';
+  flags: Array<{ s: 'critical' | 'warning' | 'good'; t: string; i: any }>;
+  scanTime: string;
+  dataSources: number;
+  communityAlert: string;
+}> = [
+  {
+    name: 'Nationwide Cargo Solutions Inc',
+    mc: 'MC-612•••', dot: 'DOT-2184•••', score: 84,
+    badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
+    verdictTitle: 'Do not book', verdictLine: '5 critical red flags · Suspected double-brokering', verdictTone: 'danger',
+    flags: [
+      { s: 'critical', t: 'Matches known fraud pattern (identity reuse)', i: Flag },
+      { s: 'critical', t: 'DBA name changed 2× in past 90 days', i: AlertTriangle },
+      { s: 'warning', t: 'VOIP phone number · no physical office', i: Phone },
+    ],
+    scanTime: '1.8s', dataSources: 14,
+    communityAlert: '7 carriers flagged this broker in last 30 days',
+  },
+  {
+    name: 'Summit Logistics Group',
+    mc: 'MC-921•••', dot: 'DOT-4012•••', score: 91,
+    badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
+    verdictTitle: 'Do not book', verdictLine: '6 critical red flags · Confirmed payment fraud', verdictTone: 'danger',
+    flags: [
+      { s: 'critical', t: 'Authority granted 9 days ago', i: AlertTriangle },
+      { s: 'critical', t: 'Shared address with 4 other entities', i: Building2 },
+      { s: 'warning', t: 'Website registered 11 days ago', i: Globe },
+    ],
+    scanTime: '2.4s', dataSources: 14,
+    communityAlert: '12 carriers flagged this broker in last 45 days',
+  },
+  {
+    name: 'Redline Transport Brokerage',
+    mc: 'MC-508•••', dot: 'DOT-1884•••', score: 52,
+    badgeLabel: 'CAUTION', badgeColor: '#F59E0B',
+    verdictTitle: 'Proceed with care', verdictLine: '2 warning signs detected · Verify before booking', verdictTone: 'warn',
+    flags: [
+      { s: 'warning', t: 'Insurance expires in 14 days', i: Shield },
+      { s: 'warning', t: 'Slow-pay reports from 3 carriers', i: Clock },
+      { s: 'good', t: 'Authority active 4+ years', i: CheckCircle2 },
+    ],
+    scanTime: '1.9s', dataSources: 14,
+    communityAlert: '1 carrier flagged this broker in last 90 days',
+  },
+  {
+    name: 'Crossroads Brokerage Partners',
+    mc: 'MC-704•••', dot: 'DOT-2961•••', score: 44,
+    badgeLabel: 'CAUTION', badgeColor: '#F59E0B',
+    verdictTitle: 'Proceed with care', verdictLine: '2 warning signs · Request COI directly from insurer', verdictTone: 'warn',
+    flags: [
+      { s: 'warning', t: 'Email on free domain (gmail.com)', i: Mail },
+      { s: 'warning', t: 'No verifiable physical office', i: MapPin },
+      { s: 'good', t: 'No carrier fraud reports', i: CheckCircle2 },
+    ],
+    scanTime: '2.0s', dataSources: 14,
+    communityAlert: 'No recent reports · limited footprint',
+  },
+  {
+    name: 'Keystone Freight Network',
+    mc: 'MC-128•••', dot: 'DOT-0891•••', score: 18,
+    badgeLabel: 'VERIFIED', badgeColor: '#16A34A',
+    verdictTitle: 'Safe to book', verdictLine: 'All checks passed · Established broker', verdictTone: 'good',
+    flags: [
+      { s: 'good', t: 'Authority active 12+ years', i: CheckCircle2 },
+      { s: 'good', t: 'Insurance current · $1M/$100K', i: Shield },
+      { s: 'good', t: 'Verified physical office', i: Building2 },
+    ],
+    scanTime: '1.7s', dataSources: 14,
+    communityAlert: 'Positive payment history from 40+ carriers',
+  },
+];
+
 function HeroDashboardMockup() {
+  const [idx, setIdx] = useState<number | null>(null);
+  useEffect(() => {
+    setIdx(Math.floor(Math.random() * HERO_SCENARIOS.length));
+  }, []);
+  if (idx === null) {
+    return (
+      <div className="relative text-[#0B1E3F]">
+        <div className="bg-white rounded-3xl card-shadow-lg border border-[#0B1E3F]/10" style={{ minHeight: 540 }} />
+      </div>
+    );
+  }
+  const s = HERO_SCENARIOS[idx];
+  const toneBg = s.verdictTone === 'danger' ? 'bg-[#DC2626]/10 border-[#DC2626]/30' : s.verdictTone === 'warn' ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30' : 'bg-[#16A34A]/10 border-[#16A34A]/30';
+  const toneText = s.verdictTone === 'danger' ? 'text-[#DC2626]' : s.verdictTone === 'warn' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
+  const VerdictIcon = s.verdictTone === 'good' ? CheckCircle2 : AlertTriangle;
+  const flagColor = (level: 'critical' | 'warning' | 'good') => level === 'critical' ? '#DC2626' : level === 'warning' ? '#F59E0B' : '#16A34A';
   return (
     <div className="relative text-[#0B1E3F]">
       <div className="absolute -top-4 -right-4 z-20 floaty">
-        <div className="px-4 py-2 bg-[#DC2626] text-white rounded-full text-xs mono uppercase tracking-wider shadow-lg flex items-center gap-2">
-          <AlertTriangle className="w-3.5 h-3.5 text-white" /> HIGH RISK · just now
+        <div className="px-4 py-2 text-white rounded-full text-xs mono uppercase tracking-wider shadow-lg flex items-center gap-2" style={{ backgroundColor: s.badgeColor }}>
+          <VerdictIcon className="w-3.5 h-3.5 text-white" /> {s.badgeLabel} · just now
         </div>
       </div>
       <div className="bg-white rounded-3xl p-6 card-shadow-lg border border-[#0B1E3F]/10 relative overflow-hidden text-[#0B1E3F]">
@@ -523,33 +630,29 @@ function HeroDashboardMockup() {
         <div className="flex items-start justify-between mb-6">
           <div className="text-[#0B1E3F]">
             <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1">Broker lookup</div>
-            <div className="text-xl font-semibold text-[#0B1E3F] mb-0.5">Acme Freight Brokers LLC</div>
-            <div className="text-xs mono text-[#0B1E3F]/50">MC-847291 · DOT-3291847</div>
+            <div className="text-xl font-semibold text-[#0B1E3F] mb-0.5">{s.name}</div>
+            <div className="text-xs mono text-[#0B1E3F]/50">{s.mc} · {s.dot}</div>
           </div>
-          <RiskGauge score={78} size="md" />
+          <RiskGauge score={s.score} size="md" />
         </div>
-        <div className="p-4 bg-[#DC2626]/10 border border-[#DC2626]/30 rounded-xl mb-5">
-          <div className="text-xs mono uppercase tracking-wider text-[#DC2626] mb-1 flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5" /> Do not book
+        <div className={`p-4 border rounded-xl mb-5 ${toneBg}`}>
+          <div className={`text-xs mono uppercase tracking-wider mb-1 flex items-center gap-1.5 ${toneText}`}>
+            <VerdictIcon className="w-3.5 h-3.5" /> {s.verdictTitle}
           </div>
-          <div className="text-sm font-medium text-[#0B1E3F]">4 critical red flags detected · Require upfront payment</div>
+          <div className="text-sm font-medium text-[#0B1E3F]">{s.verdictLine}</div>
         </div>
         <div className="space-y-2">
-          {[
-            { s: 'critical', t: 'Authority reactivated 12 days ago', i: AlertTriangle },
-            { s: 'warning', t: 'Insurance cancelled · no replacement', i: Shield },
-            { s: 'warning', t: 'Address changed 3× in past year', i: MapPin },
-          ].map((f, i) => (
+          {s.flags.map((f, i) => (
             <div key={i} className="flex items-center gap-3 p-3 rounded-lg text-[#0B1E3F]" style={{ backgroundColor: 'rgba(11,30,63,0.05)' }}>
-              <f.i className="w-4 h-4 flex-shrink-0" style={{ color: f.s === 'critical' ? '#DC2626' : '#F59E0B' }} />
+              <f.i className="w-4 h-4 flex-shrink-0" style={{ color: flagColor(f.s) }} />
               <div className="text-sm font-medium text-[#0B1E3F] flex-1">{f.t}</div>
               <ChevronRight className="w-4 h-4 text-[#0B1E3F]/30" />
             </div>
           ))}
         </div>
         <div className="mt-5 pt-4 border-t border-[#0B1E3F]/10 flex items-center justify-between text-xs mono text-[#0B1E3F]/50">
-          <span className="flex items-center gap-1.5"><Clock className="w-3 h-3" /> Scanned in 2.1s</span>
-          <span>14 data sources</span>
+          <span className="flex items-center gap-1.5"><Clock className="w-3 h-3" /> Scanned in {s.scanTime}</span>
+          <span>{s.dataSources} data sources</span>
         </div>
       </div>
       <div className="absolute -bottom-6 -left-6 z-10 bg-[#0B1E3F] text-white p-4 rounded-2xl card-shadow-lg max-w-[240px] floaty" style={{ animationDelay: '1s' }}>
@@ -559,7 +662,7 @@ function HeroDashboardMockup() {
           </div>
           <div className="text-xs mono uppercase tracking-wider text-white/70">Community alert</div>
         </div>
-        <div className="text-sm text-white">2 carriers flagged this broker in last 60 days</div>
+        <div className="text-sm text-white">{s.communityAlert}</div>
       </div>
     </div>
   );
@@ -576,12 +679,12 @@ function RateConMockup() {
         <div className="relative text-[#0B1E3F]">
           <div className="flex items-center justify-between pb-4 border-b-2 border-[#0B1E3F]/20 mb-4">
             <div className="text-[#0B1E3F]">
-              <div className="text-xl font-bold tracking-tight text-[#0B1E3F]">ACME FREIGHT BROKERS</div>
+              <div className="text-xl font-bold tracking-tight text-[#0B1E3F]">WESTPORT LOGISTICS GROUP</div>
               <div className="text-xs mono text-[#0B1E3F]/60">Professional Logistics Solutions</div>
             </div>
             <div className="text-right text-xs mono text-[#0B1E3F]/70">
-              <div>MC-847291</div>
-              <div>DOT-3291847</div>
+              <div>MC-637•••</div>
+              <div>DOT-3019•••</div>
             </div>
           </div>
           <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">RATE CONFIRMATION</div>
@@ -618,7 +721,7 @@ function RateConMockup() {
             </div>
             <div className="pt-4 mt-4 border-t border-[#0B1E3F]/15 text-xs text-[#0B1E3F]">
               <div className="text-[#0B1E3F]/60 mb-1">Contact</div>
-              <div className="mono text-[#0B1E3F]">dispatch@acme-freights.net</div>
+              <div className="mono text-[#0B1E3F]">dispatch@westport-logistics.net</div>
               <div className="mono text-[#0B1E3F]/70">(305) 555-0183</div>
             </div>
           </div>
@@ -757,9 +860,9 @@ function Nav({ navigate }: any) {
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         <Logo />
         <div className="hidden md:flex items-center gap-8 text-sm text-[#0B1E3F]/70">
-          <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">Product</button>
+          <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} className="hover:text-[#0B1E3F]">Home</button>
+          <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">What we check</button>
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
-          <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">For fleets</button>
           <button onClick={() => scrollTo('resources')} className="hover:text-[#0B1E3F]">Resources</button>
         </div>
         <div className="flex items-center gap-2">
@@ -1139,6 +1242,107 @@ function Plan({ user, setPlan }: any) {
         })}
       </div>
       <div className="text-xs mono text-[#0B1E3F]/50">Payments are not yet enabled. Choosing a paid plan saves the selection to your profile only — billing will be added before launch.</div>
+
+      <LeaveAccountSection user={user} current={current} onSwitchToFree={() => choose('free')} />
+    </div>
+  );
+}
+
+function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
+  const [step, setStep] = useState<'idle' | 'offer-free' | 'confirm-delete'>('idle');
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isPaid = current === 'carrier' || current === 'fleet';
+
+  const startLeave = () => {
+    setError(null);
+    if (isPaid) setStep('offer-free');
+    else setStep('confirm-delete');
+  };
+
+  const deleteAccount = async () => {
+    if (typed.trim().toUpperCase() !== 'DELETE') {
+      setError('Type DELETE to confirm.');
+      return;
+    }
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch('/api/profile/delete', { method: 'DELETE' });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+      const sb = getSupabase();
+      if (sb) await sb.auth.signOut();
+      if (typeof window !== 'undefined') window.location.href = '/';
+    } catch (err: any) {
+      setError(err?.message || 'Delete failed');
+      setBusy(false);
+    }
+  };
+
+  if (step === 'idle') {
+    return (
+      <div className="pt-6 border-t border-[#0B1E3F]/10 text-[#0B1E3F]">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Leaving Haulock?</div>
+        <p className="text-sm text-[#0B1E3F]/65 max-w-2xl mb-3">
+          {isPaid
+            ? 'You can cancel your paid plan or delete your account entirely. We\'ll offer you the Free plan first — it\'s genuinely free.'
+            : 'You can permanently delete your account. All your lookups, watchlist, and reports will be removed.'}
+        </p>
+        <button onClick={startLeave} className="px-4 py-2 text-sm text-[#DC2626] hover:bg-[#DC2626]/10 rounded-full transition">
+          {isPaid ? 'Cancel plan or delete account' : 'Delete my account'}
+        </button>
+      </div>
+    );
+  }
+
+  if (step === 'offer-free') {
+    return (
+      <div className="pt-6 border-t border-[#0B1E3F]/10 text-[#0B1E3F]">
+        <div className="p-6 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-2xl">
+          <div className="flex items-start gap-3 mb-4">
+            <CheckCircle2 className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="text-lg font-semibold text-[#0B1E3F] mb-1">Try Free before you leave — it&apos;s actually free.</div>
+              <div className="text-sm text-[#0B1E3F]/70">5 broker/carrier verifications per month. No card required, no expiration. Keep your lookup history, alerts, and watchlist. Come back to a paid plan anytime.</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={onSwitchToFree} className="px-5 py-2.5 bg-[#16A34A] text-white rounded-full text-sm font-medium hover:bg-[#16A34A]/90 transition">Switch to Free plan</button>
+            <button onClick={() => setStep('confirm-delete')} className="px-5 py-2.5 border border-[#DC2626]/30 text-[#DC2626] hover:bg-[#DC2626]/5 rounded-full text-sm font-medium transition">No thanks — delete my account</button>
+            <button onClick={() => setStep('idle')} className="px-5 py-2.5 text-[#0B1E3F]/60 hover:text-[#0B1E3F] text-sm transition">Keep my current plan</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-6 border-t border-[#0B1E3F]/10 text-[#0B1E3F]">
+      <div className="p-6 bg-[#DC2626]/5 border border-[#DC2626]/25 rounded-2xl">
+        <div className="flex items-start gap-3 mb-4">
+          <AlertTriangle className="w-5 h-5 text-[#DC2626] mt-0.5 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-semibold text-[#0B1E3F] mb-1">Delete your account</div>
+            <div className="text-sm text-[#0B1E3F]/70 mb-2">This permanently removes your login, lookup history, watchlist, alerts, fraud reports, and team membership ({user?.email}). It cannot be undone.</div>
+            <div className="text-xs mono text-[#0B1E3F]/55">Type <span className="px-1.5 py-0.5 bg-[#0B1E3F]/10 rounded">DELETE</span> to confirm.</div>
+          </div>
+        </div>
+        <input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder="DELETE"
+          className="w-full max-w-xs px-4 py-2.5 mb-3 bg-white border border-[#0B1E3F]/15 rounded-lg font-mono text-sm focus:outline-none focus:border-[#DC2626] text-[#0B1E3F]"
+        />
+        {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+        <div className="flex flex-wrap gap-2">
+          <button onClick={deleteAccount} disabled={busy || typed.trim().toUpperCase() !== 'DELETE'} className="px-5 py-2.5 bg-[#DC2626] text-white rounded-full text-sm font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-60 flex items-center gap-2">
+            {busy && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+            {busy ? 'Deleting…' : 'Delete my account forever'}
+          </button>
+          <button onClick={() => { setStep('idle'); setTyped(''); setError(null); }} disabled={busy} className="px-5 py-2.5 text-[#0B1E3F]/70 hover:text-[#0B1E3F] text-sm transition">Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2943,7 +3147,24 @@ function SearchHistory({ navigate }: any) {
   const items = res.data?.lookups ?? null;
   const [filter, setFilter] = useState('');
   const [rescanId, setRescanId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const onDelete = async (id: string) => {
+    if (!window.confirm('Remove this lookup from your history? This does not restore your monthly quota.')) return;
+    setDeletingId(id); setError(null);
+    try {
+      const r = await fetch(`/api/lookups?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+      invalidateCache('lookups:200');
+      res.refetch();
+    } catch (err: any) {
+      setError(err?.message || 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const onRescan = async (l: any) => {
     setRescanId(l.id); setError(null);
@@ -3018,7 +3239,7 @@ function SearchHistory({ navigate }: any) {
       ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow text-[#0B1E3F]">
           <div className="divide-y divide-[#0B1E3F]/5">
-            {groups.map((g) => <HistoryGroup key={g.key} group={g} navigate={navigate} onRescan={onRescan} rescanId={rescanId} />)}
+            {groups.map((g) => <HistoryGroup key={g.key} group={g} navigate={navigate} onRescan={onRescan} rescanId={rescanId} onDelete={onDelete} deletingId={deletingId} />)}
           </div>
         </div>
       )}
@@ -3026,7 +3247,7 @@ function SearchHistory({ navigate }: any) {
   );
 }
 
-function HistoryGroup({ group, navigate, onRescan, rescanId }: any) {
+function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, deletingId }: any) {
   const [open, setOpen] = useState(false);
   const l = group.latest;
   const verdict = l.verdict || (l.score >= 61 ? 'high' : l.score >= 31 ? 'medium' : 'low');
@@ -3052,6 +3273,9 @@ function HistoryGroup({ group, navigate, onRescan, rescanId }: any) {
           <button onClick={() => onRescan(l)} disabled={rescanId === l.id} className="px-3 py-1.5 text-xs bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 rounded-full transition flex items-center gap-1 disabled:opacity-60" title="Runs a fresh FMCSA lookup — uses 1 credit">
             {rescanId === l.id ? (<><div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" /> Scanning…</>) : (<>Scan again</>)}
           </button>
+          <button onClick={() => onDelete(l.id)} disabled={deletingId === l.id} className="w-8 h-8 flex items-center justify-center rounded-full text-[#0B1E3F]/50 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-60" title="Remove from history (does not restore monthly quota)">
+            {deletingId === l.id ? <div className="w-3 h-3 border border-[#DC2626]/40 border-t-[#DC2626] rounded-full animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          </button>
         </div>
       </div>
       {open && count > 1 && (
@@ -3061,21 +3285,26 @@ function HistoryGroup({ group, navigate, onRescan, rescanId }: any) {
             const verdictLabel = rv === 'high' ? 'HIGH RISK' : rv === 'medium' ? 'CAUTION' : 'LOW RISK';
             const verdictColor = rv === 'high' ? 'text-[#DC2626]' : rv === 'medium' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
             return (
-              <button key={row.id} onClick={() => navigate('report', row.data)} className="w-full flex items-center gap-4 p-3 md:p-4 pl-8 hover:bg-[#0B1E3F]/5 transition text-left text-[#0B1E3F]">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center mono text-xs font-semibold flex-shrink-0 ${rv === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : rv === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{row.score}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className={`text-xs mono uppercase tracking-wider font-semibold ${verdictColor}`}>{verdictLabel}</span>
-                    <span className="text-xs mono text-[#0B1E3F]/60">· score {row.score}/100</span>
+              <div key={row.id} className="w-full flex items-center gap-4 p-3 md:p-4 pl-8 hover:bg-[#0B1E3F]/5 transition text-[#0B1E3F]">
+                <button onClick={() => navigate('report', row.data)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center mono text-xs font-semibold flex-shrink-0 ${rv === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : rv === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{row.score}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className={`text-xs mono uppercase tracking-wider font-semibold ${verdictColor}`}>{verdictLabel}</span>
+                      <span className="text-xs mono text-[#0B1E3F]/60">· score {row.score}/100</span>
+                    </div>
+                    <div className="text-xs text-[#0B1E3F]/60 truncate">
+                      {timeAgo(row.created_at)}
+                      {row.source === 'ratecon' && ' · rate con'}
+                      {row.email_query && ` · ${row.email_query}`}
+                    </div>
                   </div>
-                  <div className="text-xs text-[#0B1E3F]/60 truncate">
-                    {timeAgo(row.created_at)}
-                    {row.source === 'ratecon' && ' · rate con'}
-                    {row.email_query && ` · ${row.email_query}`}
-                  </div>
-                </div>
+                </button>
+                <button onClick={() => onDelete(row.id)} disabled={deletingId === row.id} className="w-7 h-7 flex items-center justify-center rounded-full text-[#0B1E3F]/40 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-60" title="Remove from history">
+                  {deletingId === row.id ? <div className="w-3 h-3 border border-[#DC2626]/40 border-t-[#DC2626] rounded-full animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                </button>
                 <ChevronRight className="w-4 h-4 text-[#0B1E3F]/30" />
-              </button>
+              </div>
             );
           })}
         </div>
@@ -3136,6 +3365,360 @@ const PLAN_DETAILS: Record<string, { label: string; price: string }> = {
   fleet: { label: 'Fleet', price: '$149/mo' },
 };
 
+function ApiKeysTab({ user, navigate }: any) {
+  const [keys, setKeys] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [revealed, setRevealed] = useState<{ prefix: string; token: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const planId = (user?.plan || '').toLowerCase();
+  const planLabel = PLAN_DETAILS[planId]?.label || 'Free';
+  const limit = (() => {
+    try { return getPlan(planId).limits.fmcsaLookups; } catch { return null; }
+  })();
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch('/api/settings/keys');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Load failed (${r.status})`);
+      setKeys(j.keys || []);
+    } catch (err: any) {
+      setError(err?.message || 'Load failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const createKey = async () => {
+    if (creating) return;
+    setCreating(true); setError(null);
+    try {
+      const r = await fetch('/api/settings/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim() || 'API key' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Create failed (${r.status})`);
+      setRevealed({ prefix: j.key.prefix, token: j.token });
+      setNewName('');
+      load();
+    } catch (err: any) {
+      setError(err?.message || 'Create failed');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const revoke = async (id: string) => {
+    if (!window.confirm('Revoke this API key? Any integrations using it will stop working immediately.')) return;
+    setRevokingId(id);
+    try {
+      const r = await fetch(`/api/settings/keys?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error(j?.error || `Revoke failed (${r.status})`);
+      }
+      load();
+    } catch (err: any) {
+      setError(err?.message || 'Revoke failed');
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  const copyToken = async () => {
+    if (!revealed?.token) return;
+    try {
+      await navigator.clipboard.writeText(revealed.token);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Clipboard access blocked — copy the token manually.');
+    }
+  };
+
+  const activeKeys = (keys || []).filter((k) => !k.revoked_at);
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-[#0B1E3F] mb-2">API keys</h2>
+      <p className="text-sm text-[#0B1E3F]/65 max-w-2xl mb-6">
+        Integrate Haulock into your TMS, dispatch software, or scripts. Usage through the API counts against your monthly plan quota —{' '}
+        <span className="font-medium text-[#0B1E3F]">{limit == null ? 'unlimited' : `${limit} lookups/mo on ${planLabel}`}</span>.
+      </p>
+
+      {revealed && (
+        <div className="mb-6 p-5 bg-[#16A34A]/5 border border-[#16A34A]/30 rounded-2xl">
+          <div className="flex items-start gap-3 mb-3">
+            <Key className="w-5 h-5 text-[#16A34A] mt-0.5" />
+            <div>
+              <div className="font-semibold text-[#0B1E3F] mb-1">Your new API key — copy it now.</div>
+              <div className="text-sm text-[#0B1E3F]/70">This token is shown once. Haulock stores only a hash — we can&apos;t recover it if you lose it.</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg mono text-xs text-[#0B1E3F] break-all select-all">{revealed.token}</code>
+            <button onClick={copyToken} className="px-3 py-2.5 bg-[#0B1E3F] text-white rounded-lg text-xs font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-1.5">
+              <Copy className="w-3.5 h-3.5" /> {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <button onClick={() => setRevealed(null)} className="mt-3 text-xs text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition">I&apos;ve saved it — dismiss</button>
+        </div>
+      )}
+
+      <div className="mb-6 p-5 bg-[#0B1E3F]/5 rounded-xl">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">Create a new key</div>
+        <div className="flex gap-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') createKey(); }}
+            placeholder="Label — e.g., Production TMS"
+            className="flex-1 px-4 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F] text-[#0B1E3F] placeholder:text-[#0B1E3F]/40"
+          />
+          <button onClick={createKey} disabled={creating} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-lg text-sm font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-60 flex items-center gap-2">
+            {creating && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+            {creating ? 'Creating…' : 'Generate key'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="mb-4 text-sm text-[#DC2626]">{error}</div>}
+
+      <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">Your keys</div>
+      <div className="border border-[#0B1E3F]/10 rounded-xl overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center text-sm text-[#0B1E3F]/55">Loading…</div>
+        ) : !keys || keys.length === 0 ? (
+          <div className="p-10 text-center text-sm text-[#0B1E3F]/55">
+            <Key className="w-8 h-8 mx-auto mb-3 text-[#0B1E3F]/25" />
+            <div className="font-medium text-[#0B1E3F]/80 mb-1">No API keys yet</div>
+            <div className="text-xs">Generate one above to start calling the Haulock API.</div>
+          </div>
+        ) : (
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {keys.map((k) => (
+              <div key={k.id} className={`flex items-center gap-4 p-4 ${k.revoked_at ? 'opacity-60' : ''}`}>
+                <Key className="w-4 h-4 text-[#0B1E3F]/50 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="font-semibold text-sm text-[#0B1E3F] truncate">{k.name}</span>
+                    {k.revoked_at && <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#DC2626]/10 text-[#DC2626]">Revoked</span>}
+                  </div>
+                  <div className="text-xs mono text-[#0B1E3F]/55 truncate">
+                    {k.prefix}…  · created {timeAgo(k.created_at)}
+                    {k.last_used_at ? ` · last used ${timeAgo(k.last_used_at)}` : ' · never used'}
+                  </div>
+                </div>
+                {!k.revoked_at && (
+                  <button onClick={() => revoke(k.id)} disabled={revokingId === k.id} className="w-8 h-8 flex items-center justify-center rounded-full text-[#0B1E3F]/50 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-60" title="Revoke key">
+                    {revokingId === k.id ? <div className="w-3 h-3 border border-[#DC2626]/40 border-t-[#DC2626] rounded-full animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-8 pt-6 border-t border-[#0B1E3F]/10">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">How to use</div>
+        <div className="bg-[#0B1E3F] rounded-xl p-5 overflow-x-auto">
+          <pre className="text-xs mono text-white/90 whitespace-pre">{`curl -H "Authorization: Bearer YOUR_API_KEY" \\
+  "${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/verify?q=MC-123456"`}</pre>
+        </div>
+        <div className="mt-3 text-xs text-[#0B1E3F]/60 space-y-1">
+          <div>• Endpoint: <span className="mono text-[#0B1E3F]">GET /api/v1/verify?q=&lt;MC, DOT, or company name&gt;</span></div>
+          <div>• Authenticated calls count toward your plan&apos;s monthly lookup quota — {activeKeys.length} active key{activeKeys.length === 1 ? '' : 's'} share the same {limit == null ? 'unlimited' : `${limit}/mo`} allowance.</div>
+          <div>• Cached hits (same MC/DOT seen before) return instantly and do not consume quota. Pass <span className="mono">&amp;force=1</span> to bypass the cache.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotificationsTab({ user }: any) {
+  const [notifEmail, setNotifEmail] = useState<string>(user?.notificationEmail || '');
+  const [watchlist, setWatchlist] = useState<boolean>(user?.notifyWatchlist !== false);
+  const [digest, setDigest] = useState<boolean>(user?.notifyWeeklyDigest !== false);
+  const [community, setCommunity] = useState<boolean>(user?.notifyCommunity !== false);
+  const [saving, setSaving] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const emailIsValid = (s: string) => !s || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+
+  const save = async () => {
+    const trimmed = notifEmail.trim();
+    if (!emailIsValid(trimmed)) { setError('Enter a valid email address or leave it empty.'); return; }
+    setSaving(true); setError(null); setInfo(null);
+    const sb = getSupabase();
+    if (!sb) { setError('Supabase not configured.'); setSaving(false); return; }
+    const { error: err } = await sb.auth.updateUser({
+      data: {
+        notification_email: trimmed || null,
+        notify_watchlist: watchlist,
+        notify_weekly_digest: digest,
+        notify_community: community,
+      },
+    });
+    setSaving(false);
+    if (err) setError(err.message);
+    else setInfo('Notification preferences saved.');
+  };
+
+  const deliveryEmail = notifEmail.trim() || user?.email || '';
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-[#0B1E3F] mb-6">Notifications</h2>
+
+      <div className="mb-6">
+        <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Notification email <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional)</span></label>
+        <input
+          type="email"
+          value={notifEmail}
+          onChange={(e) => setNotifEmail(e.target.value)}
+          placeholder={user?.email || 'you@example.com'}
+          className="w-full max-w-md px-4 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F] text-[#0B1E3F] placeholder:text-[#0B1E3F]/40"
+        />
+        <div className="text-xs text-[#0B1E3F]/55 mt-2 flex items-center gap-1.5">
+          <Mail className="w-3.5 h-3.5" />
+          {notifEmail.trim()
+            ? <>Alerts will go to <span className="mono text-[#0B1E3F]">{deliveryEmail}</span></>
+            : <>Leave empty to use your profile email: <span className="mono text-[#0B1E3F]">{user?.email}</span></>}
+        </div>
+      </div>
+
+      <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">What to notify me about</div>
+      <div className="space-y-2 mb-6">
+        <label className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
+          <input type="checkbox" checked={watchlist} onChange={(e) => setWatchlist(e.target.checked)} className="w-4 h-4 rounded" />
+          <span className="text-sm">Email alerts for watchlist changes</span>
+        </label>
+        <label className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
+          <input type="checkbox" checked={digest} onChange={(e) => setDigest(e.target.checked)} className="w-4 h-4 rounded" />
+          <span className="text-sm">Weekly fraud report digest</span>
+        </label>
+        <label className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
+          <input type="checkbox" checked={community} onChange={(e) => setCommunity(e.target.checked)} className="w-4 h-4 rounded" />
+          <span className="text-sm">New community report notifications</span>
+        </label>
+      </div>
+
+      {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+      {info && <div className="text-sm text-[#16A34A] mb-3">{info}</div>}
+
+      <button onClick={save} disabled={saving} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-60 flex items-center gap-2">
+        {saving && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+        {saving ? 'Saving…' : 'Save preferences'}
+      </button>
+    </div>
+  );
+}
+
+function BillingTab({ user, navigate, planId, plan, upgradeTarget }: any) {
+  const isPaid = planId === 'carrier' || planId === 'fleet';
+  const memberSince = user?.createdAt ? new Date(user.createdAt) : null;
+  const planSince = user?.planChangedAt ? new Date(user.planChangedAt) : memberSince;
+  const fmt = (d: Date | null) => d ? d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-semibold text-[#0B1E3F]">Billing</h2>
+        <div className="text-xs mono text-[#0B1E3F]/50">Account {user?.id ? `· ${String(user.id).slice(0, 8)}` : ''}</div>
+      </div>
+
+      <div className="mb-6 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/25 rounded-xl flex items-start gap-3 text-[#0B1E3F]">
+        <AlertTriangle className="w-4 h-4 mt-0.5 text-[#FF6B35] flex-shrink-0" />
+        <div className="text-sm">
+          <div className="font-medium mb-0.5">Stripe billing is not yet live.</div>
+          <div className="text-[#0B1E3F]/70">Paid plans are saved to your profile. You won&apos;t be charged until billing launches — your invoices and payment method will appear here automatically when it does.</div>
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4 mb-6">
+        <div className="p-5 bg-[#0B1E3F]/5 rounded-xl">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Current plan</div>
+          {plan ? (
+            <>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-3xl serif italic text-[#0B1E3F]">{plan.label}</div>
+                <div className="text-[#0B1E3F]/60">· {plan.price}</div>
+              </div>
+              <div className="text-sm text-[#0B1E3F]/60">{planId === 'free' ? '5 lookups / month · no card required' : 'Will become active when Stripe billing launches'}</div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl text-[#0B1E3F] mb-1">No plan selected</div>
+              <div className="text-sm text-[#0B1E3F]/60">Pick a plan to start using Haulock.</div>
+            </>
+          )}
+        </div>
+
+        <div className="p-5 bg-[#0B1E3F]/5 rounded-xl space-y-3">
+          <div>
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Member since</div>
+            <div className="text-sm text-[#0B1E3F]">{fmt(memberSince)}</div>
+          </div>
+          <div className="pt-3 border-t border-[#0B1E3F]/10">
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Plan active since</div>
+            <div className="text-sm text-[#0B1E3F]">{fmt(planSince)}</div>
+          </div>
+          <div className="pt-3 border-t border-[#0B1E3F]/10">
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Next billing date</div>
+            <div className="text-sm text-[#0B1E3F]/60">{isPaid ? 'Pending — Stripe not yet active' : 'Not applicable (Free plan)'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">Payment method</div>
+        <div className="p-5 bg-[#0B1E3F]/[0.03] border border-dashed border-[#0B1E3F]/15 rounded-xl flex items-center gap-3 text-[#0B1E3F]/60 text-sm">
+          <Lock className="w-4 h-4" />
+          <span>No card on file. A card will be added during Stripe checkout once billing launches.</span>
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">Invoices &amp; billing history</div>
+          <button disabled className="text-xs mono text-[#0B1E3F]/40 flex items-center gap-1 cursor-not-allowed" title="Available once Stripe billing is active">
+            <Download className="w-3 h-3" /> Download all
+          </button>
+        </div>
+        <div className="border border-[#0B1E3F]/10 rounded-xl overflow-hidden">
+          <div className="grid grid-cols-4 gap-3 px-4 py-2.5 bg-[#0B1E3F]/5 text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">
+            <div>Date</div>
+            <div>Description</div>
+            <div className="text-right">Amount</div>
+            <div className="text-right">Status</div>
+          </div>
+          <div className="p-10 text-center text-sm text-[#0B1E3F]/55">
+            <FileText className="w-8 h-8 mx-auto mb-3 text-[#0B1E3F]/25" />
+            <div className="font-medium text-[#0B1E3F]/80 mb-1">No invoices yet</div>
+            <div className="text-xs">{isPaid ? 'Your first invoice will appear here when Stripe billing launches.' : 'You\'re on the Free plan — no invoices to show.'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 pt-2 border-t border-[#0B1E3F]/10">
+        {upgradeTarget && <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Upgrade to {upgradeTarget}</button>}
+        <button onClick={() => navigate('plan')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition">{plan ? 'Manage plan' : 'Choose a plan'}</button>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({ user, navigate, initialTab }: any) {
   const [tab, setTab] = useState(initialTab || 'profile');
   const planId = (user?.plan || '').toLowerCase();
@@ -3157,47 +3740,10 @@ function SettingsPage({ user, navigate, initialTab }: any) {
         </div>
         <div className="md:col-span-3 bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           {tab === 'profile' && <ProfileTab user={user} />}
-          {tab === 'billing' && (
-            <div>
-              <h2 className="text-xl font-semibold text-[#0B1E3F] mb-6">Billing</h2>
-              <div className="p-6 bg-[#0B1E3F]/5 rounded-xl mb-6">
-                <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Current plan</div>
-                {plan ? (
-                  <>
-                    <div className="flex items-baseline gap-2 mb-1">
-                      <div className="text-3xl serif italic text-[#0B1E3F]">{plan.label}</div>
-                      <div className="text-[#0B1E3F]/60">· {plan.price}</div>
-                    </div>
-                    <div className="text-sm text-[#0B1E3F]/60">{planId === 'free' ? 'No billing — upgrade for unlimited lookups.' : 'Billing not yet enabled. Stripe integration coming soon.'}</div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-2xl text-[#0B1E3F] mb-1">No plan selected</div>
-                    <div className="text-sm text-[#0B1E3F]/60">Pick a plan to start using Haulock.</div>
-                  </>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {upgradeTarget && <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Upgrade to {upgradeTarget}</button>}
-                <button onClick={() => navigate('plan')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition">{plan ? 'Manage plan' : 'Choose a plan'}</button>
-              </div>
-            </div>
-          )}
+          {tab === 'billing' && <BillingTab user={user} navigate={navigate} planId={planId} plan={plan} upgradeTarget={upgradeTarget} />}
           {tab === 'team' && <TeamTab navigate={navigate} user={user} />}
-          {tab === 'api' && (<div><h2 className="text-xl font-semibold text-[#0B1E3F] mb-4">API keys</h2><div className="text-[#0B1E3F]/70 text-sm mb-6">API access is available on the Fleet plan. Integrate Haulock directly into your TMS.</div><button className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-medium hover:bg-[#FF6B35]/90 transition">Upgrade to Fleet</button></div>)}
-          {tab === 'notifications' && (
-            <div>
-              <h2 className="text-xl font-semibold text-[#0B1E3F] mb-6">Notifications</h2>
-              <div className="space-y-4">
-                {['Email alerts for watchlist changes', 'SMS alerts for critical flags', 'Weekly fraud report digest', 'New community report notifications'].map((n, i) => (
-                  <label key={i} className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
-                    <input type="checkbox" defaultChecked={i !== 1} className="w-4 h-4 rounded" />
-                    <span className="text-sm text-[#0B1E3F]">{n}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
+          {tab === 'api' && <ApiKeysTab user={user} navigate={navigate} />}
+          {tab === 'notifications' && <NotificationsTab user={user} />}
         </div>
       </div>
     </div>

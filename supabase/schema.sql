@@ -16,6 +16,29 @@ create table if not exists public.lookups (
 );
 
 alter table public.lookups add column if not exists source text not null default 'quick';
+alter table public.lookups add column if not exists hidden_at timestamptz;
+
+create table if not exists public.api_keys (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null default 'API key',
+  prefix text not null,
+  key_hash text not null unique,
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists api_keys_user_idx on public.api_keys(user_id, created_at desc);
+create index if not exists api_keys_hash_idx on public.api_keys(key_hash) where revoked_at is null;
+alter table public.api_keys enable row level security;
+drop policy if exists "api_keys_select_own" on public.api_keys;
+drop policy if exists "api_keys_insert_own" on public.api_keys;
+drop policy if exists "api_keys_update_own" on public.api_keys;
+drop policy if exists "api_keys_delete_own" on public.api_keys;
+create policy "api_keys_select_own" on public.api_keys for select using (auth.uid() = user_id);
+create policy "api_keys_insert_own" on public.api_keys for insert with check (auth.uid() = user_id);
+create policy "api_keys_update_own" on public.api_keys for update using (auth.uid() = user_id);
+create policy "api_keys_delete_own" on public.api_keys for delete using (auth.uid() = user_id);
 
 create index if not exists lookups_user_created_idx on public.lookups(user_id, created_at desc);
 create index if not exists lookups_user_verdict_idx on public.lookups(user_id, verdict, created_at desc);
@@ -24,9 +47,11 @@ alter table public.lookups enable row level security;
 
 drop policy if exists "lookups_select_own" on public.lookups;
 drop policy if exists "lookups_insert_own" on public.lookups;
+drop policy if exists "lookups_update_own" on public.lookups;
 drop policy if exists "lookups_delete_own" on public.lookups;
 create policy "lookups_select_own" on public.lookups for select using (auth.uid() = user_id);
 create policy "lookups_insert_own" on public.lookups for insert with check (auth.uid() = user_id);
+create policy "lookups_update_own" on public.lookups for update using (auth.uid() = user_id);
 create policy "lookups_delete_own" on public.lookups for delete using (auth.uid() = user_id);
 
 create table if not exists public.watchlist (
