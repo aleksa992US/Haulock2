@@ -2489,7 +2489,7 @@ function VerifyTool({ navigate }: any) {
               {rcLoading ? 'Scanning rate confirmation…' : rcFile ? rcFile.name : 'Drop a rate confirmation here'}
             </div>
             <div className="text-sm text-[#0B1E3F]/60 mb-6">
-              {rcLoading ? 'OCR → AI extraction → FMCSA + domain cross-check. About 5–15 seconds.' : 'PDF or image — we’ll extract, verify the broker, and cross-check email + address in seconds.'}
+              {rcLoading ? 'OCR → AI extraction → FMCSA + domain cross-check. Can take up to 60 seconds for large PDFs — don’t refresh.' : 'PDF or image — we’ll extract, verify the broker, and cross-check email + address in seconds.'}
             </div>
             {!rcLoading && (
               <span className="inline-block px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">
@@ -2633,7 +2633,13 @@ function Report({ report, navigate }: any) {
                 </span>
               )}
             </div>
-            {r.source === 'mock' && <div className="mt-2 text-xs mono text-[#F59E0B]">Demo data — set FMCSA_WEB_KEY in .env.local for live lookups.</div>}
+            {r.source === 'mock' && (
+              <div className="mt-2 text-xs mono text-[#F59E0B]">
+                {(r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title))
+                  ? 'FMCSA servers are slow or down right now — this report uses demo data. Try again in a minute.'
+                  : 'Demo data — set FMCSA_WEB_KEY in .env.local for live lookups.'}
+              </div>
+            )}
             {r.cached && (
               <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-full text-xs text-[#0B1E3F]/70">
                 <Clock className="w-3.5 h-3.5" /> Cached from {r.cachedAt ? timeAgo(r.cachedAt) : 'earlier'} · no credit used

@@ -115,28 +115,62 @@ async function logFmcsaEvent(ev: { path: string; status: 'ok' | 'error'; httpSta
 
 async function fmcsaFetch(path: string, webKey: string): Promise<any> {
   const url = `${FMCSA_BASE}${path}${path.includes('?') ? '&' : '?'}webKey=${encodeURIComponent(webKey)}`;
-  const started = Date.now();
-  let httpStatus: number | null = null;
-  try {
-    const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-    httpStatus = res.status;
-    if (!res.ok) {
+
+  // FMCSA's public API is flaky — retry 5xx and network errors with short backoff.
+  const maxAttempts = 3;
+  let lastError: Error | null = null;
+  let lastHttpStatus: number | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const started = Date.now();
+    let httpStatus: number | null = null;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12_000); // 12s per attempt
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      httpStatus = res.status;
+      lastHttpStatus = httpStatus;
+
+      if (res.ok) {
+        const json = await res.json();
+        logFmcsaEvent({ path, status: 'ok', httpStatus, durationMs: Date.now() - started });
+        return json;
+      }
+
       const body = await res.text().catch(() => res.statusText);
-      throw new Error(`FMCSA ${res.status}: ${body}`);
+      const retryable = res.status >= 500 && res.status !== 501;
+      const err = new Error(`FMCSA ${res.status}: ${body.slice(0, 200)}`);
+      logFmcsaEvent({
+        path,
+        status: 'error',
+        httpStatus,
+        durationMs: Date.now() - started,
+        error: err.message,
+      });
+      if (!retryable || attempt === maxAttempts) throw err;
+      lastError = err;
+    } catch (err) {
+      logFmcsaEvent({
+        path,
+        status: 'error',
+        httpStatus,
+        durationMs: Date.now() - started,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt === maxAttempts) throw lastError;
     }
-    const json = await res.json();
-    logFmcsaEvent({ path, status: 'ok', httpStatus, durationMs: Date.now() - started });
-    return json;
-  } catch (err) {
-    logFmcsaEvent({
-      path,
-      status: 'error',
-      httpStatus,
-      durationMs: Date.now() - started,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
+
+    // Exponential backoff: 400ms, 1200ms
+    await new Promise((r) => setTimeout(r, 400 * Math.pow(3, attempt - 1)));
   }
+
+  throw lastError || new Error(`FMCSA call failed after ${maxAttempts} attempts (last status ${lastHttpStatus})`);
 }
 
 function pickCarrier(json: any): any | null {
@@ -274,7 +308,7 @@ function cacheKeyFor(query: ParsedQuery): string {
   return `${query.kind}:${query.value.toLowerCase()}`;
 }
 
-async function readCachedFmcsa(key: string): Promise<any | null> {
+async function readCachedFmcsa(key: string, allowStale = false): Promise<any | null> {
   try {
     // Dynamic import to keep the Edge-free boundary sane.
     const { getServiceSupabase } = await import('./supabase/service');
@@ -287,6 +321,7 @@ async function readCachedFmcsa(key: string): Promise<any | null> {
       .limit(1)
       .maybeSingle();
     if (!data) return null;
+    if (allowStale) return data.response;
     const age = Date.now() - new Date(data.cached_at).getTime();
     if (age > FMCSA_CACHE_TTL_MS) return null;
     return data.response;
@@ -346,6 +381,21 @@ export async function lookupCarrier(query: ParsedQuery): Promise<CarrierReport> 
     if (!normalized) throw new Error('Carrier not found in FMCSA response');
     return normalized;
   } catch (err) {
+    // FMCSA is down or slow. Try to serve stale cached data (even if >24h old) before falling
+    // back to demo data — real-but-stale beats made-up-but-fresh for risk decisions.
+    const stale = await readCachedFmcsa(key, true);
+    if (stale) {
+      const normalized = normalize(stale, query);
+      if (normalized) {
+        normalized.flags.push({
+          sev: 'info',
+          title: 'FMCSA temporarily unavailable — showing cached data',
+          desc: err instanceof Error ? err.message : 'Unknown error',
+          pts: 0,
+        });
+        return normalized;
+      }
+    }
     const fallback = mockCarrier(query);
     fallback.flags.push({
       sev: 'info',

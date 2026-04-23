@@ -13,7 +13,7 @@ import { isAdmin } from '@/lib/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 export async function POST(req: Request) {
   if (!isDocAiConfigured()) return NextResponse.json({ error: 'Google Document AI is not configured' }, { status: 500 });
@@ -87,38 +87,51 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: e?.message || 'Claude extraction failed' }, { status: 502 });
   }
 
-  // 3) FMCSA lookup on extracted MC or DOT
-  let carrier: CarrierReport | null = null;
-  const lookupQuery = extraction.broker_mc || extraction.broker_dot || extraction.broker_name;
-  if (lookupQuery) {
-    const parsed = parseQuery(lookupQuery);
-    if (parsed) {
-      carrier = await lookupCarrier(parsed);
-      if (carrier?.address) {
-        const addressCheck = await checkAddress(carrier.address, carrier.name);
-        if (addressCheck.configured) carrier.addressCheck = addressCheck;
-      }
-    }
-  }
-  if (!carrier) {
-    carrier = {
-      name: extraction.broker_name || 'Unknown broker',
-      mc: extraction.broker_mc ?? undefined,
-      dot: extraction.broker_dot ?? undefined,
-      phone: extraction.broker_phone ?? undefined,
-      source: 'mock' as const,
-      fetchedAt: new Date().toISOString(),
-      score: 0,
-      verdict: 'low' as const,
-      flags: [],
-    };
-  }
+  // 3 + 4) FMCSA lookup (with address check) and domain check run in parallel —
+  // no data dependency between them.
+  //
+  // Claude returns broker_mc / broker_dot as bare digits (e.g. "1649053") without
+  // a type prefix. Our parseQuery heuristic assumes anything 7+ digits is a DOT,
+  // which misidentifies real MC numbers and returns a totally unrelated carrier.
+  // Force the prefix based on which field Claude populated.
+  const cleanDigits = (raw: string | null | undefined) =>
+    raw ? String(raw).replace(/[^0-9]/g, '') : '';
+  const mcDigits = cleanDigits(extraction.broker_mc);
+  const dotDigits = cleanDigits(extraction.broker_dot);
+  const lookupQuery = mcDigits
+    ? `MC-${mcDigits}`
+    : dotDigits
+    ? `DOT-${dotDigits}`
+    : extraction.broker_name || null;
+  const parsed = lookupQuery ? parseQuery(lookupQuery) : null;
 
-  // 4) Domain check on extracted email
-  let domainCheck: any = undefined;
-  if (extraction.broker_email) {
-    try { domainCheck = await checkDomain(extraction.broker_email); } catch {}
-  }
+  const carrierPromise: Promise<CarrierReport | null> = parsed
+    ? (async () => {
+        const c = await lookupCarrier(parsed);
+        if (c?.address) {
+          const addressCheck = await checkAddress(c.address, c.name);
+          if (addressCheck.configured) c.addressCheck = addressCheck;
+        }
+        return c;
+      })()
+    : Promise.resolve(null);
+
+  const domainPromise: Promise<any> = extraction.broker_email
+    ? checkDomain(extraction.broker_email).catch(() => undefined)
+    : Promise.resolve(undefined);
+
+  const [carrierResult, domainCheck] = await Promise.all([carrierPromise, domainPromise]);
+  let carrier: CarrierReport = carrierResult || {
+    name: extraction.broker_name || 'Unknown broker',
+    mc: extraction.broker_mc ?? undefined,
+    dot: extraction.broker_dot ?? undefined,
+    phone: extraction.broker_phone ?? undefined,
+    source: 'mock' as const,
+    fetchedAt: new Date().toISOString(),
+    score: 0,
+    verdict: 'low' as const,
+    flags: [],
+  };
 
   // 5) Inject Claude stylistic flag into carrier flags
   if (extraction.fraud_score >= 61) {
@@ -164,7 +177,7 @@ export async function POST(req: Request) {
 
   const row = {
     user_id: user.id,
-    query: (extraction.broker_mc || extraction.broker_dot || extraction.broker_name || 'rate-con upload').toString(),
+    query: lookupQuery || 'rate-con upload',
     name: merged.name,
     mc: merged.mc || null,
     dot: merged.dot || null,
