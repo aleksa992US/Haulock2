@@ -5,7 +5,7 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export const MC_CHANGE_COOLDOWN_DAYS = 30;
+const MC_CHANGE_COOLDOWN_DAYS = 30;
 
 type ParsedId = { kind: 'mc' | 'dot'; value: string };
 
