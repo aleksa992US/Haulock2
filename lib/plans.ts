@@ -3,6 +3,7 @@ export type PlanId = 'free' | 'carrier' | 'team' | 'fleet';
 export type PlanLimits = {
   fmcsaLookups: number | null; // null = unlimited
   rateConScans: number | null;
+  pdfForensics: number | null;
   watchlist: number | null;
   users: number;
 };
@@ -29,13 +30,14 @@ export const PLANS: Record<PlanId, Plan> = {
     priceAnnual: '$0',
     priceAnnualNum: 0,
     desc: 'Try it. 3 lookups/month.',
-    limits: { fmcsaLookups: 3, rateConScans: 0, watchlist: 1, users: 1 },
+    limits: { fmcsaLookups: 3, rateConScans: 0, pdfForensics: 3, watchlist: 1, users: 1 },
     features: [
       '3 broker / carrier lookups / month',
+      '3 PDF tamper detections / month',
       '1 watchlist entry',
       'Basic risk score',
       'Community fraud feed (read-only)',
-      'No rate con scans',
+      'No rate con scans (upgrade for AI extraction)',
     ],
   },
   carrier: {
@@ -47,10 +49,11 @@ export const PLANS: Record<PlanId, Plan> = {
     priceAnnualNum: 490,
     desc: 'For owner-ops & 1-truck shops.',
     popular: true,
-    limits: { fmcsaLookups: null, rateConScans: 15, watchlist: 25, users: 1 },
+    limits: { fmcsaLookups: null, rateConScans: 15, pdfForensics: null, watchlist: 25, users: 1 },
     features: [
       'Unlimited broker / carrier lookups',
       '15 rate con scans / month',
+      'Unlimited PDF tamper detection',
       'Up to 25 watchlist entries',
       'Full risk reports',
       'Email & in-app alerts',
@@ -66,10 +69,11 @@ export const PLANS: Record<PlanId, Plan> = {
     priceAnnual: '$990',
     priceAnnualNum: 990,
     desc: 'Small fleets & dispatch shops (2–9 trucks).',
-    limits: { fmcsaLookups: null, rateConScans: 75, watchlist: 100, users: 3 },
+    limits: { fmcsaLookups: null, rateConScans: 75, pdfForensics: null, watchlist: 100, users: 3 },
     features: [
       'Everything in Carrier',
       '75 rate con scans / month',
+      'Unlimited PDF tamper detection',
       'Up to 100 watchlist entries',
       '3 users (shared quota)',
       'Priority email alerts',
@@ -84,10 +88,11 @@ export const PLANS: Record<PlanId, Plan> = {
     priceAnnual: '$2,490',
     priceAnnualNum: 2490,
     desc: 'Growing carriers & brokerages (10+ trucks).',
-    limits: { fmcsaLookups: null, rateConScans: null, watchlist: null, users: 10 },
+    limits: { fmcsaLookups: null, rateConScans: 500, pdfForensics: null, watchlist: null, users: 10 },
     features: [
       'Everything in Team',
-      'Unlimited rate con scans',
+      '500 rate con scans / month',
+      'Unlimited PDF tamper detection',
       'Unlimited watchlist entries',
       '10 users',
       'Bulk verify (CSV)',

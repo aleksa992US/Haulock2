@@ -28,7 +28,8 @@
       "Bash(curl -s \"http://api.us.socrata.com/api/catalog/v1?q=carrier&domains=data.transportation.gov&limit=20\")",
       "Bash(curl -sL \"https://api.us.socrata.com/api/catalog/v1?q=Carrier%20All%20With%20History&domains=data.transportation.gov&limit=10\")",
       "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=15\")",
-      "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=20\")"
+      "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=20\")",
+      "Bash(awk 'NR>=2699 && /^}/ {print NR; exit}' components/Haulock.tsx)"
     ]
   }
 }

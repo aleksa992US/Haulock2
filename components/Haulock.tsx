@@ -361,6 +361,101 @@ function Landing({ navigate }: any) {
         </div>
       </section>
 
+      <section className="py-24 px-6 bg-[#F5F3EE] border-t border-[#0B1E3F]/10 text-[#0B1E3F]">
+        <div className="max-w-7xl mx-auto">
+          <div className="grid lg:grid-cols-2 gap-16 items-start">
+            <div className="lg:sticky lg:top-24">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#FF6B35]/10 text-[#FF6B35] text-xs mono uppercase tracking-[0.2em] rounded-full mb-5">
+                3 free scans / month · free account only
+              </div>
+              <h2 className="text-4xl md:text-5xl leading-[1.05] mb-6 text-[#0B1E3F]">
+                Is your dispatcher <span className="serif italic">editing</span> the rate con before they send it?
+              </h2>
+              <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
+                It happens more than you think. A dispatcher gets a $1,400 rate con from a broker, downloads it, opens it in a free online PDF editor, changes the number to $1,100, and forwards it to the driver. The driver hauls the load thinking the rate is $1,100 — the dispatcher pockets the $300 spread.
+              </p>
+              <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
+                Every PDF contains <strong className="text-[#0B1E3F]">hidden metadata</strong> about who made it, when it was made, and every tool that touched it. Haulock reads that metadata and tells you the truth in plain English:
+              </p>
+              <ul className="space-y-3 mb-8 text-[#0B1E3F]/80">
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>&ldquo;This PDF was edited 3 days after it was created — by iLovePDF.&rdquo;</span></li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>&ldquo;Author name &lsquo;Mike&rsquo; doesn&apos;t match the broker&apos;s name on the letterhead.&rdquo;</span></li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] flex-shrink-0 mt-2" /><span>&ldquo;All metadata stripped — someone hid what tool they used.&rdquo;</span></li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0 mt-2" /><span>&ldquo;Clean. Created by Microsoft Word, unmodified since.&rdquo;</span></li>
+              </ul>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
+                  Sign up free & check a PDF <ArrowRight className="w-4 h-4" />
+                </button>
+                <div className="text-xs text-[#0B1E3F]/55 self-center">3 scans/month on Free · unlimited on any paid plan</div>
+              </div>
+            </div>
+
+            {/* Forensic mockup card */}
+            <div className="bg-white rounded-3xl p-7 card-shadow-lg border border-[#0B1E3F]/10">
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-[#0B1E3F]/10">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 bg-[#DC2626]/10 rounded-lg flex items-center justify-center">
+                    <FileText className="w-5 h-5 text-[#DC2626]" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[#0B1E3F]">rate-con-load-4821.pdf</div>
+                    <div className="text-[11px] mono text-[#0B1E3F]/50">2 pages · 98 KB</div>
+                  </div>
+                </div>
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#DC2626]/10 rounded-full text-xs mono uppercase tracking-wider font-semibold text-[#DC2626]">
+                  Likely tampered · 72
+                </div>
+              </div>
+              <div className="space-y-2.5 mb-5">
+                <div className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/15 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#DC2626]" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F]">PDF edited 12 days after creation</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Original: Apr 2, 2026 · Last saved: Apr 14, 2026</div>
+                  </div>
+                  <div className="text-xs mono text-[#0B1E3F]/40">+35</div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/15 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#DC2626]" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Processed with &ldquo;iLovePDF&rdquo;</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Free online PDF editor — not what real brokers use</div>
+                  </div>
+                  <div className="text-xs mono text-[#0B1E3F]/40">+40</div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-[#F59E0B]/5 border border-[#F59E0B]/15 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#F59E0B]" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Author: &ldquo;Mike K.&rdquo;</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Cross-check against the broker&apos;s known contacts</div>
+                  </div>
+                  <div className="text-xs mono text-[#0B1E3F]/40">+10</div>
+                </div>
+              </div>
+              <div className="pt-4 border-t border-[#0B1E3F]/10 grid grid-cols-2 gap-2 text-[11px] mono">
+                <div>
+                  <div className="text-[#0B1E3F]/50 uppercase tracking-wider">Creator</div>
+                  <div className="text-[#0B1E3F]">Microsoft Word</div>
+                </div>
+                <div>
+                  <div className="text-[#0B1E3F]/50 uppercase tracking-wider">Producer</div>
+                  <div className="text-[#DC2626]">iLovePDF</div>
+                </div>
+                <div>
+                  <div className="text-[#0B1E3F]/50 uppercase tracking-wider">Created</div>
+                  <div className="text-[#0B1E3F]">Apr 2, 2026 · 09:41</div>
+                </div>
+                <div>
+                  <div className="text-[#0B1E3F]/50 uppercase tracking-wider">Modified</div>
+                  <div className="text-[#DC2626]">Apr 14, 2026 · 22:18</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="py-24 px-6 bg-[#0B1E3F] relative overflow-hidden">
         <div className="absolute inset-0 grid-bg-dark opacity-40" />
         <div className="relative max-w-7xl mx-auto">
@@ -2785,7 +2880,12 @@ function VerifyTool({ navigate }: any) {
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Who&apos;s on the other end?</h1>
       </div>
       <div className="flex gap-1 p-1 bg-[#0B1E3F]/5 rounded-full w-fit flex-wrap">
-        {[{ id: 'quick', label: 'Quick lookup' }, { id: 'ratecon', label: 'Rate con analyzer' }, { id: 'bulk', label: 'Bulk verify' }].map((t) => (
+        {[
+          { id: 'quick', label: 'Quick lookup' },
+          { id: 'ratecon', label: 'Rate con analyzer' },
+          { id: 'forensics', label: 'PDF forensics' },
+          { id: 'bulk', label: 'Bulk verify' },
+        ].map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 rounded-full text-sm font-medium transition ${tab === t.id ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>{t.label}</button>
         ))}
       </div>
@@ -2865,6 +2965,7 @@ function VerifyTool({ navigate }: any) {
           </div>
         </div>
       )}
+      {tab === 'forensics' && <PdfForensicsPanel />}
       {tab === 'bulk' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           <div className="flex items-start gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl mb-8">
@@ -2883,6 +2984,144 @@ function VerifyTool({ navigate }: any) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function PdfForensicsPanel() {
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const scan = async (f: File) => {
+    setLoading(true); setError(null); setResult(null); setFile(f);
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const r = await fetch('/api/pdf-forensics', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Analysis failed (${r.status})`);
+      setResult(j);
+    } catch (err: any) {
+      setError(err?.message || 'Analysis failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verdictTone = (v: string) =>
+    v === 'likely_tampered' ? { bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30', text: 'text-[#DC2626]', label: 'LIKELY TAMPERED' }
+    : v === 'suspicious' ? { bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30', text: 'text-[#F59E0B]', label: 'SUSPICIOUS' }
+    : { bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30', text: 'text-[#16A34A]', label: 'CLEAN' };
+
+  const sevColor = (s: string) => s === 'critical' ? '#DC2626' : s === 'warning' ? '#F59E0B' : '#0B1E3F';
+  const fmtBytes = (n: number) => n < 1024 ? `${n} B` : n < 1_048_576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1_048_576).toFixed(1)} MB`;
+  const fmtDate = (s: string | null) => s ? new Date(s).toLocaleString() : '—';
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-start gap-4 p-4 bg-[#16A34A]/10 border border-[#16A34A]/25 rounded-xl mb-6">
+        <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-[#0B1E3F]">
+          <div className="font-medium mb-0.5">PDF metadata forensics · 3 scans/month free, unlimited on paid</div>
+          <div className="text-[#0B1E3F]/70">Checks the PDF&apos;s hidden metadata for signs of tampering — modification timestamps, software used to edit, stripped metadata, and author-name mismatches. No OCR, no AI, no broker lookup — just forensics on the file itself.</div>
+        </div>
+      </div>
+
+      <label className="block cursor-pointer border-2 border-dashed border-[#0B1E3F]/20 rounded-2xl p-8 text-center hover:border-[#FF6B35] hover:bg-[#FF6B35]/5 transition">
+        <input
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          disabled={loading}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) scan(f); }}
+        />
+        <div className="w-14 h-14 bg-[#0B1E3F]/5 rounded-2xl flex items-center justify-center mx-auto mb-3">
+          {loading ? <div className="w-5 h-5 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <FileText className="w-7 h-7 text-[#0B1E3F]/50" />}
+        </div>
+        <div className="text-lg font-medium text-[#0B1E3F] mb-1">
+          {loading ? 'Analyzing PDF metadata…' : file ? file.name : 'Drop a PDF to check if it was tampered with'}
+        </div>
+        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 15 MB · metadata inspection only (no OCR / AI / FMCSA)</div>
+        {!loading && <div className="mt-4 inline-block px-5 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Choose PDF</div>}
+      </label>
+
+      {error && <div className="mt-4 text-sm text-[#DC2626]">{error}</div>}
+
+      {result && (() => {
+        const tone = verdictTone(result.verdict);
+        return (
+          <div className="mt-8 space-y-6">
+            {/* Verdict banner */}
+            <div className={`p-5 rounded-2xl border ${tone.bg} ${tone.border}`}>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className={`text-xs mono uppercase tracking-wider ${tone.text} mb-1`}>{tone.label}</div>
+                  <div className="text-2xl font-semibold text-[#0B1E3F]">{result.filename || 'Document'}</div>
+                  <div className="text-sm text-[#0B1E3F]/60 mt-1">Forensic score: <span className="font-semibold">{result.score}/100</span> · {result.flags.length} flag{result.flags.length === 1 ? '' : 's'}</div>
+                </div>
+                <div className={`w-20 h-20 rounded-2xl ${tone.bg} ${tone.border} border flex flex-col items-center justify-center flex-shrink-0`}>
+                  <div className={`text-3xl font-bold ${tone.text}`}>{result.score}</div>
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">/ 100</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Flags */}
+            {result.flags.length > 0 && (
+              <div>
+                <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Red flags detected</div>
+                <div className="space-y-2">
+                  {result.flags.map((f: any, i: number) => (
+                    <div key={i} className="flex items-start gap-3 p-4 bg-[#0B1E3F]/[0.03] border border-[#0B1E3F]/10 rounded-xl">
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: sevColor(f.sev) }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm text-[#0B1E3F]">{f.title}</div>
+                        <div className="text-sm text-[#0B1E3F]/70 mt-0.5">{f.desc}</div>
+                      </div>
+                      <div className="text-xs mono text-[#0B1E3F]/50 flex-shrink-0">+{f.pts}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {result.flags.length === 0 && (
+              <div className="p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl text-sm text-[#0B1E3F]">
+                <div className="font-semibold text-[#16A34A] mb-1">No red flags detected</div>
+                The PDF metadata looks consistent with a document generated by legitimate software and not subsequently edited. This doesn&apos;t guarantee the CONTENT is honest — run a full rate con scan to verify the broker itself.
+              </div>
+            )}
+
+            {/* Raw metadata */}
+            <div>
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Document metadata</div>
+              <div className="grid md:grid-cols-2 gap-3">
+                {[
+                  { label: 'Creation date', val: fmtDate(result.metadata.creationDate) },
+                  { label: 'Modification date', val: fmtDate(result.metadata.modificationDate) },
+                  { label: 'Producer', val: result.metadata.producer || '—' },
+                  { label: 'Creator', val: result.metadata.creator || '—' },
+                  { label: 'Author', val: result.metadata.author || '—' },
+                  { label: 'Title', val: result.metadata.title || '—' },
+                  { label: 'PDF version', val: result.metadata.pdfVersion || '—' },
+                  { label: 'Pages', val: String(result.metadata.pageCount) },
+                  { label: 'File size', val: fmtBytes(result.metadata.fileSizeBytes) },
+                ].map((i, idx) => (
+                  <div key={idx} className="p-3 bg-[#0B1E3F]/5 rounded-lg">
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{i.label}</div>
+                    <div className="text-sm text-[#0B1E3F] mt-0.5 break-words">{i.val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60">
+              Tip: this only inspects the PDF file itself. To verify the BROKER on the rate con, switch to the <strong>Rate con analyzer</strong> tab.
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
