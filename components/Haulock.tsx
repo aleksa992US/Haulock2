@@ -3296,6 +3296,20 @@ function Report({ report, navigate }: any) {
           </p>
         </div>
       </div>
+      {Array.isArray(r.sources) && r.sources.length > 0 && (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">Sources scanned</div>
+          <div className="flex flex-wrap gap-2">
+            {r.sources.map((s: any) => (
+              <span key={s.name} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${s.ok ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60'}`}>
+                {s.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                <span className="font-semibold">{s.name}</span>
+                <span className="opacity-75">· {s.note}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid md:grid-cols-2 gap-6">
         <DetailPanel title="Identity" items={[
           { icon: Building2, label: 'Legal name', val: r.name || '—' },
@@ -3314,20 +3328,18 @@ function Report({ report, navigate }: any) {
           { label: 'MCS-150', val: r.mcs150Date || (r.mcs150Outdated ? 'Overdue' : 'Current'), warn: r.mcs150Outdated },
         ]} />
       </div>
-      {(r.crashTotal != null || r.drivers != null || r.vehicleOosRate != null) && (
-        <div className="grid md:grid-cols-2 gap-6">
-          <DetailPanel title="Operations" items={[
-            { label: 'Fleet size', val: r.powerUnits != null ? `${r.powerUnits} power units${r.drivers != null ? ` · ${r.drivers} drivers` : ''}` : '—' },
-            { label: 'Classification', val: r.operation || '—' },
-          ]} />
-          <DetailPanel title="Safety record" items={[
-            { label: 'Total crashes', val: r.crashTotal != null ? String(r.crashTotal) : '—', warn: (r.crashTotal ?? 0) >= 10 },
-            { label: 'Fatal crashes', val: r.fatalCrash != null ? String(r.fatalCrash) : '—', warn: (r.fatalCrash ?? 0) > 0 },
-            { label: 'Driver OOS rate', val: r.driverOosRate != null ? `${r.driverOosRate.toFixed(2)}%${r.driverOosRateNat != null ? ` (nat. avg ${r.driverOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate > r.driverOosRateNat * 1.5, good: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate < r.driverOosRateNat },
-            { label: 'Vehicle OOS rate', val: r.vehicleOosRate != null ? `${r.vehicleOosRate.toFixed(2)}%${r.vehicleOosRateNat != null ? ` (nat. avg ${r.vehicleOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate > r.vehicleOosRateNat * 1.5, good: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate < r.vehicleOosRateNat },
-          ]} />
-        </div>
-      )}
+      <div className="grid md:grid-cols-2 gap-6">
+        <DetailPanel title="Operations" items={[
+          { label: 'Fleet size', val: r.powerUnits != null ? `${r.powerUnits} power units${r.drivers != null ? ` · ${r.drivers} drivers` : ''}` : '—' },
+          { label: 'Classification', val: r.operation || '—' },
+        ]} />
+        <DetailPanel title="Safety record" items={[
+          { label: 'Total crashes', val: r.crashTotal != null ? String(r.crashTotal) : '—', warn: (r.crashTotal ?? 0) >= 10 },
+          { label: 'Fatal crashes', val: r.fatalCrash != null ? String(r.fatalCrash) : '—', warn: (r.fatalCrash ?? 0) > 0 },
+          { label: 'Driver OOS rate', val: r.driverOosRate != null ? `${r.driverOosRate.toFixed(2)}%${r.driverOosRateNat != null ? ` (nat. avg ${r.driverOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate > r.driverOosRateNat * 1.5, good: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate < r.driverOosRateNat },
+          { label: 'Vehicle OOS rate', val: r.vehicleOosRate != null ? `${r.vehicleOosRate.toFixed(2)}%${r.vehicleOosRateNat != null ? ` (nat. avg ${r.vehicleOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate > r.vehicleOosRateNat * 1.5, good: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate < r.vehicleOosRateNat },
+        ]} />
+      </div>
       {r.webPresence?.configured && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">

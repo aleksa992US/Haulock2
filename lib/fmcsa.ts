@@ -70,6 +70,9 @@ export type CarrierReport = {
     socials?: { platform: string; url: string }[];
     error?: string;
   };
+  // Per-source scan summary — populated by the verify route after enrichment.
+  // Lets the UI show "we checked these sources" with a green/red dot for each.
+  sources?: { name: string; ok: boolean; note: string }[];
   source: 'fmcsa' | 'mock';
   fetchedAt: string;
   score: number;
@@ -305,19 +308,44 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
 // same MC/DOT and keeps us under QCMobile rate limits.
 // ------------------------------------------------------------------
 
-// Cache NEVER expires — once a carrier is in our DB it stays. For carriers we've
-// seen before, FMCSA outages are invisible. Records older than this threshold
-// trigger a background refresh so the NEXT user gets fresh data, but the current
-// user is always served immediately.
-const FMCSA_REFRESH_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Cache rows are written on every successful API response and serve as a
+// last-resort fallback when both FMCSA primary and Socrata are unavailable.
+// We never read cache *first* — paid users always get a live API call so
+// they see the latest crash counts, OOS rates, and authority changes.
 const inflight = new Map<string, Promise<any>>();
-
-// Tracks background refreshes so we don't fire multiple concurrent refreshes for
-// the same key. Different from `inflight` which holds foreground awaits.
-const refreshing = new Set<string>();
 
 function cacheKeyFor(query: ParsedQuery): string {
   return `${query.kind}:${query.value.toLowerCase()}`;
+}
+
+// Cache key for name queries that incorporates the lookup options. The "best
+// match" for a name depends on context (preferActiveBroker, addressHint), so
+// we key by name + opts so each context has its own cached resolution.
+function nameCacheKey(value: string, opts: LookupOpts): string {
+  const b = opts.preferActiveBroker ? '1' : '0';
+  const h = (opts.addressHint || '').toLowerCase().trim();
+  return `name:${value.toLowerCase().trim()}|b:${b}|h:${h}`;
+}
+
+// Detects whether a cached FMCSA response came from the FMCSA primary API
+// (full payload) versus Socrata (partial — no fatalCrash, no OOS rates, no
+// safety rating, no mcs150Date, no carrierOperation).
+//
+// We need this because an earlier code path wrote Socrata responses under the
+// canonical `mc:` / `dot:` cache keys. Those rows still exist and must be
+// treated as cache-misses so a fresh FMCSA primary call can overwrite them.
+function isFullFmcsaResponse(raw: any): boolean {
+  const c = pickCarrier(raw);
+  if (!c) return false;
+  // Any one of these fields being present = this is a full FMCSA payload.
+  return (
+    c.safetyRating != null
+    || c.mcs150Date != null
+    || c.carrierOperation != null
+    || c.fatalCrash != null
+    || c.vehicleOosRate != null
+    || c.driverOosRate != null
+  );
 }
 
 async function readCachedFmcsa(key: string): Promise<{ response: any; ageMs: number } | null> {
@@ -359,19 +387,6 @@ function pathFor(query: ParsedQuery): string {
   return `/name/${encodeURIComponent(query.value)}`;
 }
 
-// Kick off a non-blocking refresh for a cache key. Deduped per key.
-function scheduleBackgroundRefresh(key: string, query: ParsedQuery, webKey: string) {
-  if (refreshing.has(key)) return;
-  refreshing.add(key);
-  fmcsaFetch(pathFor(query), webKey)
-    .then(async (raw) => {
-      const normalized = normalize(raw, query);
-      if (normalized) await writeCachedFmcsa(key, raw);
-    })
-    .catch(() => { /* swallow — we already served the user from cache */ })
-    .finally(() => { refreshing.delete(key); });
-}
-
 export type LookupOpts = {
   preferActiveBroker?: boolean;
   addressHint?: string;
@@ -383,98 +398,165 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
 
   const key = cacheKeyFor(query);
 
-  // 1. Persistent cache (NEVER EXPIRES) — but only for MC/DOT lookups. Name
-  //    queries are risky: the "best match" for a given name depends on context
-  //    (preferActiveBroker, addressHint, etc.) and can change between callers,
-  //    so caching by name would return stale wrong candidates. MC/DOT are
-  //    canonical identifiers — no ambiguity, safe to cache forever.
+  // -------- MC / DOT lookups --------
+  // Strict order: FMCSA primary API → Socrata fallback → DB cache (last
+  // successful response for this id). Cache is ONLY a safety net for
+  // upstream outages — every successful search hits the live API so the
+  // user always sees the latest crash counts, OOS rates, authority status,
+  // and insurance changes.
   if (query.kind !== 'name') {
-    const cached = await readCachedFmcsa(key);
-    if (cached) {
-      const normalized = normalize(cached.response, query);
-      if (normalized) {
-        if (cached.ageMs > FMCSA_REFRESH_AFTER_MS) {
-          scheduleBackgroundRefresh(key, query, webKey);
-        }
-        return normalized;
-      }
+    // 1. FMCSA primary (always try first — paid users want fresh data).
+    //    In-flight dedup: concurrent requests for the same key share one call.
+    let promise = inflight.get(key);
+    if (!promise) {
+      promise = fmcsaFetch(pathFor(query), webKey)
+        .then(async (raw) => {
+          await writeCachedFmcsa(key, raw);
+          return raw;
+        })
+        .finally(() => { inflight.delete(key); });
+      inflight.set(key, promise);
     }
-  }
 
-  // For NAME queries, FMCSA's /name/ endpoint is extremely picky (often fails
-  // on company-name variations, LLC suffixes, punctuation). Socrata handles
-  // name search much better, so go there FIRST for name queries, FMCSA second.
-  if (query.kind === 'name') {
     try {
-      const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
-      if (isSocrataConfigured()) {
-        const raw = await lookupOnSocrata(query, {
-          preferActiveBroker: opts.preferActiveBroker,
-          addressHint: opts.addressHint,
-        });
-        if (raw) {
-          const normalized = normalize(raw, query);
-          if (normalized) {
-            // Cache by resolved MC/DOT, NOT by name. Name queries are
-            // context-dependent and unsafe to cache under the name key.
-            if (normalized.mc) await writeCachedFmcsa(`mc:${normalized.mc}`, raw);
-            if (normalized.dot) await writeCachedFmcsa(`dot:${normalized.dot}`, raw);
-            return normalized;
-          }
-        }
-      }
+      const raw = await promise;
+      const normalized = normalize(raw, query);
+      if (!normalized) throw new Error('Carrier not found in FMCSA response');
+      return normalized;
     } catch (err) {
-      console.warn('[fmcsa] Socrata name lookup failed, falling through to FMCSA:', err instanceof Error ? err.message : err);
-    }
-  }
-
-  // 2. Cache miss — first time anyone's asked about this carrier. Hit FMCSA.
-  //    In-flight dedup: concurrent requests for the same key share one outgoing call.
-  let promise = inflight.get(key);
-  if (!promise) {
-    promise = fmcsaFetch(pathFor(query), webKey)
-      .then(async (raw) => {
-        await writeCachedFmcsa(key, raw);
-        return raw;
-      })
-      .finally(() => { inflight.delete(key); });
-    inflight.set(key, promise);
-  }
-
-  try {
-    const raw = await promise;
-    const normalized = normalize(raw, query);
-    if (!normalized) throw new Error('Carrier not found in FMCSA response');
-    return normalized;
-  } catch (err) {
-    // Primary FMCSA failed. Try Socrata (data.transportation.gov) as a
-    // fallback — different infrastructure, much higher uptime, data is
-    // ~daily refresh which is fine for identity verification.
-    try {
-      const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
-      if (isSocrataConfigured()) {
-        const raw2 = await lookupOnSocrata(query, {
-          preferActiveBroker: opts.preferActiveBroker,
-          addressHint: opts.addressHint,
-        });
-        if (raw2) {
-          const normalized2 = normalize(raw2, query);
-          if (normalized2) {
-            // Cache the Socrata result so subsequent lookups are instant.
-            await writeCachedFmcsa(key, raw2);
-            return normalized2;
+      // 2. FMCSA primary failed — try Socrata. Socrata's payload is partial
+      //    (no fatalCrash, no OOS rates), so we cache it under a SEPARATE
+      //    `socrata:` keyspace and never let it masquerade as full FMCSA
+      //    data under the canonical `mc:` / `dot:` keys.
+      try {
+        const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
+        if (isSocrataConfigured()) {
+          const raw2 = await lookupOnSocrata(query, {
+            preferActiveBroker: opts.preferActiveBroker,
+            addressHint: opts.addressHint,
+          });
+          if (raw2) {
+            const normalized2 = normalize(raw2, query);
+            if (normalized2) {
+              await writeCachedFmcsa(`socrata:${key}`, raw2);
+              return normalized2;
+            }
           }
         }
+      } catch (fallbackErr) {
+        console.warn('[fmcsa] Socrata fallback failed:', fallbackErr instanceof Error ? fallbackErr.message : fallbackErr);
       }
-    } catch (fallbackErr) {
-      console.warn('[fmcsa] Socrata fallback also failed:', fallbackErr instanceof Error ? fallbackErr.message : fallbackErr);
-    }
 
-    // Both FMCSA primary AND Socrata fallback failed — we really have nothing.
-    throw new Error(
-      `FMCSA is temporarily unavailable and we have no cached record for this identifier. ${err instanceof Error ? err.message : 'Unknown error'}`,
-    );
+      // 3. Last resort: prior FMCSA cache (may be days/weeks old) for this id.
+      //    Only trust it if it's a full FMCSA payload — partial cached rows
+      //    don't help anyone.
+      const cached = await readCachedFmcsa(key);
+      if (cached && isFullFmcsaResponse(cached.response)) {
+        const normalizedCached = normalize(cached.response, query);
+        if (normalizedCached) {
+          console.warn('[fmcsa] FMCSA + Socrata both down — serving stale cache for', key);
+          return normalizedCached;
+        }
+      }
+
+      // 4. Final fallback: prior Socrata-namespaced cache.
+      const socrataCached = await readCachedFmcsa(`socrata:${key}`);
+      if (socrataCached) {
+        const normalized3 = normalize(socrataCached.response, query);
+        if (normalized3) return normalized3;
+      }
+
+      throw new Error(
+        `FMCSA is temporarily unavailable and we have no cached record for this identifier. ${err instanceof Error ? err.message : 'Unknown error'}`,
+      );
+    }
   }
+
+  // -------- NAME lookups --------
+  // Strict order: FMCSA primary → Socrata (with FMCSA-by-resolved-id retry
+  // for richer data) → DB fallback (last successful resolution for this
+  // name+opts). Users are paying — we always try to return *something*.
+  const nameKey = nameCacheKey(query.value, opts);
+
+  // 1. FMCSA primary first.
+  try {
+    const raw = await fmcsaFetch(pathFor(query), webKey);
+    const normalized = normalize(raw, query);
+    if (normalized) {
+      // Cache the full FMCSA payload under canonical id keys AND under the
+      // name+opts key for last-resort fallback.
+      if (normalized.mc) await writeCachedFmcsa(`mc:${normalized.mc}`, raw);
+      if (normalized.dot) await writeCachedFmcsa(`dot:${normalized.dot}`, raw);
+      await writeCachedFmcsa(nameKey, raw);
+      return normalized;
+    }
+  } catch (err) {
+    console.warn('[fmcsa] FMCSA name lookup failed, trying Socrata:', err instanceof Error ? err.message : err);
+  }
+
+  // 2. Socrata fallback — much better at name disambiguation than FMCSA's
+  //    /name/ endpoint. If Socrata resolves a name to an MC/DOT, retry FMCSA
+  //    primary by that id to upgrade to a full payload (crashes, OOS rates,
+  //    fatal-crash counts). Only fall back to the partial Socrata data if
+  //    FMCSA is fully unavailable.
+  try {
+    const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
+    if (isSocrataConfigured()) {
+      const socRaw = await lookupOnSocrata(query, {
+        preferActiveBroker: opts.preferActiveBroker,
+        addressHint: opts.addressHint,
+      });
+      if (socRaw) {
+        const socNormalized = normalize(socRaw, query);
+        if (socNormalized) {
+          // Try FMCSA primary by the resolved MC or DOT for full data.
+          const idQuery: ParsedQuery | null = socNormalized.mc
+            ? { kind: 'mc', value: socNormalized.mc }
+            : socNormalized.dot
+              ? { kind: 'dot', value: socNormalized.dot }
+              : null;
+          if (idQuery) {
+            try {
+              const fullRaw = await fmcsaFetch(pathFor(idQuery), webKey);
+              const fullNormalized = normalize(fullRaw, idQuery);
+              if (fullNormalized) {
+                if (fullNormalized.mc) await writeCachedFmcsa(`mc:${fullNormalized.mc}`, fullRaw);
+                if (fullNormalized.dot) await writeCachedFmcsa(`dot:${fullNormalized.dot}`, fullRaw);
+                await writeCachedFmcsa(nameKey, fullRaw);
+                return fullNormalized;
+              }
+            } catch (idErr) {
+              console.warn('[fmcsa] FMCSA-by-resolved-id failed, using Socrata data:', idErr instanceof Error ? idErr.message : idErr);
+            }
+          }
+
+          // FMCSA enrichment failed — serve Socrata data. Cache under the
+          // socrata: namespace (per-id) and under the name key.
+          if (socNormalized.mc) await writeCachedFmcsa(`socrata:mc:${socNormalized.mc}`, socRaw);
+          if (socNormalized.dot) await writeCachedFmcsa(`socrata:dot:${socNormalized.dot}`, socRaw);
+          await writeCachedFmcsa(nameKey, socRaw);
+          return socNormalized;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[fmcsa] Socrata name fallback failed:', err instanceof Error ? err.message : err);
+  }
+
+  // 3. Last resort: DB cache by name+opts. Returns whatever was last
+  //    successfully resolved for this exact lookup context.
+  const cachedByName = await readCachedFmcsa(nameKey);
+  if (cachedByName) {
+    const normalizedFromCache = normalize(cachedByName.response, query);
+    if (normalizedFromCache) {
+      console.warn('[fmcsa] Both FMCSA and Socrata down — serving last-known cache for', nameKey);
+      return normalizedFromCache;
+    }
+  }
+
+  throw new Error(
+    'Carrier lookup failed: FMCSA, Socrata, and our cache all returned no match for this name.',
+  );
 }
 
 export function mockCarrier(query: ParsedQuery): CarrierReport {

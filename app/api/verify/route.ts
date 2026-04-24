@@ -102,47 +102,89 @@ export async function GET(req: Request) {
       { status: 503, headers: { 'Retry-After': '30' } },
     );
   }
-  if (carrier.address) {
-    const addressCheck = await checkAddress(carrier.address, carrier.name);
-    if (addressCheck.configured) carrier.addressCheck = addressCheck;
+
+  // Run all enrichment sources in parallel — address verification (Google
+  // Places) and web presence (search + WHOIS + DNS + social media) don't
+  // depend on each other, so we don't pay the latency twice.
+  const [addressResult, webResult] = await Promise.all([
+    carrier.address
+      ? checkAddress(carrier.address, carrier.name).catch(() => null)
+      : Promise.resolve(null),
+    findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot }).catch(() => null),
+  ]);
+
+  if (addressResult && addressResult.configured) carrier.addressCheck = addressResult;
+
+  if (webResult && webResult.configured) {
+    let domainAgeDays: number | null | undefined;
+    let hasMx: boolean | undefined;
+    let hasSpf: boolean | undefined;
+    let socials: { platform: string; url: string }[] | undefined;
+    if (webResult.found && webResult.domain) {
+      const [dc, sc] = await Promise.all([
+        checkDomain(webResult.domain).catch(() => null),
+        webResult.url ? findSocialLinks(webResult.url).catch(() => []) : Promise.resolve([]),
+      ]);
+      if (dc) {
+        domainAgeDays = dc.whois.ageDays ?? null;
+        hasMx = dc.mx.hasMx;
+        hasSpf = dc.spf.hasSpf;
+      }
+      if (sc && sc.length) socials = sc;
+    }
+    carrier.webPresence = {
+      configured: true,
+      found: webResult.found,
+      domain: webResult.domain,
+      url: webResult.url,
+      title: webResult.title,
+      snippet: webResult.snippet,
+      nameMatch: webResult.found && webResult.domain ? nameMatchesDomain(carrier.name, webResult.domain) : undefined,
+      domainAgeDays,
+      hasMx,
+      hasSpf,
+      socials,
+      error: webResult.error,
+    };
   }
 
-  // Web presence: find a website via Custom Search, then run our existing domain checks on it.
-  try {
-    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot });
-    if (web.configured) {
-      let domainAgeDays: number | null | undefined;
-      let hasMx: boolean | undefined;
-      let hasSpf: boolean | undefined;
-      let socials: { platform: string; url: string }[] | undefined;
-      if (web.found && web.domain) {
-        const [dc, sc] = await Promise.all([
-          checkDomain(web.domain).catch(() => null),
-          web.url ? findSocialLinks(web.url).catch(() => []) : Promise.resolve([]),
-        ]);
-        if (dc) {
-          domainAgeDays = dc.whois.ageDays ?? null;
-          hasMx = dc.mx.hasMx;
-          hasSpf = dc.spf.hasSpf;
-        }
-        if (sc && sc.length) socials = sc;
-      }
-      carrier.webPresence = {
-        configured: true,
-        found: web.found,
-        domain: web.domain,
-        url: web.url,
-        title: web.title,
-        snippet: web.snippet,
-        nameMatch: web.found && web.domain ? nameMatchesDomain(carrier.name, web.domain) : undefined,
-        domainAgeDays,
-        hasMx,
-        hasSpf,
-        socials,
-        error: web.error,
-      };
-    }
-  } catch { /* swallow — web presence is non-critical */ }
+  // Surface which sources actually answered so the UI can show the user
+  // exactly what was scanned. Each entry: name + ok flag + short note.
+  carrier.sources = [
+    {
+      name: 'FMCSA registry',
+      ok: Boolean(carrier.mc || carrier.dot),
+      note: carrier.mc || carrier.dot ? `Authority, insurance, safety${carrier.crashTotal != null ? ', crashes' : ''}` : 'Not found',
+    },
+    {
+      name: 'Google Places',
+      ok: Boolean(carrier.addressCheck?.configured && carrier.addressCheck.found),
+      note: carrier.addressCheck?.configured
+        ? (carrier.addressCheck.found ? (carrier.addressCheck.isMailbox ? 'Mailbox service' : 'Verified business') : 'Not found in Places')
+        : 'Not configured',
+    },
+    {
+      name: 'Web presence',
+      ok: Boolean(carrier.webPresence?.configured && carrier.webPresence.found),
+      note: carrier.webPresence?.configured
+        ? (carrier.webPresence.found ? `Website ${carrier.webPresence.nameMatch ? 'matches' : 'mismatch'}` : 'No website found')
+        : 'Not configured',
+    },
+    {
+      name: 'Domain & email',
+      ok: Boolean(carrier.webPresence?.found && (carrier.webPresence.hasMx || carrier.webPresence.domainAgeDays != null)),
+      note: carrier.webPresence?.found
+        ? `${carrier.webPresence.domainAgeDays != null ? `${carrier.webPresence.domainAgeDays}d old` : 'no WHOIS'}${carrier.webPresence.hasMx ? ' · MX' : ''}${carrier.webPresence.hasSpf ? ' · SPF' : ''}`
+        : 'No domain to check',
+    },
+    {
+      name: 'Social media',
+      ok: Boolean(carrier.webPresence?.socials && carrier.webPresence.socials.length > 0),
+      note: carrier.webPresence?.socials?.length
+        ? `${carrier.webPresence.socials.length} profile${carrier.webPresence.socials.length === 1 ? '' : 's'} found`
+        : 'None found',
+    },
+  ];
 
   return NextResponse.json(scoreCarrier(carrier));
 }
