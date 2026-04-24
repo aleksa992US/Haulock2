@@ -79,6 +79,23 @@ export async function GET() {
   const cancelAt = (active as any).cancel_at ?? null;
   const latestInvoice = active.latest_invoice as any;
 
+  // Actual amount paid on the most recent invoice (post-discount, post-tax).
+  // This is the truthful "you paid $X" value. `amount` above is the list price.
+  const lastPaidAmount: number | null = latestInvoice?.amount_paid ?? latestInvoice?.amount_due ?? null;
+
+  // Active coupon / discount info (if any). Stripe stores it on the subscription.
+  const discount: any = (active as any).discount;
+  const discountInfo = discount?.coupon
+    ? {
+        code: discount.promotion_code || null,
+        name: discount.coupon.name || null,
+        percentOff: discount.coupon.percent_off ?? null,
+        amountOffCents: discount.coupon.amount_off ?? null,
+        duration: discount.coupon.duration, // 'once' | 'repeating' | 'forever'
+        durationInMonths: discount.coupon.duration_in_months ?? null,
+      }
+    : null;
+
   return NextResponse.json({
     hasSubscription: true,
     customerId,
@@ -86,7 +103,9 @@ export async function GET() {
     status: active.status,
     plan: resolvedPlan,
     billing: mapped?.billing || (interval === 'year' ? 'annual' : 'monthly'),
-    amount,
+    amount,                 // list price (pre-discount), in cents
+    lastPaidAmount,         // what the customer actually paid on last invoice, in cents
+    discount: discountInfo,
     currency,
     interval,
     cancelAtPeriodEnd: active.cancel_at_period_end || false,

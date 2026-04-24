@@ -98,25 +98,34 @@ export async function POST(req: Request) {
     raw ? String(raw).replace(/[^0-9]/g, '') : '';
   const mcDigits = cleanDigits(extraction.broker_mc);
   const dotDigits = cleanDigits(extraction.broker_dot);
+  // Many legitimate rate cons don't include MC/DOT in the body (it's often only
+  // in the letterhead logo, which OCR sometimes misses). Fall back to broker
+  // name — Socrata handles name queries well inside lookupCarrier's fallback.
+  // We'll cross-check the address below for extra confidence.
   const lookupQuery = mcDigits
     ? `MC-${mcDigits}`
     : dotDigits
     ? `DOT-${dotDigits}`
     : extraction.broker_name || null;
   const parsed = lookupQuery ? parseQuery(lookupQuery) : null;
+  const matchedByName = !mcDigits && !dotDigits && !!extraction.broker_name;
 
   const carrierPromise: Promise<CarrierReport | null> = parsed
     ? (async () => {
         try {
-          const c = await lookupCarrier(parsed);
+          // Rate-con context: we KNOW we're looking up a broker, so prefer
+          // records with active broker authority to disambiguate when multiple
+          // carriers share a name. Pass broker address as a geographic hint.
+          const c = await lookupCarrier(parsed, {
+            preferActiveBroker: true,
+            addressHint: extraction.broker_address || undefined,
+          });
           if (c?.address) {
             const addressCheck = await checkAddress(c.address, c.name);
             if (addressCheck.configured) c.addressCheck = addressCheck;
           }
           return c;
         } catch {
-          // FMCSA couldn't verify — let the route fall back to Claude's extracted data
-          // and show the proper "unavailable" banner rather than failing the whole scan.
           return null;
         }
       })()
@@ -126,7 +135,52 @@ export async function POST(req: Request) {
     ? checkDomain(extraction.broker_email).catch(() => undefined)
     : Promise.resolve(undefined);
 
-  const [carrierResult, domainCheck] = await Promise.all([carrierPromise, domainPromise]);
+  let [carrierResult, domainCheck] = await Promise.all([carrierPromise, domainPromise]);
+
+  // Safety net: if Claude put the CARRIER's MC into broker_mc (a common failure
+  // mode — carrier MC is often the only one explicit on the rate con), the
+  // FMCSA result will be a company whose name DOESN'T match Claude's broker_name.
+  // When that happens, redo the lookup by the broker's actual name.
+  const nameMatches = (a: string | undefined, b: string | undefined) => {
+    if (!a || !b) return false;
+    const norm = (s: string) => s.toUpperCase()
+      .replace(/[.,]/g, '')
+      .replace(/\b(LLC|L\s*L\s*C|INC|INCORPORATED|CORP|CORPORATION|LTD|LIMITED|LP|LLP|CO)\b/g, '')
+      .replace(/\s+/g, ' ').trim();
+    const wa = new Set(norm(a).split(' ').filter((w) => w.length > 2));
+    const wb = new Set(norm(b).split(' ').filter((w) => w.length > 2));
+    const shared = Array.from(wa).filter((w) => wb.has(w)).length;
+    return shared >= Math.min(2, Math.min(wa.size, wb.size));
+  };
+
+  if (
+    carrierResult && carrierResult.source !== 'mock' &&
+    extraction.broker_name &&
+    (mcDigits || dotDigits) &&
+    !nameMatches(carrierResult.name, extraction.broker_name)
+  ) {
+    // FMCSA returned a carrier whose name doesn't match Claude's broker_name.
+    // Claude almost certainly gave us the CARRIER's MC/DOT, not the broker's.
+    // Retry by broker name — Socrata-first name lookup is smarter about this.
+    console.warn(`[rate-con/scan] MC/DOT mismatch — Claude said broker="${extraction.broker_name}" but FMCSA returned "${carrierResult.name}". Retrying by name.`);
+    const nameParsed = parseQuery(extraction.broker_name);
+    if (nameParsed) {
+      try {
+        const byName = await lookupCarrier(nameParsed, {
+          preferActiveBroker: true,
+          addressHint: extraction.broker_address || undefined,
+        });
+        if (byName && nameMatches(byName.name, extraction.broker_name)) {
+          carrierResult = byName;
+          if (byName.address) {
+            const addressCheck = await checkAddress(byName.address, byName.name);
+            if (addressCheck.configured) byName.addressCheck = addressCheck;
+          }
+        }
+      } catch { /* fall through to original result */ }
+    }
+  }
+
   let carrier: CarrierReport = carrierResult || {
     name: extraction.broker_name || 'Unknown broker',
     mc: extraction.broker_mc ?? undefined,
@@ -151,7 +205,43 @@ export async function POST(req: Request) {
     if (extraction.broker_phone) carrier.phone = extraction.broker_phone;
   }
 
-  // 5) Inject Claude stylistic flag into carrier flags
+  // 5a) Informational note when broker was matched by name only — lets the user
+  // know the MC/DOT in the report came from our registry lookup, not the PDF,
+  // and that they should sanity-check before booking.
+  if (matchedByName && carrier.source !== 'mock') {
+    const mcMatched = !!carrier.mc;
+    const dotMatched = !!carrier.dot;
+    // Address cross-check: rate-con addresses are often mailing (PO Box) while
+    // FMCSA stores physical, so exact-street compare rarely works. Match on the
+    // city + 3-digit-zip signal instead — brokers almost never relocate between
+    // physical and mailing addresses by more than one ZIP code.
+    const normCity = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
+    const extractAddr = (extraction.broker_address || '').toLowerCase();
+    const regAddr = (carrier.address || '').toLowerCase();
+    const extractZip3 = (extractAddr.match(/\b(\d{3})\d{2}\b/) || [])[1];
+    const regZip3 = (regAddr.match(/\b(\d{3})\d{2}\b/) || [])[1];
+    const extractWords = new Set<string>(extractAddr.split(/[^a-z]+/).filter((w) => w.length > 3).map(normCity));
+    const regWords = new Set<string>(regAddr.split(/[^a-z]+/).filter((w) => w.length > 3).map(normCity));
+    const sharedCityTokens = Array.from(extractWords).filter((w) => regWords.has(w)).length;
+    const addrMatches = Boolean(
+      (extractZip3 && regZip3 && extractZip3 === regZip3) ||     // same 3-digit ZIP prefix
+      sharedCityTokens >= 1                                       // or share at least one 4+ char word (city name)
+    );
+    carrier.flags.push({
+      sev: addrMatches ? 'info' : 'warning',
+      title: addrMatches ? 'Broker matched by name + address (high confidence)' : 'Broker matched by name only — verify MC independently',
+      desc: addrMatches
+        ? `The rate con didn't list an MC, but the broker's name and address match FMCSA registration for ${carrier.name}${mcMatched ? ` (MC-${carrier.mc})` : ''}. Treat as verified, but if unsure, call the broker to confirm.`
+        : `The rate con didn't list an MC — we matched "${extraction.broker_name}" by name. Multiple carriers can have similar names, so verify by calling the broker before booking. Matched record: ${carrier.name}${mcMatched ? ` · MC-${carrier.mc}` : ''}${dotMatched ? ` · DOT-${carrier.dot}` : ''}.`,
+      pts: addrMatches ? 0 : 5,
+      details: `Rate con broker address: ${extraction.broker_address || 'not found'}\nFMCSA-registered address: ${carrier.address || 'not found'}`,
+      recommendation: addrMatches
+        ? undefined
+        : 'Phone the broker at the number on the rate con and ask for their MC docket number. Verify it matches the one here.',
+    });
+  }
+
+  // 5b) Inject Claude stylistic flag into carrier flags
   if (extraction.fraud_score >= 61) {
     carrier.flags.push({
       sev: 'critical',

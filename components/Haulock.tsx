@@ -1850,12 +1850,13 @@ function StripeOverviewCard() {
 
       {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
         <Stat label="MRR (est.)" value={data ? fmtMoney(data.totals.mrr_cents, data.totals.currency) : '—'} sub="From active subs" />
         <Stat label="Active" value={data?.totals?.active ?? '—'} />
         <Stat label="Past due" value={data?.totals?.past_due ?? '—'} sub="Needs follow-up" />
         <Stat label="Canceled" value={data?.totals?.canceled ?? '—'} />
         <Stat label="New (30d)" value={data?.totals?.new_last_30d ?? '—'} />
+        <Stat label="Abandoned" value={data?.totals?.incomplete ?? '—'} sub="Checkout dropped" />
       </div>
 
       {data?.planBreakdown && (
@@ -1882,18 +1883,24 @@ function StripeOverviewCard() {
           <div className="divide-y divide-[#0B1E3F]/5">
             {data.recent.map((s: any) => {
               const statusColor = s.status === 'active' || s.status === 'trialing' ? '#16A34A' : s.status === 'past_due' || s.status === 'unpaid' ? '#F59E0B' : '#DC2626';
+              const paid = s.paid_amount;
+              const list = s.list_amount;
+              const hasDiscount = paid != null && list != null && paid < list;
               return (
                 <div key={s.id} className="grid grid-cols-[1fr_100px_90px_90px_100px] gap-2 px-3 py-2 text-xs items-center">
                   <div className="truncate" title={s.customer_email || s.id}>
                     <div className="text-[#0B1E3F] font-medium truncate">{s.customer_name || s.customer_email || '—'}</div>
                     {s.customer_email && s.customer_name && (
-                      <div className="text-[10px] text-[#0B1E3F]/55 truncate">{s.customer_email}</div>
+                      <div className="text-[10px] text-[#0B1E3F]/55 truncate">{s.customer_email}{s.promo_code ? ` · ${s.promo_code}` : ''}</div>
                     )}
                   </div>
                   <div className="mono text-[#0B1E3F]/80 capitalize">{s.plan || '—'}{s.billing ? ` · ${s.billing === 'annual' ? 'yr' : 'mo'}` : ''}</div>
                   <div className="mono text-xs" style={{ color: statusColor }}>{s.status}</div>
-                  <div className="mono text-xs text-right text-[#0B1E3F]/70">
-                    {s.amount != null ? fmtMoney(s.billing === 'annual' ? Math.round(s.amount / 12) : s.amount, s.currency) : '—'}
+                  <div className="mono text-xs text-right">
+                    <div className="text-[#0B1E3F]/80">{paid != null ? fmtMoney(paid, s.currency) : list != null ? fmtMoney(list, s.currency) : '—'}</div>
+                    {hasDiscount && (
+                      <div className="text-[10px] text-[#0B1E3F]/40 line-through">{fmtMoney(list!, s.currency)}</div>
+                    )}
                   </div>
                   <div className="mono text-xs text-right text-[#0B1E3F]/60">{timeAgo(new Date(s.created * 1000).toISOString())}</div>
                 </div>
@@ -2050,6 +2057,52 @@ function AdminPage({ navigate }: any) {
     }
   };
 
+  const deleteUser = async (u: any) => {
+    const label = u.email || u.name || u.id;
+    setPendingId(u.id); setError(null);
+
+    // Look up their Stripe subscription state first so we can warn if they have one.
+    let subInfo: any = null;
+    try {
+      const r = await fetch(`/api/admin/users/${u.id}/subscription`);
+      if (r.ok) subInfo = await r.json();
+    } catch { /* non-fatal */ }
+
+    const fmtMoney = (cents: number, currency = 'USD') =>
+      new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
+
+    let confirmMsg = `Permanently delete ${label}?\n\nThis removes their login, lookups, watchlist, reports, and team membership. Cannot be undone.`;
+    if (subInfo?.hasActiveSub) {
+      const price = subInfo.amount != null ? fmtMoney(subInfo.amount, subInfo.currency) : '?';
+      const period = subInfo.billing === 'annual' ? '/yr' : '/mo';
+      confirmMsg =
+        `⚠️ ${label} has an ACTIVE Stripe subscription.\n\n` +
+        `  Plan: ${subInfo.plan || '—'} · ${subInfo.billing || '—'} · ${price}${period}\n` +
+        `  Status: ${subInfo.status}\n\n` +
+        `Deleting will IMMEDIATELY cancel their subscription in Stripe (they won't be charged again), wipe all their data, and remove their login.\n\n` +
+        `This cannot be undone. Continue?`;
+    }
+
+    if (!window.confirm(confirmMsg)) {
+      setPendingId(null);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      await load();
+      if (data?.cancelledSubscriptions?.length) {
+        alert(`Deleted ${label} and canceled ${data.cancelledSubscriptions.length} Stripe subscription${data.cancelledSubscriptions.length === 1 ? '' : 's'}.`);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Delete failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const f = filter.trim().toLowerCase();
   const shown = (users || []).filter((u) => !f || (u.email || '').toLowerCase().includes(f) || (u.name || '').toLowerCase().includes(f) || (u.company || '').toLowerCase().includes(f) || (u.mc || '').includes(f));
 
@@ -2147,6 +2200,14 @@ function AdminPage({ navigate }: any) {
                       className={`px-3 py-1.5 rounded-full text-xs font-medium transition disabled:opacity-50 ${u.isAdmin ? 'border border-[#DC2626]/30 text-[#DC2626] hover:bg-[#DC2626]/5' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}
                     >
                       {pendingId === u.id ? 'Saving…' : u.isAdmin ? 'Revoke admin' : 'Make admin'}
+                    </button>
+                    <button
+                      onClick={() => deleteUser(u)}
+                      disabled={pendingId === u.id}
+                      className="w-7 h-7 flex items-center justify-center rounded-full text-[#0B1E3F]/40 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-50"
+                      title="Permanently delete user"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -2929,18 +2990,35 @@ function Report({ report, navigate }: any) {
                 </span>
               )}
             </div>
-            {r.source === 'mock' && (
-              <div className="mt-2 p-3 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg text-xs text-[#0B1E3F] max-w-xl">
-                {(r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title)) ? (
-                  <>
+            {r.source === 'mock' && (() => {
+              const fmcsaDown = (r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title));
+              const hasMcOrDot = Boolean(r.mc || r.dot);
+              const hasName = Boolean(r.name && r.name !== 'Unknown broker');
+              if (fmcsaDown) {
+                return (
+                  <div className="mt-2 p-3 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg text-xs text-[#0B1E3F] max-w-xl">
                     <div className="font-semibold text-[#F59E0B] mb-1 mono uppercase tracking-wider text-[10px]">FMCSA unavailable</div>
-                    <div>Identity fields (name, MC, DOT) show what Claude pulled from your PDF. Authority status, insurance, crash history, and fleet size below are placeholder demo values — retry in a minute to get FMCSA&apos;s real data.</div>
-                  </>
-                ) : (
-                  <>Demo data — set FMCSA_WEB_KEY in .env.local for live lookups.</>
-                )}
-              </div>
-            )}
+                    <div>Identity fields (name, MC, DOT) show what Claude pulled from your PDF. Retry in a minute for live FMCSA data.</div>
+                  </div>
+                );
+              }
+              if (hasName && !hasMcOrDot) {
+                // Missing MC on a rate con is common, not fraud. Just tell the
+                // user we're showing what the PDF said and link to SAFER for
+                // manual verification.
+                const safer = `https://safer.fmcsa.dot.gov/CompanySnapshot.aspx?query_type=queryCarrierSnapshot&query_param=NAME&query_string=${encodeURIComponent(r.name || '')}`;
+                return (
+                  <div className="mt-2 p-3 bg-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-lg text-xs text-[#0B1E3F]/80 max-w-xl">
+                    Couldn&apos;t auto-match this broker in our registry — the rate con didn&apos;t include an MC/DOT and our name search didn&apos;t find a single match. Details below come from the PDF. <a href={safer} target="_blank" rel="noreferrer" className="underline text-[#0B1E3F]">Search SAFER manually</a> to cross-check.
+                  </div>
+                );
+              }
+              return (
+                <div className="mt-2 p-3 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg text-xs text-[#0B1E3F] max-w-xl">
+                  Demo data — set FMCSA_WEB_KEY in .env.local for live lookups.
+                </div>
+              );
+            })()}
             {r.cached && (
               <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-full text-xs text-[#0B1E3F]/70">
                 <Clock className="w-3.5 h-3.5" /> Cached from {r.cachedAt ? timeAgo(r.cachedAt) : 'earlier'} · no credit used
@@ -3157,6 +3235,7 @@ function Report({ report, navigate }: any) {
                   { label: 'DOT', val: r.rateCon.broker_dot ? `DOT-${r.rateCon.broker_dot}` : null },
                   { label: 'Email', val: r.rateCon.broker_email },
                   { label: 'Phone', val: r.rateCon.broker_phone },
+                  { label: 'Address', val: r.rateCon.broker_address },
                 ].filter((i) => i.val).map((i, idx) => (
                   <div key={idx} className="flex items-start justify-between gap-3 text-sm">
                     <div className="text-[#0B1E3F]/55 text-xs mono uppercase tracking-wider mt-0.5">{i.label}</div>
@@ -4246,14 +4325,32 @@ function BillingTab({ user, navigate, planId: metaPlanId, plan: metaPlan, upgrad
         <div className="mb-6 p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl">
           <div className="flex items-start gap-3 mb-3">
             <FileText className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
-            <div>
+            <div className="flex-1 min-w-0">
               <div className="font-semibold text-[#0B1E3F] mb-1">Subscription active in Stripe</div>
               <div className="text-sm text-[#0B1E3F]/70 space-y-0.5">
                 <div>
-                  Plan: <span className="font-semibold text-[#0B1E3F]">{PLAN_DETAILS[subState.plan]?.label || subState.plan}</span> · {subState.interval === 'year' ? 'Annual' : 'Monthly'} · {fmtMoney(subState.amount, subState.currency)}{subState.interval === 'year' ? '/yr' : '/mo'}
+                  Plan: <span className="font-semibold text-[#0B1E3F]">{PLAN_DETAILS[subState.plan]?.label || subState.plan}</span> · {subState.interval === 'year' ? 'Annual' : 'Monthly'} · list price {fmtMoney(subState.amount, subState.currency)}{subState.interval === 'year' ? '/yr' : '/mo'}
                 </div>
+                {subState.lastPaidAmount != null && (
+                  <div>
+                    Last payment: <span className="font-semibold text-[#0B1E3F]">{fmtMoney(subState.lastPaidAmount, subState.currency)}</span>
+                    {subState.discount && (
+                      <span className="text-[#16A34A]">
+                        {' · '}
+                        {subState.discount.percentOff != null ? `${subState.discount.percentOff}% off` : subState.discount.amountOffCents != null ? `${fmtMoney(subState.discount.amountOffCents, subState.currency)} off` : 'discount'}
+                        {subState.discount.code ? ` (${subState.discount.code})` : ''}
+                        {subState.discount.duration === 'once' ? ' — one time' : subState.discount.duration === 'repeating' ? ` — ${subState.discount.durationInMonths} months` : subState.discount.duration === 'forever' ? ' — forever' : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div>Status: <span className="mono text-[#16A34A]">{subState.status}</span>{subState.cancelAtPeriodEnd && subState.cancelAt ? <> · cancels {new Date(subState.cancelAt * 1000).toLocaleDateString()}</> : null}</div>
-                {subState.currentPeriodEnd && <div>Next renewal: {new Date(subState.currentPeriodEnd * 1000).toLocaleDateString()}</div>}
+                {subState.currentPeriodEnd && (
+                  <div>
+                    Next renewal: {new Date(subState.currentPeriodEnd * 1000).toLocaleDateString()}
+                    {subState.discount?.duration === 'once' && ' — full price applies from this date'}
+                  </div>
+                )}
               </div>
             </div>
           </div>

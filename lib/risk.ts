@@ -3,7 +3,18 @@ import type { CarrierReport, RiskFlag } from './fmcsa';
 export function scoreCarrier(c: CarrierReport): CarrierReport {
   const flags: RiskFlag[] = [...c.flags];
 
-  if (c.authorityStatus && c.authorityStatus !== 'Active') {
+  // Entity type: a "pure broker" has Active broker authority but NOT common/contract
+  // carrier authority. Brokers don't operate trucks, so carrier-specific rules
+  // (BIPD liability, OOS, crashes, safety rating) don't apply to them.
+  const isPureBroker = c.brokerAuthority === 'Active'
+    && c.commonAuthority !== 'Active'
+    && c.contractAuthority !== 'Active';
+  const isCarrier = c.commonAuthority === 'Active' || c.contractAuthority === 'Active';
+
+  if (isPureBroker) {
+    // For brokers, the "authority" we care about is broker authority, already
+    // confirmed Active above. Skip the carrier-authority check.
+  } else if (c.authorityStatus && c.authorityStatus !== 'Active') {
     flags.push({
       sev: 'critical',
       title: 'Operating authority is not active',
@@ -14,7 +25,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.outOfService) {
+  if (c.outOfService && isCarrier) {
     flags.push({
       sev: 'critical',
       title: 'Carrier is out of service',
@@ -48,36 +59,43 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     }
   }
 
-  if (c.bipdOnFile != null && c.bipdOnFile === 0) {
-    flags.push({
-      sev: 'critical',
-      title: 'No liability insurance on file',
-      desc: 'FMCSA shows $0 BIPD insurance. Federal minimum is $750K.',
-      pts: 40,
-      details: 'BIPD (Bodily Injury & Property Damage) insurance is federally required for all motor carriers. Without it, any claim against the carrier is uninsured and the shipper, broker, or carrier-of-record could be liable.',
-      metrics: [
-        { label: 'BIPD on file', value: '$0' },
-        { label: 'BIPD required', value: c.bipdRequired != null ? `$${(c.bipdRequired * 1000).toLocaleString()}` : '$750,000 (federal min)' },
-      ],
-      recommendation: 'Do not book. Require proof of insurance before any further discussion.',
-    });
-  } else if (c.bipdOnFile != null && c.bipdRequired != null && c.bipdOnFile < c.bipdRequired) {
-    flags.push({
-      sev: 'warning',
-      title: 'Liability insurance below required',
-      desc: `On file: $${(c.bipdOnFile * 1000).toLocaleString()} vs required $${(c.bipdRequired * 1000).toLocaleString()}.`,
-      pts: 20,
-      details: 'The carrier\'s on-file liability insurance is below what FMCSA requires for their operating classification. A gap here means claims above the on-file amount have no coverage.',
-      metrics: [
-        { label: 'BIPD on file', value: `$${(c.bipdOnFile * 1000).toLocaleString()}` },
-        { label: 'BIPD required', value: `$${(c.bipdRequired * 1000).toLocaleString()}` },
-        { label: 'Shortfall', value: `$${((c.bipdRequired - c.bipdOnFile) * 1000).toLocaleString()}` },
-      ],
-      recommendation: 'Ask for a current certificate of insurance before booking.',
-    });
+  // BIPD (liability) insurance — only relevant to motor carriers. Pure brokers
+  // don't haul freight, so FMCSA doesn't require them to carry BIPD. Brokers
+  // are required to have a surety bond (BMC-84) instead — checked below.
+  if (isCarrier || !isPureBroker) {
+    if (c.bipdOnFile != null && c.bipdOnFile === 0) {
+      flags.push({
+        sev: 'critical',
+        title: 'No liability insurance on file',
+        desc: 'FMCSA shows $0 BIPD insurance. Federal minimum is $750K.',
+        pts: 40,
+        details: 'BIPD (Bodily Injury & Property Damage) insurance is federally required for all motor carriers. Without it, any claim against the carrier is uninsured and the shipper, broker, or carrier-of-record could be liable.',
+        metrics: [
+          { label: 'BIPD on file', value: '$0' },
+          { label: 'BIPD required', value: c.bipdRequired != null ? `$${(c.bipdRequired * 1000).toLocaleString()}` : '$750,000 (federal min)' },
+        ],
+        recommendation: 'Do not book. Require proof of insurance before any further discussion.',
+      });
+    } else if (c.bipdOnFile != null && c.bipdRequired != null && c.bipdOnFile < c.bipdRequired) {
+      flags.push({
+        sev: 'warning',
+        title: 'Liability insurance below required',
+        desc: `On file: $${(c.bipdOnFile * 1000).toLocaleString()} vs required $${(c.bipdRequired * 1000).toLocaleString()}.`,
+        pts: 20,
+        details: 'The carrier\'s on-file liability insurance is below what FMCSA requires for their operating classification. A gap here means claims above the on-file amount have no coverage.',
+        metrics: [
+          { label: 'BIPD on file', value: `$${(c.bipdOnFile * 1000).toLocaleString()}` },
+          { label: 'BIPD required', value: `$${(c.bipdRequired * 1000).toLocaleString()}` },
+          { label: 'Shortfall', value: `$${((c.bipdRequired - c.bipdOnFile) * 1000).toLocaleString()}` },
+        ],
+        recommendation: 'Ask for a current certificate of insurance before booking.',
+      });
+    }
   }
 
-  if (c.cargoRequired && c.cargoOnFile === 0) {
+  // Cargo insurance — only relevant for motor carriers (they haul, they can
+  // lose the freight). Brokers don't need cargo insurance on their own MC.
+  if (isCarrier && c.cargoRequired && c.cargoOnFile === 0) {
     flags.push({
       sev: 'warning',
       title: 'No cargo insurance on file',
@@ -92,7 +110,36 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.safetyRating && /unsatisfactory|conditional/i.test(c.safetyRating)) {
+  // Broker surety bond / trust fund — federal requirement for all property
+  // brokers. Minimum is $75,000 (stored as 75 in thousands). A broker without
+  // the bond can't legally pay carriers and is almost certainly a fraud front.
+  if (isPureBroker) {
+    const hasBond = (c.bondOnFile != null && c.bondOnFile > 0);
+    if (!hasBond) {
+      flags.push({
+        sev: 'critical',
+        title: 'No surety bond on file',
+        desc: 'Brokers are federally required to maintain a $75,000 surety bond (BMC-84) or trust fund (BMC-85).',
+        pts: 40,
+        details: 'The BMC-84 surety bond protects carriers and shippers when a broker fails to pay. A broker with no bond on file is operating illegally and carriers have no recourse if they stiff you.',
+        metrics: [
+          { label: 'Bond on file', value: '$0' },
+          { label: 'Bond required', value: '$75,000' },
+        ],
+        recommendation: 'Do not book. Ask the broker to show proof of their BMC-84 bond or BMC-85 trust fund before any payment terms.',
+      });
+    } else if (c.bondOnFile != null && c.bondOnFile < 75) {
+      flags.push({
+        sev: 'warning',
+        title: `Surety bond below $75K minimum ($${(c.bondOnFile * 1000).toLocaleString()})`,
+        desc: 'Broker bond is below the federal $75,000 requirement.',
+        pts: 15,
+        recommendation: 'Confirm current bond status with the broker before booking.',
+      });
+    }
+  }
+
+  if (!isPureBroker && c.safetyRating && /unsatisfactory|conditional/i.test(c.safetyRating)) {
     flags.push({
       sev: 'warning',
       title: `Safety rating: ${c.safetyRating}`,
@@ -114,7 +161,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.driverOosRate != null && c.driverOosRateNat != null && c.driverOosRate > c.driverOosRateNat * 1.5) {
+  if (!isPureBroker && c.driverOosRate != null && c.driverOosRateNat != null && c.driverOosRate > c.driverOosRateNat * 1.5) {
     flags.push({
       sev: 'warning',
       title: `Driver out-of-service rate ${c.driverOosRate.toFixed(1)}%`,
@@ -130,7 +177,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat * 1.5) {
+  if (!isPureBroker && c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat * 1.5) {
     flags.push({
       sev: 'warning',
       title: `Vehicle out-of-service rate ${c.vehicleOosRate.toFixed(1)}%`,
@@ -144,7 +191,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       ],
       recommendation: 'For time-sensitive freight, prefer a carrier with OOS rates at or below the national average.',
     });
-  } else if (c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat) {
+  } else if (!isPureBroker && c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat) {
     flags.push({
       sev: 'info',
       title: `Vehicle OOS rate ${c.vehicleOosRate.toFixed(1)}% · above average`,
@@ -160,7 +207,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.fatalCrash && c.fatalCrash > 0) {
+  if (!isPureBroker && c.fatalCrash && c.fatalCrash > 0) {
     flags.push({
       sev: 'warning',
       title: `${c.fatalCrash} fatal crash${c.fatalCrash === 1 ? '' : 'es'} on record`,
@@ -176,7 +223,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.crashTotal != null && c.crashTotal >= 10 && (!c.fatalCrash || c.fatalCrash === 0)) {
+  if (!isPureBroker && c.crashTotal != null && c.crashTotal >= 10 && (!c.fatalCrash || c.fatalCrash === 0)) {
     const perTruck = c.powerUnits ? (c.crashTotal / c.powerUnits).toFixed(2) : null;
     flags.push({
       sev: 'info',

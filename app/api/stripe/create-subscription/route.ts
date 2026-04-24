@@ -74,6 +74,23 @@ export async function POST(req: Request) {
 
   // Create a subscription in "default_incomplete" state and expand the initial
   // invoice's PaymentIntent so we can hand its client_secret to the Payment Element.
+  // Clean up any prior abandoned attempts: if the customer already has an
+  // `incomplete` subscription for this product, cancel it before creating
+  // a new one. Without this, every refresh/promo-change during checkout
+  // leaves a stuck incomplete sub in Stripe Dashboard.
+  try {
+    const existingIncomplete = await stripe.subscriptions.list({
+      customer: customerId!,
+      status: 'incomplete',
+      limit: 10,
+    });
+    for (const s of existingIncomplete.data) {
+      if (s.metadata?.product === 'haulock') {
+        await stripe.subscriptions.cancel(s.id).catch(() => null);
+      }
+    }
+  } catch { /* non-fatal — don't block new checkout */ }
+
   const subscription = await stripe.subscriptions.create({
     customer: customerId!,
     items: [{ price }],

@@ -14,7 +14,21 @@
       "Bash(pbpaste)",
       "Bash(echo \"Length in clipboard: $\\(pbpaste)",
       "Bash(awk -F= '{print $1 \" = \" \\(length\\($2\\) > 0 ? \"SET \\(\"length\\($2\\)\" chars\\)\" : \"EMPTY\"\\)}')",
-      "Bash(pkill -f \"next dev\")"
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s -H \"X-App-Token: $\\(grep '^SOCRATA_APP_TOKEN=' .env.local)",
+      "Bash(python3 -c \"import json,sys; row=json.load\\(sys.stdin\\)[0]; [print\\(k\\) for k in sorted\\(row.keys\\(\\)\\)]\")",
+      "Bash(pkill -f \"ingest-fmcsa-api\")",
+      "Bash(awk '-F\",\"' '{ for\\(i=1;i<=NF;i++\\) printf \"[%d] %s | \", i, $i; print \"\" }')",
+      "Bash(pkill -f \"ingest-fmcsa-carrier-flat\")",
+      "Bash(pkill -f \"ingest-fmcsa\")",
+      "Bash(awk -F= '{ print \"length: \" length\\($2\\) \" chars\" }')",
+      "Bash(curl -s \"https://api.us.socrata.com/api/catalog/v1?q=carrier+all+with+history&domains=data.transportation.gov&limit=5\")",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s \"https://api.us.socrata.com/api/catalog/v1?q=FMCSA+carrier&domains=data.transportation.gov&limit=20\")",
+      "Bash(curl -s \"http://api.us.socrata.com/api/catalog/v1?q=carrier&domains=data.transportation.gov&limit=20\")",
+      "Bash(curl -sL \"https://api.us.socrata.com/api/catalog/v1?q=Carrier%20All%20With%20History&domains=data.transportation.gov&limit=10\")",
+      "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=15\")",
+      "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=20\")"
     ]
   }
 }
