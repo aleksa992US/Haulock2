@@ -15,6 +15,7 @@ import { timeAgo } from '@/lib/timeago';
 import { PLANS, getPlan, formatLimit } from '@/lib/plans';
 import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
+import { track, identify, trackPurchase } from '@/lib/analytics';
 
 const APP_ROUTES = ['dashboard', 'verify', 'history', 'reports', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'support'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
@@ -149,6 +150,9 @@ export default function Haulock() {
       recordAuthProvider(data.user);
       const ensured = await ensureDefaultPlan(data.user);
       const u = userFromSession(ensured);
+      // Identify the user in GA so cross-device sessions stitch together.
+      // The Supabase UUID is opaque and contains no PII.
+      identify(ensured.id);
       setUser(u);
       const r = typeof window !== 'undefined' ? pathToRoute(window.location.pathname) : 'landing';
       if (r === 'landing' || r === 'login' || r === 'signup') {
@@ -161,8 +165,22 @@ export default function Haulock() {
       if (session?.user) {
         recordAuthProvider(session.user);
         const ensured = await ensureDefaultPlan(session.user);
+        identify(ensured.id);
+        // Distinguish first-time signup from a returning login. created_at
+        // is set once on insert so any session.user appearing within 30s
+        // of that timestamp is a brand-new account. Only fires once per
+        // session because of `_event === 'SIGNED_IN'`.
+        if (_event === 'SIGNED_IN') {
+          const createdAt = ensured.created_at ? new Date(ensured.created_at).getTime() : 0;
+          const isFresh = createdAt > 0 && Date.now() - createdAt < 30_000;
+          const provider = String((ensured.app_metadata as any)?.provider || 'email').toLowerCase();
+          if (isFresh) track('signup_complete', { provider });
+          else track('login', { provider });
+        }
         setUser(userFromSession(ensured));
       } else {
+        if (_event === 'SIGNED_OUT') track('logout');
+        identify(null);
         setUser(null);
       }
     });
@@ -1799,7 +1817,13 @@ function Nav({ navigate, user }: any) {
   return (
     <nav className="sticky top-0 z-50 bg-[#F5F3EE] border-b border-[#0B1E3F]/10 text-[#0B1E3F]">
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-        <Logo />
+        {/* Logo always sends the user back to the marketing home. Used to
+            be an unwrapped <Logo /> which felt broken on /blog, /about,
+            /careers, /terms, /privacy etc. — the standard convention every
+            user expects. */}
+        <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} aria-label="Haulock home" className="hover:opacity-80 transition">
+          <Logo />
+        </button>
         <div className="hidden md:flex items-center gap-8 text-sm text-[#0B1E3F]/70">
           <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} className="hover:text-[#0B1E3F]">Home</button>
           <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">What we check</button>
@@ -1874,6 +1898,7 @@ function NewsletterSignup() {
       } else {
         setStatus('ok');
         setMessage('You are on the list. Watch your inbox every Thursday.');
+        track('newsletter_subscribed');
       }
       setEmail('');
     } catch (err: any) {
@@ -1960,7 +1985,9 @@ function Footer({ navigate }: any) {
       <div className="max-w-7xl mx-auto">
         <div className="grid md:grid-cols-5 gap-12 pb-12 border-b border-white/10">
           <div className="md:col-span-2">
-            <Logo white />
+            <button onClick={() => go('landing')} aria-label="Haulock home" className="hover:opacity-80 transition w-fit">
+              <Logo white />
+            </button>
             <div className="text-sm text-white/70 mt-4 max-w-xs">Know who&apos;s on the other end of every rate con. Trusted by 4,200+ carriers.</div>
           </div>
           {cols.map((col, i) => (
@@ -3110,6 +3137,7 @@ function BlogNewsletterCTA() {
       } else {
         setStatus('ok');
         setMessage('You are on the list. Watch your inbox every Thursday.');
+        track('newsletter_subscribed');
       }
       setEmail('');
     } catch (err: any) {
@@ -5513,6 +5541,11 @@ function VerifyTool({ navigate }: any) {
         throw new Error(data?.error || `Scan failed (${res.status})`);
       }
       invalidateCache('lookups:200', 'usage', 'alerts');
+      track('rate_con_uploaded', {
+        verdict: data?.verdict || 'unknown',
+        score: typeof data?.score === 'number' ? data.score : 0,
+        broker_resolved: Boolean(data?.mc || data?.dot),
+      });
       navigate('report', data);
     } catch (err: any) {
       setRcError(err?.message || 'Scan failed');
@@ -5578,6 +5611,12 @@ function VerifyTool({ navigate }: any) {
       // landing on the full report. ~1.4s is long enough to register
       // visually without feeling like a delay.
       setScanResult(merged);
+      track('verify_completed', {
+        query_kind: /^MC[-\s]?\d/i.test(q) ? 'mc' : /^(?:US)?DOT[-\s]?\d/i.test(q) ? 'dot' : 'name',
+        verdict: data?.verdict || 'unknown',
+        score: typeof data?.score === 'number' ? data.score : 0,
+        cached: Boolean(data?.cached),
+      });
       await new Promise((r) => setTimeout(r, 1400));
       navigate('report', merged);
       setScanResult(null);
@@ -5770,6 +5809,10 @@ function PdfForensicsPanel() {
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `Analysis failed (${r.status})`);
       setResult(j);
+      track('pdf_forensics_scanned', {
+        verdict: j?.verdict || 'unknown',
+        score: typeof j?.score === 'number' ? j.score : 0,
+      });
     } catch (err: any) {
       setError(err?.message || 'Analysis failed');
     } finally {
@@ -6040,7 +6083,14 @@ function Report({ report, navigate }: any) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(r),
       });
-      if (res.ok) invalidateCache('watchlist', 'usage');
+      if (res.ok) {
+        invalidateCache('watchlist', 'usage');
+        track('watchlist_added', {
+          mc: r.mc || undefined,
+          dot: r.dot || undefined,
+          verdict: r.verdict || 'unknown',
+        });
+      }
       setWatching(res.ok ? 'saved' : 'error');
       if (res.ok) setTimeout(() => setWatchOpen(false), 800);
     } catch {
@@ -7485,6 +7535,12 @@ function ReportFraudModal({ broker, onClose, onSaved }: any) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      track('fraud_report_submitted', {
+        type,
+        mc: broker.mc || undefined,
+        dot: broker.dot || undefined,
+        amount: amount.trim() ? Number(amount) : undefined,
+      });
       onSaved();
     } catch (err: any) {
       setError(err?.message || 'Failed to submit');
@@ -8069,6 +8125,7 @@ function SupportPage({ user }: { user: any }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `Create failed (${r.status})`);
+      track('support_ticket_created');
       setShowNew(false);
       setNewSubject(''); setNewBody('');
       await load();
@@ -9466,10 +9523,30 @@ function SettingsPage({ user, navigate, initialTab }: any) {
     const params = new URLSearchParams(window.location.search);
     if (params.get('checkout') === 'success') {
       setTab('billing');
-      setCheckoutSuccess({ promo: params.get('promo') });
+      const promo = params.get('promo');
+      setCheckoutSuccess({ promo });
+      // Fire the GA4 purchase event so revenue / conversions appear in
+      // Reports → Monetization. We use the helper because GA4 has special
+      // handling for `value` + `currency` (currency must be ISO 4217).
+      // Plan + amount come from the user's profile after the Stripe
+      // webhook has updated the subscription metadata. If the webhook
+      // hasn't arrived yet, we fire a generic event without value — the
+      // canonical revenue total still lives in Stripe.
+      try {
+        const planId = String(user?.plan || '').toLowerCase();
+        const plan = (PLAN_DETAILS as any)[planId];
+        const priceMatch = String(plan?.price || '').match(/\$?([\d,]+(?:\.\d+)?)/);
+        const value = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0;
+        trackPurchase({
+          transaction_id: params.get('session_id') || `chk-${Date.now()}`,
+          value,
+          currency: 'USD',
+          plan: planId || 'unknown',
+        });
+      } catch { /* analytics never throws */ }
       window.history.replaceState({}, '', window.location.pathname);
     }
-  }, []);
+  }, [user?.plan]);
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
