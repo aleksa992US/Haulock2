@@ -24,8 +24,8 @@ export async function POST(req: Request) {
 }
 
 async function run(req: Request) {
-  const auth = await authorizeCronOrAdmin(req);
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const denied = await authorizeCronOrAdmin(req);
+  if (denied) return denied;
 
   if (!isResendConfigured() || !isAudienceConfigured()) {
     return NextResponse.json({ error: 'Resend not configured' }, { status: 503 });

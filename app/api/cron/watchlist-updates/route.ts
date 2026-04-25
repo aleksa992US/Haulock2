@@ -20,8 +20,8 @@ export async function GET(req: Request) { return run(req); }
 export async function POST(req: Request) { return run(req); }
 
 async function run(req: Request) {
-  const auth = await authorizeCronOrAdmin(req);
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const denied = await authorizeCronOrAdmin(req);
+  if (denied) return denied;
 
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
