@@ -2067,6 +2067,18 @@ function Login({ navigate, loginAs }: any) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try { setLastProvider(localStorage.getItem('haulock:lastAuthProvider')); } catch {}
+    // Surface auth errors bounced in from /auth/callback (OAuth + magic links).
+    // Strip the param from the URL so a refresh doesn't re-show the message.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const authErr = params.get('auth_error');
+      if (authErr) {
+        setError(authErr);
+        params.delete('auth_error');
+        const clean = window.location.pathname + (params.toString() ? `?${params}` : '') + window.location.hash;
+        window.history.replaceState({}, '', clean);
+      }
+    } catch {}
   }, []);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
