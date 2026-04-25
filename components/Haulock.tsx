@@ -6778,7 +6778,19 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
   const order: Array<keyof typeof BASIC_LABELS> = [
     'unsafeDriving', 'hoursOfService', 'driverFitness', 'controlledSubstances', 'vehicleMaintenance', 'hazmat', 'crashIndicator',
   ];
-  const basics = (sms?.basics || {}) as Record<string, { measure: number; inspections: number; alert: boolean } | undefined>;
+  // Type mirrors lib/fmcsa-sms.ts SmsBasic (with the per-BASIC subpage
+  // enrichment fields). Kept inline here to avoid adding a server-side
+  // import to this client component.
+  type BasicShape = {
+    measure: number;
+    inspections: number;
+    alert: boolean;
+    percentile?: number;
+    acuteCriticalViolations?: number;
+    safetyEventGroup?: string;
+    subpageFetched?: boolean;
+  };
+  const basics = (sms?.basics || {}) as Record<string, BasicShape | undefined>;
   const inspections = sms?.inspections || null;
   const crashes = sms?.crashes || null;
   const overview = sms?.carrier || {};
