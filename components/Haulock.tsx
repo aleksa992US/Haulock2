@@ -1619,7 +1619,10 @@ function RateConMockup() {
           <div className="absolute top-28 -right-2 flex items-center gap-2 px-2 py-1 bg-[#DC2626] text-white text-xs mono rounded-full">
             <XCircle className="w-3 h-3 text-white" /> spoofed
           </div>
-          <div className="absolute bottom-20 -right-2 flex items-center gap-2 px-2 py-1 bg-[#DC2626] text-white text-xs mono rounded-full">
+          {/* Anchored to the email-row bottom of the mockup. Was at
+              bottom-20, which overlapped the rate dollar amount on shorter
+              cards — bottom-8 sits cleanly next to the "Contact" block. */}
+          <div className="absolute bottom-8 -right-2 flex items-center gap-2 px-2 py-1 bg-[#DC2626] text-white text-xs mono rounded-full">
             <XCircle className="w-3 h-3 text-white" /> wrong domain
           </div>
         </div>
@@ -5592,14 +5595,37 @@ function VerifyTool({ navigate }: any) {
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Who&apos;s on the other end?</h1>
       </div>
       <div className="flex gap-1 p-1 bg-[#0B1E3F]/5 rounded-full w-fit flex-wrap">
-        {[
+        {([
           { id: 'quick', label: 'Quick lookup' },
           { id: 'ratecon', label: 'Rate con analyzer' },
-          { id: 'forensics', label: 'PDF forensics' },
-          { id: 'bulk', label: 'Bulk verify' },
-        ].map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 rounded-full text-sm font-medium transition ${tab === t.id ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>{t.label}</button>
-        ))}
+          // PDF forensics is the primary feature for drivers — we tag it
+          // with a green pill so a driver visiting the verify page knows
+          // immediately which tab applies to their workflow.
+          { id: 'forensics', label: 'PDF forensics', tag: 'For drivers' },
+          // Bulk verify is shipped but hidden from the tab strip until we
+          // actually need it. Keep the route alive so existing deep-links
+          // (and the underlying PageSlot) don't 404.
+          // { id: 'bulk', label: 'Bulk verify' },
+        ] as const).map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition flex items-center gap-2 ${active ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}
+            >
+              {t.label}
+              {('tag' in t) && t.tag && (
+                <span
+                  className={`text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold ${active ? 'bg-white/20 text-white' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}
+                  title="Drivers and owner-operators use this to check if a dispatcher edited a rate con before forwarding it."
+                >
+                  {t.tag}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
       {tab === 'quick' && (
         loading ? (
