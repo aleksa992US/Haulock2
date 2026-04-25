@@ -8,6 +8,7 @@ import {
   Clock, MapPin, Phone, Mail, Building2, Download, Share2, Plus, BarChart3, Menu,
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
   Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
+  Truck, UserCheck, LifeBuoy, MessageSquare,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
@@ -15,9 +16,9 @@ import { PLANS, getPlan, formatLimit } from '@/lib/plans';
 import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 
-const APP_ROUTES = ['dashboard', 'verify', 'history', 'reports', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin'];
+const APP_ROUTES = ['dashboard', 'verify', 'history', 'reports', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'support'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
-const PUBLIC_ROUTES = ['terms', 'privacy', 'blog'];
+const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about', 'careers'];
 const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
 
 function pathToRoute(pathname: string): string {
@@ -57,7 +58,10 @@ function userFromSession(u: any): any {
     company: meta.company || '',
     mc: meta.mc || '',
     dot: meta.dot || '',
-    plan: meta.plan || '',
+    // Default empty/missing plan to 'free' for the UI. The async
+    // ensureDefaultPlan() effect persists the same value to user_metadata
+    // so server-side reads (usage limits, billing) stay consistent.
+    plan: meta.plan || 'free',
     planChangedAt: meta.plan_changed_at || null,
     stripeCustomerId: meta.stripe_customer_id || null,
     fleet_size: meta.fleet_size || 1,
@@ -110,21 +114,43 @@ export default function Haulock() {
   useEffect(() => {
     const sb = getSupabase();
     if (!sb) return;
-    sb.auth.getUser().then(({ data }) => {
-      if (data?.user) {
-        const u = userFromSession(data.user);
-        setUser(u);
-        const r = typeof window !== 'undefined' ? pathToRoute(window.location.pathname) : 'landing';
-        if (r === 'landing' || r === 'login' || r === 'signup') {
-          const target = u.plan ? '/dashboard' : '/plan';
-          if (typeof window !== 'undefined') window.history.replaceState({}, '', target);
-          setRoute(u.plan ? 'dashboard' : 'plan');
-        }
+
+    // Email/password signup sets `plan: 'free'` during signUp(). Google
+    // OAuth doesn't go through that path, so first-time OAuth users land
+    // with no plan. Backfill it here so every authenticated user always
+    // has a plan in metadata. Idempotent — only writes when missing.
+    const ensureDefaultPlan = async (rawUser: any) => {
+      const meta = (rawUser?.user_metadata || {}) as any;
+      if (meta.plan) return rawUser;
+      try {
+        const { data: updated } = await sb.auth.updateUser({ data: { plan: 'free' } });
+        return updated?.user || rawUser;
+      } catch {
+        // Non-fatal: the local user object will still treat empty plan as
+        // free (see userFromSession's plan handling). Try again next load.
+        return rawUser;
+      }
+    };
+
+    sb.auth.getUser().then(async ({ data }) => {
+      if (!data?.user) return;
+      const ensured = await ensureDefaultPlan(data.user);
+      const u = userFromSession(ensured);
+      setUser(u);
+      const r = typeof window !== 'undefined' ? pathToRoute(window.location.pathname) : 'landing';
+      if (r === 'landing' || r === 'login' || r === 'signup') {
+        // After backfill every user has a plan, so just send them to /dashboard.
+        if (typeof window !== 'undefined') window.history.replaceState({}, '', '/dashboard');
+        setRoute('dashboard');
       }
     });
-    const { data: sub } = sb.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) setUser(userFromSession(session.user));
-      else setUser(null);
+    const { data: sub } = sb.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        const ensured = await ensureDefaultPlan(session.user);
+        setUser(userFromSession(ensured));
+      } else {
+        setUser(null);
+      }
     });
     return () => { sub.subscription.unsubscribe(); };
   }, []);
@@ -165,8 +191,15 @@ export default function Haulock() {
   const navigate = (to: string, data?: any) => {
     if (to === 'report' && data) persistReport(data);
     if (to === 'settings' && data?.tab) setSettingsTab(data.tab);
-    // `data.slug` is used for blog post navigation. Pass null/undefined to
-    // navigate to the blog index.
+    // VerifyTool reads this from sessionStorage on mount so deep-linking to
+    // a specific tab (e.g. footer "Rate con analyzer") works without
+    // plumbing yet another state through the tree.
+    if (to === 'verify' && data?.tab && typeof window !== 'undefined') {
+      try { sessionStorage.setItem('haulock:verifyTab', data.tab); } catch {}
+    }
+    if (to === 'landing' && data?.scrollTo && typeof window !== 'undefined') {
+      try { sessionStorage.setItem('haulock:landingScrollTo', data.scrollTo); } catch {}
+    }
     const slug = to === 'blog' ? (data?.slug ?? null) : null;
     if (to === 'blog') setBlogSlug(slug);
     const path = routeToPath(to, slug);
@@ -186,13 +219,16 @@ export default function Haulock() {
       {route === 'terms' && <LegalPage page="terms" navigate={navigate} user={user} />}
       {route === 'privacy' && <LegalPage page="privacy" navigate={navigate} user={user} />}
       {route === 'blog' && <BlogPage slug={blogSlug} navigate={navigate} user={user} />}
-      {user && ['dashboard', 'verify', 'report', 'reports', 'watchlist', 'alerts', 'settings', 'plan', 'history', 'admin'].includes(route) && (
+      {route === 'about' && <AboutPage navigate={navigate} user={user} />}
+      {route === 'careers' && <CareersPage navigate={navigate} user={user} />}
+      {user && ['dashboard', 'verify', 'report', 'reports', 'watchlist', 'alerts', 'settings', 'plan', 'history', 'admin', 'support'].includes(route) && (
         <AppShell user={user} route={route} navigate={navigate} logout={logout}>
           <PageSlot routeId="dashboard" current={route}><Dashboard navigate={navigate} user={user} /></PageSlot>
           <PageSlot routeId="verify" current={route}><VerifyTool navigate={navigate} /></PageSlot>
           <PageSlot routeId="report" current={route}><Report report={currentReport} navigate={navigate} /></PageSlot>
           <PageSlot routeId="reports" current={route}><FraudReports navigate={navigate} /></PageSlot>
           <PageSlot routeId="watchlist" current={route}><Watchlist navigate={navigate} /></PageSlot>
+          <PageSlot routeId="support" current={route}><SupportPage user={user} /></PageSlot>
           <PageSlot routeId="alerts" current={route}><Alerts navigate={navigate} /></PageSlot>
           <PageSlot routeId="settings" current={route}><SettingsPage user={user} navigate={navigate} initialTab={settingsTab} /></PageSlot>
           <PageSlot routeId="plan" current={route}><Plan user={user} setPlan={setPlan} /></PageSlot>
@@ -268,6 +304,21 @@ function formatCount(n: number): string {
 
 function Landing({ navigate, user }: any) {
   const live = useLandingStats();
+  // Footer / Nav can deep-link into a Landing section via
+  // navigate('landing', { scrollTo: 'product' }). We pop the target id off
+  // sessionStorage on mount and smooth-scroll to it once.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let target: string | null = null;
+    try { target = sessionStorage.getItem('haulock:landingScrollTo'); } catch {}
+    if (!target) return;
+    try { sessionStorage.removeItem('haulock:landingScrollTo'); } catch {}
+    // Wait one paint so the section is in the DOM.
+    setTimeout(() => {
+      const el = document.getElementById(target!);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  }, []);
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
@@ -343,9 +394,62 @@ function Landing({ navigate, user }: any) {
 
       <section className="py-20 px-6 bg-[#F5F3EE] text-[#0B1E3F]">
         <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-12 max-w-2xl mx-auto">
+            <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Who it&apos;s for</div>
+            <h2 className="text-3xl md:text-5xl leading-tight text-[#0B1E3F]">
+              One platform. <span className="serif italic">Three sides of the load.</span>
+            </h2>
+            <p className="text-[#0B1E3F]/65 mt-4">Brokers, carriers, and drivers all lose money to the same scams. We catch them on whichever side you&rsquo;re standing.</p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-5">
+            <RoleCard
+              icon={Building2}
+              accent="#0B1E3F"
+              role="Brokers"
+              tagline="Verify carriers before you tender."
+              points={[
+                'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, and 24-month inspections.',
+                'Lookalike-domain detection on every carrier email so you spot the impersonator using a real MC.',
+                'Community fraud reports from other brokers, plus chameleon-network detection on shared phones and addresses.',
+              ]}
+              cta="Start verifying carriers"
+              onClick={() => navigate('signup')}
+            />
+            <RoleCard
+              icon={Truck}
+              accent="#FF6B35"
+              role="Carriers"
+              tagline="Verify brokers before you hook the trailer."
+              points={[
+                'MC, DOT, surety bond, address, and website cross-checked in 2.1 seconds.',
+                'Drop the rate confirmation PDF: AI extracts the broker, scores it for fraud language, flags spoofed identities.',
+                'Watchlist auto-rescans every 24 hours and emails you the moment something changes.',
+              ]}
+              cta="Verify any broker free"
+              onClick={() => navigate('signup')}
+            />
+            <RoleCard
+              icon={UserCheck}
+              accent="#16A34A"
+              role="Drivers & dispatchers"
+              tagline="Make sure no one shaved the rate."
+              points={[
+                'Drop the rate con PDF. We read the hidden metadata and flag if it was edited after the broker sent it.',
+                'See exactly which tool touched the file and when. iLovePDF + a 3-day gap is a red flag every time.',
+                'Free to check. No credit card. 3 PDF scans and 3 broker lookups every month, on us.',
+              ]}
+              cta="Check a rate con free"
+              onClick={() => navigate('signup')}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="py-20 px-6 bg-[#F5F3EE] text-[#0B1E3F] border-t border-[#0B1E3F]/10">
+        <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <BigStat value="$47M" label="prevented fraud losses" />
-            <BigStat value="4,247" label="active carriers & brokers" />
+            <BigStat value="4,247" label="carriers, brokers & drivers" />
             <BigStat value="287K" label="verifications / month" />
             <BigStat value="94%" label="fraud detection rate" />
           </div>
@@ -428,14 +532,14 @@ function Landing({ navigate, user }: any) {
         <div className="max-w-7xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-16 items-start">
             <div className="lg:sticky lg:top-24">
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#FF6B35]/10 text-[#FF6B35] text-xs mono uppercase tracking-[0.2em] rounded-full mb-5">
-                3 free scans / month · free account only
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#16A34A]/10 text-[#16A34A] text-xs mono uppercase tracking-[0.2em] rounded-full mb-5">
+                For drivers · 3 free scans / month
               </div>
               <h2 className="text-4xl md:text-5xl leading-[1.05] mb-6 text-[#0B1E3F]">
-                Is your dispatcher <span className="serif italic">editing</span> the rate con before they send it?
+                For drivers: <span className="serif italic">check the rate con</span> before you sign for it.
               </h2>
               <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
-                It happens more than you think. A dispatcher gets a $1,400 rate con from a broker, downloads it, opens it in a free online PDF editor, changes the number to $1,100, and forwards it to the driver. The driver hauls the load thinking the rate is $1,100 — the dispatcher pockets the $300 spread.
+                It happens more than you think. A dispatcher gets a $1,400 rate con from a broker, downloads it, opens it in a free online PDF editor, changes the number to $1,100, and forwards it to the driver. You haul the load thinking the rate is $1,100 and the dispatcher pockets the $300 spread.
               </p>
               <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
                 Every PDF contains <strong className="text-[#0B1E3F]">hidden metadata</strong> about who made it, when it was made, and every tool that touched it. Haulock reads that metadata and tells you the truth in plain English:
@@ -646,6 +750,7 @@ function Landing({ navigate, user }: any) {
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
               { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, our community fraud reports, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
               { q: 'Does it work for freight brokers?', a: 'Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.' },
+              { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, and any community fraud reports. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, community fraud reports, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
@@ -1518,6 +1623,46 @@ function BigStat({ value, label }: any) {
   );
 }
 
+function RoleCard({ icon: Icon, accent, role, tagline, points, cta, onClick }: {
+  icon: any;
+  accent: string;
+  role: string;
+  tagline: string;
+  points: string[];
+  cta: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className="bg-white border border-[#0B1E3F]/10 rounded-2xl p-7 card-shadow flex flex-col text-[#0B1E3F] hover:border-[#0B1E3F]/25 transition">
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accent}1A`, color: accent }}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/55">For</div>
+          <div className="text-lg font-semibold text-[#0B1E3F] leading-tight">{role}</div>
+        </div>
+      </div>
+      <div className="serif italic text-xl leading-snug text-[#0B1E3F] mb-5">{tagline}</div>
+      <ul className="space-y-3 flex-1 mb-6">
+        {points.map((p, i) => (
+          <li key={i} className="flex items-start gap-2.5 text-sm leading-relaxed text-[#0B1E3F]/75">
+            <span className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: accent }} />
+            <span>{p}</span>
+          </li>
+        ))}
+      </ul>
+      <button
+        onClick={onClick}
+        className="w-full px-5 py-2.5 rounded-full text-sm font-semibold text-white transition flex items-center justify-center gap-2 hover:opacity-90"
+        style={{ backgroundColor: accent }}
+      >
+        {cta} <ArrowRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
 function FeatureCard({ icon: Icon, iconBg, title, desc, stat, statLabel }: any) {
   return (
     <div className="group relative p-7 bg-white border border-[#0B1E3F]/10 rounded-2xl hover:border-[#0B1E3F]/20 transition card-shadow overflow-hidden text-[#0B1E3F]">
@@ -1766,30 +1911,31 @@ function NewsletterSignup() {
 }
 
 function Footer({ navigate }: any) {
-  // Each item is { label, route?, href? }. `route` triggers in-app
-  // navigation (no full page reload), `href` is for plain mailtos / external
-  // links, plain text-only entries are placeholders for now.
-  type Col = { t: string; items: { label: string; route?: string; href?: string }[] };
+  // Each item is { label, route?, data?, href? }. `route` triggers in-app
+  // navigation (no full page reload, optional `data` payload like the
+  // VerifyTool tab or a Landing scroll target). `href` is for plain mailtos
+  // / external links / Next.js routes that live outside the SPA shell.
+  type Col = { t: string; items: { label: string; route?: string; data?: any; href?: string }[] };
   const cols: Col[] = [
     { t: 'Product', items: [
-      { label: 'Broker verify' },
-      { label: 'Rate con analyzer' },
-      { label: 'Community network' },
-      { label: 'API' },
+      { label: 'Broker verify',      route: 'verify',  data: { tab: 'quick' } },
+      { label: 'Rate con analyzer',  route: 'verify',  data: { tab: 'ratecon' } },
+      { label: 'Community network',  route: 'reports' },
+      { label: 'API',                href: '/docs/api' },
     ] },
     { t: 'Company', items: [
-      { label: 'About' },
-      { label: 'Blog', route: 'blog' },
-      { label: 'Careers' },
-      { label: 'Contact', href: 'mailto:hello@haulock.com' },
+      { label: 'About',    route: 'about' },
+      { label: 'Blog',     route: 'blog' },
+      { label: 'Careers',  route: 'careers' },
+      { label: 'Contact',  href: 'mailto:hello@haulock.com' },
     ] },
     { t: 'Legal', items: [
-      { label: 'Terms of Use', route: 'terms' },
-      { label: 'Privacy Policy', route: 'privacy' },
+      { label: 'Terms of Use',    route: 'terms' },
+      { label: 'Privacy Policy',  route: 'privacy' },
     ] },
   ];
-  const go = (route: string) => {
-    if (typeof navigate === 'function') navigate(route);
+  const go = (route: string, data?: any) => {
+    if (typeof navigate === 'function') navigate(route, data);
     else if (typeof window !== 'undefined') window.location.href = `/${route}`;
   };
   return (
@@ -1810,7 +1956,7 @@ function Footer({ navigate }: any) {
                       <button
                         key={j}
                         type="button"
-                        onClick={() => go(item.route!)}
+                        onClick={() => go(item.route!, item.data)}
                         className="block text-left hover:text-white text-white/90"
                       >
                         {item.label}
@@ -2368,6 +2514,203 @@ function PrivacyContent() {
       <LegalP>
         Privacy questions can be sent to <a href="mailto:privacy@haulock.com" className="text-[#0B1E3F] underline">privacy@haulock.com</a>.
       </LegalP>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// About
+// ---------------------------------------------------------------------------
+
+function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const original = document.title;
+    document.title = 'About Haulock · Built for carriers who have been burned';
+    setMeta('description', 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a community fraud network. Built by people who lost loads to fraud and decided to stop it.');
+    return () => { document.title = original; };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
+      <Nav navigate={navigate} user={user} />
+
+      <section className="py-20 px-6 relative bg-[#F5F3EE]">
+        <div className="absolute inset-0 radial-glow pointer-events-none" />
+        <div className="relative max-w-3xl mx-auto">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">About Haulock</div>
+          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
+            Built for carriers who have been burned.
+          </h1>
+          <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
+            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and a community fraud network. Trusted by 4,200 carriers and brokers across the lower 48.
+          </p>
+        </div>
+      </section>
+
+      <section className="px-6 pb-20">
+        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
+          <LegalH2>Why we built this</LegalH2>
+          <LegalP>
+            Freight fraud is up an estimated 400% since 2020. The numbers in industry reports do not show the worst part: most of those losses are absorbed by small carriers who do not have an in-house compliance team, an expensive vetting subscription, or a lawyer on retainer. They had a load, they had a phone call, they had a rate confirmation that looked right, and now the load is gone or the invoice is unpaid.
+          </LegalP>
+          <LegalP>
+            We started Haulock because the tools that already existed were either built only for brokers (vetting carriers in one direction) or priced for enterprise fleets (hundreds of dollars a month, before you make a single lookup). The carrier with three trucks could not afford them. The owner-operator running a single rig had nothing at all.
+          </LegalP>
+
+          <LegalH2>What Haulock actually does</LegalH2>
+          <LegalP>
+            Every lookup runs up to 14 sources in parallel: FMCSA SAFER for authority and address, FMCSA L&amp;I for insurance and surety bond, FMCSA SMS for inspection and crash history, public WHOIS and DNS for domain age and email infrastructure, Google Places for address verification, Google Safe Browsing for known threat domains, Brave Search across 50+ trusted news outlets, plus our own community fraud network and historical snapshot archive going back five years.
+          </LegalP>
+          <LegalP>
+            We also analyze rate confirmation PDFs with Claude AI to extract the broker, the carrier, and the load, then cross-check the broker email domain against their FMCSA-registered website to catch lookalike domains. The whole scan finishes in about two seconds.
+          </LegalP>
+
+          <LegalH2>What we believe</LegalH2>
+          <LegalUl>
+            <li><strong>Verification should be free for the small operator.</strong> Our Free plan includes lookups every month with no credit card. The plan structure scales with fleet size, not vetting volume.</li>
+            <li><strong>Public data should be presented honestly.</strong> The data inside a Haulock report comes from FMCSA, public WHOIS, public search, and other public sources. We display it. We do not invent it. We do not pretend a high score is a verdict of fraud.</li>
+            <li><strong>Both sides need protection.</strong> Carriers need to verify brokers. Brokers need to verify carriers. Same engine, same scoring, same playbook.</li>
+            <li><strong>Speed beats perfection.</strong> A scan that takes 30 minutes is a scan that does not get run. We made it fast enough to run on every load, not just the ones that smell wrong.</li>
+          </LegalUl>
+
+          <LegalH2>What we are not</LegalH2>
+          <LegalP>
+            We are not a recommendation engine. We are not a credit bureau. We are not a freight broker, a carrier, a factor, an insurer, or law enforcement. A high Haulock score is a signal that should slow you down. A low score is not a guarantee. You still call the broker on a phone number you got independently. You still verify the load with the shipper. We make those checks fast and cheap; we do not replace your judgment.
+          </LegalP>
+
+          <LegalH2>The data behind the badge</LegalH2>
+          <LegalUl>
+            <li><strong>4,200+</strong> verified carriers and brokers in the community network</li>
+            <li><strong>~2.1 second</strong> average lookup time</li>
+            <li><strong>14</strong> data sources cross-checked per scan</li>
+            <li><strong>5 years</strong> of FMCSA snapshot history archived</li>
+            <li><strong>$0</strong> required to run your first lookup</li>
+          </LegalUl>
+
+          <LegalH2>Talk to us</LegalH2>
+          <LegalP>
+            Press, partnerships, and general questions: <a href="mailto:hello@haulock.com" className="text-[#0B1E3F] underline">hello@haulock.com</a>. Legal: <a href="mailto:legal@haulock.com" className="text-[#0B1E3F] underline">legal@haulock.com</a>. Privacy: <a href="mailto:privacy@haulock.com" className="text-[#0B1E3F] underline">privacy@haulock.com</a>. If you want to join the team, the <button onClick={() => navigate('careers')} className="text-[#0B1E3F] underline">careers page</button> has open roles.
+          </LegalP>
+
+          <div className="mt-10 pt-8 border-t border-[#0B1E3F]/10 flex flex-col sm:flex-row gap-3 justify-between text-sm">
+            <button onClick={() => navigate('signup')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 inline-flex items-center justify-center gap-2">
+              Try Haulock free <ArrowRight className="w-4 h-4" />
+            </button>
+            <button onClick={() => navigate('blog')} className="px-5 py-2.5 border border-[#0B1E3F]/15 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Read the blog</button>
+          </div>
+        </div>
+      </section>
+
+      <Footer navigate={navigate} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Careers
+// ---------------------------------------------------------------------------
+
+const OPEN_ROLES: { title: string; type: string; location: string; description: string }[] = [
+  // Empty for now — the page will render the "no open roles, but please reach
+  // out" state. When you start hiring, push entries here.
+];
+
+function CareersPage({ navigate, user }: { navigate: any; user?: any }) {
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const original = document.title;
+    document.title = 'Careers at Haulock · Help us stop freight fraud';
+    setMeta('description', 'Open roles at Haulock and how to apply. Small team, freight + software, remote-friendly.');
+    return () => { document.title = original; };
+  }, []);
+
+  const hasRoles = OPEN_ROLES.length > 0;
+
+  return (
+    <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
+      <Nav navigate={navigate} user={user} />
+
+      <section className="py-20 px-6 relative bg-[#F5F3EE]">
+        <div className="absolute inset-0 radial-glow pointer-events-none" />
+        <div className="relative max-w-3xl mx-auto">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">Careers</div>
+          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
+            Help us stop freight fraud.
+          </h1>
+          <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
+            We are a small team building tools that protect carriers and brokers from identity-theft scams, double brokering, and rate-con fraud. If you care about either freight or software (and ideally both), keep reading.
+          </p>
+        </div>
+      </section>
+
+      <section className="px-6 pb-12">
+        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
+          <LegalH2>How we work</LegalH2>
+          <LegalUl>
+            <li><strong>Small team, big surface area.</strong> Whoever joins will own meaningful pieces of the product end-to-end. There is no committee. There is no managing-up game.</li>
+            <li><strong>Remote-friendly.</strong> The team works async with overlap hours in U.S. time zones. We meet in person a few times a year.</li>
+            <li><strong>Freight first.</strong> Everyone reads carrier and broker community forums weekly. Half the team has dispatched, brokered, or driven. If you have not, you will after a month here.</li>
+            <li><strong>Ship in days, not quarters.</strong> Most product changes go from idea to live in under a week. Roadmaps are short.</li>
+            <li><strong>Honest about limitations.</strong> We will not pretend Haulock can stop fraud we cannot stop. Your work should match. We sell trust, and the moment we lose it we are done.</li>
+          </LegalUl>
+
+          <LegalH2>Open roles</LegalH2>
+          {hasRoles ? (
+            <div className="space-y-4 mb-6">
+              {OPEN_ROLES.map((role, i) => (
+                <div key={i} className="p-5 border border-[#0B1E3F]/10 rounded-xl hover:border-[#0B1E3F]/25 transition">
+                  <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
+                    <div>
+                      <div className="text-lg font-semibold text-[#0B1E3F]">{role.title}</div>
+                      <div className="text-xs mono text-[#0B1E3F]/55 mt-1">{role.type} · {role.location}</div>
+                    </div>
+                    <a
+                      href={`mailto:careers@haulock.com?subject=${encodeURIComponent('Application: ' + role.title)}`}
+                      className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-semibold hover:bg-[#0B1E3F]/90 inline-flex items-center gap-2"
+                    >
+                      Apply <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                  <p className="text-sm text-[#0B1E3F]/75 leading-relaxed">{role.description}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 bg-[#0B1E3F]/[0.04] rounded-xl mb-6 text-[15px] leading-relaxed text-[#0B1E3F]/80">
+              We do not have any open roles right now. That changes fast. If you are an exceptional engineer, designer, or freight operator and want to work on this problem, send a note. We keep good resumes on file and reach out the moment something opens up.
+            </div>
+          )}
+
+          <LegalH2>How to reach out</LegalH2>
+          <LegalP>
+            Email <a href="mailto:careers@haulock.com" className="text-[#0B1E3F] underline">careers@haulock.com</a> with:
+          </LegalP>
+          <LegalUl>
+            <li>One paragraph on what you have built, broken, or fixed in freight or software (or both).</li>
+            <li>A link to anything that shows your work: GitHub, a portfolio, a deck, a write-up, a Loom of you walking through a problem.</li>
+            <li>What kind of role you want, and what you are not interested in.</li>
+            <li>Your time zone.</li>
+          </LegalUl>
+          <LegalP>
+            We read every email. We respond to every one we genuinely cannot pass on. Form-letter applications get a form-letter response.
+          </LegalP>
+
+          <div className="mt-10 pt-8 border-t border-[#0B1E3F]/10 flex flex-col sm:flex-row gap-3">
+            <a
+              href="mailto:careers@haulock.com"
+              className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 inline-flex items-center justify-center gap-2"
+            >
+              Send a note <ArrowRight className="w-4 h-4" />
+            </a>
+            <button onClick={() => navigate('about')} className="px-5 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">
+              Read about Haulock
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <Footer navigate={navigate} />
     </div>
   );
 }
@@ -3766,6 +4109,245 @@ function NewsletterAdminPanel() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Support — admin side
+// ---------------------------------------------------------------------------
+
+type AdminTicket = {
+  id: string;
+  user_id: string;
+  subject: string;
+  status: 'open' | 'working' | 'solved';
+  created_at: string;
+  updated_at: string;
+  user: { email: string; name: string | null };
+  messageCount: number;
+  lastMessageAt: string | null;
+  lastUserMessage: string | null;
+};
+
+function SupportAdminPanel() {
+  const [data, setData] = useState<{ tickets: AdminTicket[]; counts: { open: number; working: number; solved: number } } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'open' | 'working' | 'solved'>('open');
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const load = async () => {
+    setError(null);
+    try {
+      const r = await fetch('/api/admin/support');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setData({ tickets: j.tickets || [], counts: j.counts || { open: 0, working: 0, solved: 0 } });
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load tickets');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  if (!data && !error) return <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>;
+  if (error) return <div className="bg-white rounded-2xl border border-[#DC2626]/20 p-6 text-sm text-[#DC2626]">{error}</div>;
+
+  const all = data!.tickets;
+  const shown = filter === 'all' ? all : all.filter((t) => t.status === filter);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Open</div>
+          <div className="text-2xl font-semibold mt-1 text-[#F59E0B]">{data!.counts.open}</div>
+        </div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Working</div>
+          <div className="text-2xl font-semibold mt-1 text-[#0B1E3F]">{data!.counts.working}</div>
+        </div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Solved</div>
+          <div className="text-2xl font-semibold mt-1 text-[#16A34A]">{data!.counts.solved}</div>
+        </div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Total</div>
+          <div className="text-2xl font-semibold mt-1">{all.length}</div>
+        </div>
+      </div>
+
+      <div className="flex gap-1 p-1 bg-[#0B1E3F]/5 rounded-full w-fit flex-wrap">
+        {(['open', 'working', 'solved', 'all'] as const).map((f) => {
+          const active = filter === f;
+          const count = f === 'all' ? all.length : data!.counts[f];
+          return (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition flex items-center gap-2 ${active ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}
+            >
+              <span className="capitalize">{f === 'all' ? 'All' : f}</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] mono ${active ? 'bg-white/15 text-white' : 'bg-[#0B1E3F]/10 text-[#0B1E3F]/65'}`}>{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-12 text-center text-[#0B1E3F]/55 card-shadow">
+          <LifeBuoy className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/25" />
+          <div className="text-base text-[#0B1E3F] mb-1">No {filter === 'all' ? '' : filter} tickets</div>
+          <div className="text-sm">{filter === 'open' ? 'You are caught up.' : 'Nothing to show in this filter.'}</div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {shown.map((t) => (
+            <SupportAdminTicket
+              key={t.id}
+              ticket={t}
+              expanded={openId === t.id}
+              onToggle={() => setOpenId(openId === t.id ? null : t.id)}
+              onChanged={load}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SupportAdminTicket({ ticket, expanded, onToggle, onChanged }: { ticket: AdminTicket; expanded: boolean; onToggle: () => void; onChanged: () => void }) {
+  const meta = SUPPORT_STATUS_META[ticket.status] || SUPPORT_STATUS_META.open;
+  const [thread, setThread] = useState<{ messages: SupportMessage[]; loaded: boolean }>({ messages: [], loaded: false });
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!expanded || thread.loaded) return;
+    (async () => {
+      try {
+        const r = await fetch(`/api/admin/support/${ticket.id}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j?.error || 'Load failed');
+        setThread({ messages: j.messages || [], loaded: true });
+      } catch (e: any) {
+        setError(e?.message || 'Could not load thread');
+      }
+    })();
+  }, [expanded, ticket.id, thread.loaded]);
+
+  const sendReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const body = reply.trim();
+    if (!body || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(`/api/admin/support/${ticket.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || 'Send failed');
+      setThread((s) => ({ messages: [...s.messages, j.message], loaded: true }));
+      setReply('');
+      onChanged();
+    } catch (e: any) {
+      setError(e?.message || 'Could not send reply');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setStatus = async (status: 'open' | 'working' | 'solved') => {
+    if (busy || ticket.status === status) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(`/api/admin/support/${ticket.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || 'Update failed');
+      onChanged();
+    } catch (e: any) {
+      setError(e?.message || 'Could not update status');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow text-[#0B1E3F] overflow-hidden">
+      <button onClick={onToggle} className="w-full text-left px-5 py-4 hover:bg-[#0B1E3F]/[0.02] transition flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] mono uppercase tracking-wider font-bold ${meta.bg} ${meta.fg}`}>{meta.label}</span>
+            <span className="text-xs mono text-[#0B1E3F]/50">{timeAgo(ticket.updated_at)}</span>
+            {ticket.messageCount > 0 && (
+              <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/60">{ticket.messageCount} msgs</span>
+            )}
+          </div>
+          <div className="font-semibold text-[#0B1E3F] truncate">{ticket.subject}</div>
+          <div className="text-xs text-[#0B1E3F]/55 mono truncate mt-0.5">
+            {ticket.user.email}{ticket.user.name ? ` · ${ticket.user.name}` : ''}
+          </div>
+          {ticket.lastUserMessage && (
+            <div className="text-xs text-[#0B1E3F]/65 mt-1.5 line-clamp-2">{ticket.lastUserMessage}</div>
+          )}
+        </div>
+        <ChevronRight className={`w-4 h-4 text-[#0B1E3F]/40 transition flex-shrink-0 mt-1 ${expanded ? 'rotate-90' : ''}`} />
+      </button>
+      {expanded && (
+        <div className="border-t border-[#0B1E3F]/10 p-5 space-y-4 bg-[#F5F3EE]/40">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/55">Mark as</span>
+            {(['open', 'working', 'solved'] as const).map((s) => {
+              const sm = SUPPORT_STATUS_META[s];
+              const active = ticket.status === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setStatus(s)}
+                  disabled={busy || active}
+                  className={`px-3 py-1 rounded-full text-[10px] mono uppercase tracking-wider font-bold transition disabled:cursor-not-allowed ${active ? `${sm.bg} ${sm.fg} ring-1 ring-current` : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60 hover:bg-[#0B1E3F]/10'}`}
+                >
+                  {sm.label}
+                </button>
+              );
+            })}
+          </div>
+          {!thread.loaded ? (
+            <div className="text-sm text-[#0B1E3F]/55">Loading thread…</div>
+          ) : thread.messages.length === 0 ? (
+            <div className="text-sm text-[#0B1E3F]/55">No messages.</div>
+          ) : (
+            <div className="space-y-3">
+              {thread.messages.map((m) => (
+                <SupportMessageBubble key={m.id} message={m} authorLabel={m.is_admin ? 'You (admin)' : (ticket.user.name || ticket.user.email || 'User')} />
+              ))}
+            </div>
+          )}
+          <form onSubmit={sendReply} className="space-y-2">
+            <textarea
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              placeholder="Reply to the user. Marking the ticket Solved closes it. They can still reply, which will reopen."
+              className="w-full px-4 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F] min-h-[100px]"
+              maxLength={5000}
+            />
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <button type="submit" disabled={busy || !reply.trim()} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 disabled:opacity-60 inline-flex items-center gap-2">
+                {busy && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                {busy ? 'Sending…' : 'Send admin reply'}
+              </button>
+              {error && <span className="text-xs text-[#DC2626]">{error}</span>}
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FmcsaPrewarmCard() {
   const [stats, setStats] = useState<{ total: number; staleOver30Days: number; oldest: string | null; newest: string | null } | null>(null);
   const [input, setInput] = useState('');
@@ -3873,7 +4455,7 @@ function Stat({ label, value, sub }: { label: string; value: any; sub?: string |
   );
 }
 
-type AdminTab = 'overview' | 'users' | 'fmcsa' | 'data' | 'newsletter';
+type AdminTab = 'overview' | 'users' | 'fmcsa' | 'data' | 'newsletter' | 'support';
 
 function AdminPage({ navigate }: any) {
   const [users, setUsers] = useState<any[] | null>(null);
@@ -3974,6 +4556,7 @@ function AdminPage({ navigate }: any) {
     { id: 'fmcsa',      label: 'FMCSA' },
     { id: 'data',       label: 'Data & storage' },
     { id: 'newsletter', label: 'Newsletter' },
+    { id: 'support',    label: 'Support tickets' },
   ];
 
   return (
@@ -4039,6 +4622,9 @@ function AdminPage({ navigate }: any) {
 
       {/* NEWSLETTER: Resend contacts + email_log per-contact send count */}
       {tab === 'newsletter' && <NewsletterAdminPanel />}
+
+      {/* SUPPORT: every user's support tickets, replies, status changes */}
+      {tab === 'support' && <SupportAdminPanel />}
 
       {/* USERS: filter + user list */}
       {tab === 'users' && (<>
@@ -4495,6 +5081,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
     { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount > 0 ? alertCount : null },
     { id: 'plan', label: 'Plan & billing', icon: Zap },
     { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'support', label: 'Support', icon: LifeBuoy },
     ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: ShieldCheck }] : []),
   ];
 
@@ -4709,7 +5296,20 @@ function StatCard({ label, value, trend, sub, icon: Icon, color, danger, good }:
 }
 
 function VerifyTool({ navigate }: any) {
-  const [tab, setTab] = useState('quick');
+  // Initial tab can be deep-linked via navigate('verify', { tab: 'ratecon' })
+  // — we stash it in sessionStorage in the parent navigate() and consume
+  // it once here on mount.
+  const [tab, setTab] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'quick';
+    try {
+      const t = sessionStorage.getItem('haulock:verifyTab');
+      if (t) {
+        sessionStorage.removeItem('haulock:verifyTab');
+        return t;
+      }
+    } catch {}
+    return 'quick';
+  });
   const [input, setInput] = useState('');
   const [emailInput, setEmailInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -7039,6 +7639,290 @@ function ConfirmModal({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Support — user side
+// ---------------------------------------------------------------------------
+
+type SupportTicketRow = {
+  id: string;
+  subject: string;
+  status: 'open' | 'working' | 'solved';
+  created_at: string;
+  updated_at: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  lastAdminReplyAt: string | null;
+};
+
+type SupportMessage = { id: string; body: string; is_admin: boolean; created_at: string };
+
+const SUPPORT_STATUS_META: Record<string, { label: string; bg: string; fg: string }> = {
+  open:    { label: 'OPEN',         bg: 'bg-[#F59E0B]/10', fg: 'text-[#F59E0B]' },
+  working: { label: 'WORKING ON IT', bg: 'bg-[#0B1E3F]/10', fg: 'text-[#0B1E3F]' },
+  solved:  { label: 'SOLVED',       bg: 'bg-[#16A34A]/10', fg: 'text-[#16A34A]' },
+};
+
+function SupportPage({ user }: { user: any }) {
+  const [tickets, setTickets] = useState<SupportTicketRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [newSubject, setNewSubject] = useState('');
+  const [newBody, setNewBody] = useState('');
+
+  const load = async () => {
+    setError(null);
+    try {
+      const r = await fetch('/api/support');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Load failed (${r.status})`);
+      setTickets(j.tickets || []);
+    } catch (e: any) {
+      setError(e?.message || 'Could not load tickets');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const submitNew = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (creating) return;
+    const subj = newSubject.trim();
+    const body = newBody.trim();
+    if (!subj || !body) { setError('Subject and message are required.'); return; }
+    setCreating(true); setError(null);
+    try {
+      const r = await fetch('/api/support', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject: subj, body }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Create failed (${r.status})`);
+      setShowNew(false);
+      setNewSubject(''); setNewBody('');
+      await load();
+      if (j?.ticket?.id) setOpenId(j.ticket.id);
+    } catch (e: any) {
+      setError(e?.message || 'Could not open ticket');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8 text-[#0B1E3F]">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Support</div>
+          <h1 className="text-4xl serif italic text-[#0B1E3F]">Help & support tickets.</h1>
+          <p className="text-[#0B1E3F]/60 mt-2 text-sm">Reach the team directly. We answer every ticket personally.</p>
+        </div>
+        <button onClick={() => { setShowNew(true); setOpenId(null); }} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 inline-flex items-center gap-2 card-shadow w-fit">
+          <Plus className="w-4 h-4" /> New ticket
+        </button>
+      </div>
+
+      <FmcsaTransparencyCard />
+
+      {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+
+      {showNew && (
+        <form onSubmit={submitNew} className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow space-y-4">
+          <div>
+            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Subject</label>
+            <input
+              value={newSubject}
+              onChange={(e) => setNewSubject(e.target.value)}
+              placeholder="Short summary, e.g. 'Wrong MC linked to my account'"
+              className="w-full px-4 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F]"
+              maxLength={200}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Describe what is happening</label>
+            <textarea
+              value={newBody}
+              onChange={(e) => setNewBody(e.target.value)}
+              placeholder="What did you expect, what actually happened, and any MC/DOT or screenshots that might help."
+              className="w-full px-4 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F] min-h-[140px]"
+              maxLength={5000}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button type="submit" disabled={creating} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 disabled:opacity-60 inline-flex items-center gap-2">
+              {creating && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              {creating ? 'Sending…' : 'Send ticket'}
+            </button>
+            <button type="button" onClick={() => { setShowNew(false); setNewSubject(''); setNewBody(''); }} className="px-5 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {tickets == null ? (
+        <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
+      ) : tickets.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-12 text-center text-[#0B1E3F]/55 card-shadow">
+          <LifeBuoy className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/30" />
+          <div className="text-base text-[#0B1E3F] mb-1">No support tickets yet</div>
+          <div className="text-sm">Hit a bug? Saw something weird in a report? Click &ldquo;New ticket&rdquo; above. We get back fast.</div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {tickets.map((t) => (
+            <SupportTicketCard
+              key={t.id}
+              ticket={t}
+              user={user}
+              expanded={openId === t.id}
+              onToggle={() => setOpenId(openId === t.id ? null : t.id)}
+              onReplyPosted={load}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FmcsaTransparencyCard() {
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F]">
+      <div className="flex items-start gap-4">
+        <div className="w-10 h-10 rounded-xl bg-[#0B1E3F]/10 text-[#0B1E3F] flex items-center justify-center flex-shrink-0">
+          <ShieldCheck className="w-5 h-5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/55 mb-1">How Haulock uses official data</div>
+          <h2 className="text-lg font-semibold text-[#0B1E3F] mb-2">Every report is built from public, official sources.</h2>
+          <p className="text-sm text-[#0B1E3F]/75 leading-relaxed mb-3">
+            Authority status, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history come live from the U.S. Department of Transportation&apos;s FMCSA systems (SAFER, L&amp;I, and SMS). We do not generate, modify, or rewrite that data. We display what FMCSA publishes and pair it with public WHOIS, public DNS, public web search, and Google Places to round out the picture.
+          </p>
+          <p className="text-sm text-[#0B1E3F]/75 leading-relaxed mb-3">
+            If something on a report looks wrong, the upstream record is almost always the source. We can help you raise it with FMCSA, but the correction itself happens on their end. For everything else, that is what these tickets are for.
+          </p>
+          <div className="flex flex-wrap gap-2 text-[11px] mono">
+            <a href="https://safer.fmcsa.dot.gov" target="_blank" rel="noopener" className="px-3 py-1 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-[#0B1E3F]/75">FMCSA SAFER</a>
+            <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noopener" className="px-3 py-1 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-[#0B1E3F]/75">FMCSA L&amp;I</a>
+            <a href="https://ai.fmcsa.dot.gov/SMS/" target="_blank" rel="noopener" className="px-3 py-1 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-[#0B1E3F]/75">FMCSA SMS</a>
+            <a href="https://www.fmcsa.dot.gov/registration/dataq" target="_blank" rel="noopener" className="px-3 py-1 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-[#0B1E3F]/75">DataQs (FMCSA corrections)</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SupportTicketCard({ ticket, user, expanded, onToggle, onReplyPosted }: { ticket: SupportTicketRow; user: any; expanded: boolean; onToggle: () => void; onReplyPosted: () => void }) {
+  const meta = SUPPORT_STATUS_META[ticket.status] || SUPPORT_STATUS_META.open;
+  const [thread, setThread] = useState<{ messages: SupportMessage[]; loaded: boolean }>({ messages: [], loaded: false });
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!expanded || thread.loaded) return;
+    (async () => {
+      try {
+        const r = await fetch(`/api/support/${ticket.id}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j?.error || 'Load failed');
+        setThread({ messages: j.messages || [], loaded: true });
+      } catch (e: any) {
+        setError(e?.message || 'Could not load thread');
+      }
+    })();
+  }, [expanded, ticket.id, thread.loaded]);
+
+  const sendReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const body = reply.trim();
+    if (!body || sending) return;
+    setSending(true); setError(null);
+    try {
+      const r = await fetch(`/api/support/${ticket.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || 'Send failed');
+      setThread((s) => ({ messages: [...s.messages, j.message], loaded: true }));
+      setReply('');
+      onReplyPosted();
+    } catch (e: any) {
+      setError(e?.message || 'Could not send reply');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow text-[#0B1E3F] overflow-hidden">
+      <button onClick={onToggle} className="w-full text-left px-5 py-4 hover:bg-[#0B1E3F]/[0.02] transition flex items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] mono uppercase tracking-wider font-bold ${meta.bg} ${meta.fg}`}>{meta.label}</span>
+            <span className="text-xs mono text-[#0B1E3F]/50">{timeAgo(ticket.updated_at)}</span>
+            {ticket.messageCount > 1 && (
+              <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/60">{ticket.messageCount} msgs</span>
+            )}
+          </div>
+          <div className="font-semibold text-[#0B1E3F] truncate">{ticket.subject}</div>
+        </div>
+        <ChevronRight className={`w-4 h-4 text-[#0B1E3F]/40 transition ${expanded ? 'rotate-90' : ''}`} />
+      </button>
+      {expanded && (
+        <div className="border-t border-[#0B1E3F]/10 p-5 space-y-4 bg-[#F5F3EE]/40">
+          {!thread.loaded ? (
+            <div className="text-sm text-[#0B1E3F]/55">Loading…</div>
+          ) : thread.messages.length === 0 ? (
+            <div className="text-sm text-[#0B1E3F]/55">No messages yet.</div>
+          ) : (
+            <div className="space-y-3">
+              {thread.messages.map((m) => (
+                <SupportMessageBubble key={m.id} message={m} authorLabel={m.is_admin ? 'Haulock support' : (user?.name || 'You')} />
+              ))}
+            </div>
+          )}
+          {ticket.status !== 'solved' || true ? (
+            <form onSubmit={sendReply} className="space-y-2">
+              <textarea
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder={ticket.status === 'solved' ? 'Replying will reopen this ticket…' : 'Type your reply…'}
+                className="w-full px-4 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-sm focus:outline-none focus:border-[#0B1E3F] min-h-[100px]"
+                maxLength={5000}
+              />
+              <div className="flex items-center justify-between gap-2">
+                <button type="submit" disabled={sending || !reply.trim()} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 disabled:opacity-60 inline-flex items-center gap-2">
+                  {sending && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                  {sending ? 'Sending…' : 'Send reply'}
+                </button>
+                {error && <span className="text-xs text-[#DC2626]">{error}</span>}
+              </div>
+            </form>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SupportMessageBubble({ message, authorLabel }: { message: SupportMessage; authorLabel: string }) {
+  const isAdmin = message.is_admin;
+  return (
+    <div className={`p-4 rounded-xl border ${isAdmin ? 'bg-[#0B1E3F]/[0.04] border-[#0B1E3F]/15' : 'bg-white border-[#0B1E3F]/10'}`}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className={`text-[10px] mono uppercase tracking-[0.18em] font-bold ${isAdmin ? 'text-[#FF6B35]' : 'text-[#0B1E3F]/60'}`}>{authorLabel}</span>
+        <span className="text-[11px] text-[#0B1E3F]/45">{timeAgo(message.created_at)}</span>
+      </div>
+      <div className="text-sm text-[#0B1E3F]/85 leading-relaxed whitespace-pre-wrap">{message.body}</div>
+    </div>
+  );
+}
+
 function SearchHistory({ navigate }: any) {
   const res = useCachedFetch<{ lookups: any[] }>('lookups:200', '/api/lookups?limit=200');
   const items = res.data?.lookups ?? null;
@@ -7627,6 +8511,63 @@ function ApiKeysTab({ user, navigate }: any) {
   };
 
   const activeKeys = (keys || []).filter((k) => !k.revoked_at);
+
+  // API access ships on Carrier and up. Free users see a paywall card
+  // instead of the key list / create form. Server enforces the same rule
+  // on POST /api/settings/keys so the UI is not the only barrier.
+  const PAID_PLANS_FOR_API = new Set(['carrier', 'team', 'fleet']);
+  const hasApiAccess = PAID_PLANS_FOR_API.has(planId);
+
+  if (!hasApiAccess) {
+    return (
+      <div>
+        <div className="flex items-start justify-between gap-4 mb-2">
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">API keys</h2>
+          <a href="/docs/api" target="_blank" rel="noreferrer" className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/70 hover:text-[#0B1E3F] flex items-center gap-1.5 transition">
+            <FileText className="w-3.5 h-3.5" /> Documentation
+          </a>
+        </div>
+        <p className="text-sm text-[#0B1E3F]/65 max-w-2xl mb-6">
+          Integrate Haulock into your TMS, dispatch software, or scripts. The API is available on the Carrier plan and up.
+        </p>
+        <div className="p-7 rounded-2xl border border-[#FF6B35]/25 bg-[#FF6B35]/[0.04] text-[#0B1E3F]">
+          <div className="flex items-start gap-4">
+            <div className="w-11 h-11 rounded-xl bg-[#FF6B35] text-white flex items-center justify-center flex-shrink-0">
+              <Key className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#FF6B35] font-bold mb-1">Carrier plan and up</div>
+              <h3 className="text-lg font-semibold text-[#0B1E3F] mb-2">API access is a paid feature</h3>
+              <p className="text-sm text-[#0B1E3F]/70 leading-relaxed mb-4">
+                Generate API keys, hit Haulock&apos;s verify endpoints from your TMS or onboarding flow, and pull broker / carrier risk reports programmatically. Included on every paid plan, with rate limits scaled to your tier.
+              </p>
+              <ul className="space-y-1.5 text-sm text-[#0B1E3F]/75 mb-5">
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0" /> Same data as the dashboard, in JSON</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0" /> Multiple keys per account, revoke any time</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0" /> Full reference at <a href="/docs/api" target="_blank" rel="noreferrer" className="underline">docs/api</a></li>
+              </ul>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => navigate('plan')}
+                  className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-semibold hover:bg-[#0B1E3F]/90 inline-flex items-center gap-2"
+                >
+                  Upgrade to use the API <ArrowRight className="w-4 h-4" />
+                </button>
+                <a
+                  href="/docs/api"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-5 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-semibold text-[#0B1E3F] hover:bg-[#0B1E3F]/5"
+                >
+                  Read the docs
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

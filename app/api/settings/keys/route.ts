@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { generateKey } from '@/lib/api-keys';
+import { isAdmin } from '@/lib/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// API access ships on Carrier and up. Server-gate the create endpoint
+// so the UI is not the only thing standing between a Free user and a key.
+const PAID_PLANS_FOR_API = new Set(['carrier', 'team', 'fleet']);
 
 export async function GET() {
   const supabase = getServerSupabase();
@@ -27,6 +32,16 @@ export async function POST(req: Request) {
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+
+  // Plan gate: Free users cannot create keys. Admins bypass for testing.
+  const planId = String(user.user_metadata?.plan || 'free').toLowerCase();
+  if (!PAID_PLANS_FOR_API.has(planId) && !(await isAdmin(user.email))) {
+    return NextResponse.json({
+      error: 'API access requires the Carrier plan or higher.',
+      code: 'plan_required',
+      requiredPlan: 'carrier',
+    }, { status: 403 });
+  }
 
   const body = await req.json().catch(() => null) as { name?: string } | null;
   const rawName = (body?.name ?? '').toString().trim();

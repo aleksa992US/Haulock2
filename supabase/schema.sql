@@ -310,3 +310,45 @@ create table if not exists public.email_log (
 create index if not exists email_log_to_email_idx on public.email_log(lower(to_email));
 create index if not exists email_log_sent_at_idx on public.email_log(sent_at desc);
 alter table public.email_log enable row level security;
+
+-- Support tickets. Users open tickets, see their own conversation thread,
+-- and admins reply + change status. Service role handles admin reads/writes;
+-- user-side reads are scoped via RLS.
+create table if not exists public.support_tickets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  subject text not null,
+  status text not null default 'open',  -- 'open' | 'working' | 'solved'
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists support_tickets_user_idx on public.support_tickets(user_id, created_at desc);
+create index if not exists support_tickets_status_idx on public.support_tickets(status, updated_at desc);
+alter table public.support_tickets enable row level security;
+drop policy if exists "support_tickets_select_own" on public.support_tickets;
+drop policy if exists "support_tickets_insert_own" on public.support_tickets;
+create policy "support_tickets_select_own" on public.support_tickets for select using (auth.uid() = user_id);
+create policy "support_tickets_insert_own" on public.support_tickets for insert with check (auth.uid() = user_id);
+-- Updates (status changes) go through service role. No user-side update policy.
+
+create table if not exists public.support_messages (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references public.support_tickets(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  is_admin boolean not null default false,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists support_messages_ticket_idx on public.support_messages(ticket_id, created_at);
+alter table public.support_messages enable row level security;
+drop policy if exists "support_messages_select_own_ticket" on public.support_messages;
+drop policy if exists "support_messages_insert_own_ticket" on public.support_messages;
+create policy "support_messages_select_own_ticket" on public.support_messages for select using (
+  exists (select 1 from public.support_tickets t where t.id = ticket_id and t.user_id = auth.uid())
+);
+create policy "support_messages_insert_own_ticket" on public.support_messages for insert with check (
+  user_id = auth.uid()
+  and is_admin = false
+  and exists (select 1 from public.support_tickets t where t.id = ticket_id and t.user_id = auth.uid())
+);
+-- Admin replies go through service role.
