@@ -1,5 +1,12 @@
 import type { Metadata, Viewport } from 'next';
+import Script from 'next/script';
 import './globals.css';
+
+// Google Analytics measurement ID. Default is the live GA4 stream so the
+// site reports analytics without requiring an env var, but you can
+// override per-environment by setting NEXT_PUBLIC_GA_ID — set it to an
+// empty string in dev/staging to disable tracking entirely.
+const GA_ID = process.env.NEXT_PUBLIC_GA_ID ?? 'G-3CEQEXTJZW';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 
@@ -254,6 +261,26 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        {/* Google Analytics 4. We use Next.js' Script component with
+            strategy="afterInteractive" so the loader doesn't block first
+            paint, and so it works correctly with App Router streaming.
+            Skipped entirely when NEXT_PUBLIC_GA_ID is unset (e.g. local
+            dev) so you don't pollute the prod stream with localhost
+            pageviews. */}
+        {GA_ID && (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`}
+              strategy="afterInteractive"
+            />
+            <Script id="ga-init" strategy="afterInteractive">{`
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', '${GA_ID}');
+            `}</Script>
+          </>
+        )}
       </head>
       <body>{children}</body>
     </html>

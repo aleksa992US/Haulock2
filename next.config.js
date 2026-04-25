@@ -17,21 +17,23 @@ const SUPABASE = supabaseHost || '*.supabase.co';
 const csp = [
   // Default policy: only allow same-origin unless overridden below.
   "default-src 'self'",
-  // Scripts: self + Stripe (3DS challenges + Checkout). Next.js hydration
-  // and inline event handlers require 'unsafe-inline'; we accept that risk
-  // here and can tighten later with a nonce-based middleware.
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com",
+  // Scripts: self + Stripe (3DS challenges + Checkout) + Google Tag
+  // Manager / Google Analytics 4 (gtag.js). Next.js hydration and inline
+  // event handlers require 'unsafe-inline'; we accept that risk here and
+  // can tighten later with a nonce-based middleware.
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://www.googletagmanager.com https://*.googletagmanager.com https://www.google-analytics.com",
   // Styles: Tailwind injects inline styles in dev + with arbitrary values,
   // so 'unsafe-inline' is required for now. Self covers the static stylesheet.
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   // Fonts: Google Fonts (Instrument Sans / Serif / JetBrains Mono).
   "font-src 'self' data: https://fonts.gstatic.com",
-  // Images: self, data URLs (favicons / SVG), blob (PDF previews), and the
-  // photo CDNs we use for blog hero images + carrier websites.
-  "img-src 'self' data: blob: https://images.unsplash.com https://images.pexels.com https://*.googleusercontent.com",
+  // Images: self, data URLs (favicons / SVG), blob (PDF previews), photo
+  // CDNs we use for blog hero images + carrier websites, and the GA4
+  // tracking pixel + GTM beacon endpoints.
+  "img-src 'self' data: blob: https://images.unsplash.com https://images.pexels.com https://*.googleusercontent.com https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com",
   // XHR / fetch / WS: self + Supabase (auth + db + realtime) + Stripe (api +
   // checkout) + Resend (transactional) + FMCSA + Brave + Google.
-  `connect-src 'self' https://${SUPABASE} wss://${SUPABASE} https://api.stripe.com https://checkout.stripe.com https://api.resend.com https://api.search.brave.com https://places.googleapis.com https://safebrowsing.googleapis.com https://*.fmcsa.dot.gov https://*.dot.gov`,
+  `connect-src 'self' https://${SUPABASE} wss://${SUPABASE} https://api.stripe.com https://checkout.stripe.com https://api.resend.com https://api.search.brave.com https://places.googleapis.com https://safebrowsing.googleapis.com https://*.fmcsa.dot.gov https://*.dot.gov https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com`,
   // iframes: only Stripe Checkout / 3DS.
   "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com",
   // Worker / WASM: self only.
