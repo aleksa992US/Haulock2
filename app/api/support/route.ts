@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { sendEmail, supportReceivedTemplate, isResendConfigured } from '@/lib/email';
+import { checkSimpleRateLimit, identityFromRequest } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -60,6 +61,21 @@ export async function POST(req: Request) {
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+
+  // Per-user rate limit. 5 tickets per 10 minutes is far more than any real
+  // user needs and trivially blocks anyone trying to spam the admin queue.
+  const rl = checkSimpleRateLimit({
+    bucket: 'support-ticket',
+    identity: identityFromRequest(req, user.id),
+    max: 5,
+    windowMs: 10 * 60_000,
+  });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'You are creating tickets too quickly. Wait a minute and try again.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+    );
+  }
 
   const body = await req.json().catch(() => null) as { subject?: string; body?: string } | null;
   const subject = (body?.subject || '').toString().trim().slice(0, 200);

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { sendEmail, communityReportTemplate, isResendConfigured } from '@/lib/email';
+import { checkSimpleRateLimit, identityFromRequest } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -134,6 +135,22 @@ export async function POST(req: Request) {
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+
+  // Per-user rate limit. 10 fraud reports / 10 min is far above what any
+  // legitimate user files; stops a malicious account from spamming the
+  // community feed or burning the email-notify queue.
+  const rl = checkSimpleRateLimit({
+    bucket: 'fraud-report',
+    identity: identityFromRequest(req, user.id),
+    max: 10,
+    windowMs: 10 * 60_000,
+  });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Too many fraud reports submitted. Slow down and try again in a minute.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+    );
+  }
 
   const body = await req.json().catch(() => null) as any;
   if (!body || typeof body.name !== 'string' || (!body.mc && !body.dot)) {

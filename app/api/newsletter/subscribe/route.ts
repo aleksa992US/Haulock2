@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { addOrUpdateContact, isAudienceConfigured } from '@/lib/resend-audience';
 import { sendEmail, newsletterWelcomeTemplate, isResendConfigured } from '@/lib/email';
+import { checkSimpleRateLimit, identityFromRequest } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,6 +10,23 @@ export const dynamic = 'force-dynamic';
 // the landing page can drop their email here. Resend's Audience handles
 // dedupe + unsubscribe links, so we don't need our own subscribers table.
 export async function POST(req: Request) {
+  // Per-IP rate limit so a single attacker / scraper cannot enumerate
+  // emails or burn our Resend send quota with a script. 10/min/IP is
+  // generous for a real human (one signup per ~6s) but stops automated
+  // floods cold.
+  const rl = checkSimpleRateLimit({
+    bucket: 'newsletter-subscribe',
+    identity: identityFromRequest(req),
+    max: 10,
+    windowMs: 60_000,
+  });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests. Slow down and try again in a minute.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+    );
+  }
+
   if (!isAudienceConfigured()) {
     return NextResponse.json(
       { error: 'Newsletter is not configured yet. Check back soon.' },

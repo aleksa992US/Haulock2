@@ -4277,6 +4277,10 @@ function SupportAdminPanel() {
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
       setData({ tickets: j.tickets || [], counts: j.counts || { open: 0, working: 0, solved: 0 } });
+      // Sidebar badge listens on this cache key — invalidate so the next
+      // render picks up the new open-ticket count without waiting for a
+      // page navigation.
+      invalidateCache('admin-support-counts');
     } catch (e: any) {
       setError(e?.message || 'Failed to load tickets');
     }
@@ -5208,6 +5212,15 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const usagePlan = getPlan(user?.plan || usageRes.data?.plan?.id);
   const usageNums = usageRes.data?.usage || { fmcsaLookups: 0, rateConScans: 0 };
   const isAdmin = Boolean(usageRes.data?.isAdmin);
+  // Open-tickets count for the Admin sidebar badge. Lightweight endpoint
+  // that returns just `{ open, working, solved }` — no joins, head-only
+  // count queries. Non-admins always get zeros so this hook is safe to
+  // run unconditionally.
+  const supportCountsRes = useCachedFetch<{ open: number; working: number; solved: number }>(
+    'admin-support-counts',
+    isAdmin ? '/api/admin/support/counts' : null,
+  );
+  const openTickets = isAdmin ? (supportCountsRes.data?.open || 0) : 0;
   const lookupsLeft = isAdmin || usagePlan.limits.fmcsaLookups == null ? null : Math.max(0, usagePlan.limits.fmcsaLookups - usageNums.fmcsaLookups);
   const scansLeft = isAdmin || usagePlan.limits.rateConScans == null ? null : Math.max(0, usagePlan.limits.rateConScans - usageNums.rateConScans);
   const navItems: any[] = [
@@ -5222,7 +5235,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
     // Admins manage tickets from the Admin → Support tickets tab, so the
     // user-facing Support entry is hidden for them.
     ...(isAdmin ? [] : [{ id: 'support', label: 'Support', icon: LifeBuoy }]),
-    ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: ShieldCheck }] : []),
+    ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: ShieldCheck, badge: openTickets > 0 ? openTickets : null }] : []),
   ];
 
   return (
@@ -8502,12 +8515,29 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
   const verdict = l.verdict || (l.score >= 61 ? 'high' : l.score >= 31 ? 'medium' : 'low');
   const count = group.rows.length;
   const groupBusy = deletingId === group.key;
+  // Identify scans that came from a PDF rate-confirmation upload so the
+  // user can tell at a glance which rows started as a file vs a typed
+  // MC/DOT/name lookup. The badge fires when EITHER the latest scan was
+  // a rate-con OR any scan in the deduped group was — different surface
+  // for the same carrier should still light up because the user did at
+  // some point feed us a rate con.
+  const hasRateCon = l.source === 'ratecon' || group.rows.some((r: any) => r.source === 'ratecon');
   return (
     <div className="text-[#0B1E3F]">
       <div className="flex items-center gap-4 p-4 md:p-5 hover:bg-[#0B1E3F]/5 transition">
         <button onClick={() => navigate('report', l.data)} className={`w-12 h-12 rounded-full flex items-center justify-center mono font-semibold flex-shrink-0 transition ${verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : verdict === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{l.score}</button>
         <button onClick={() => navigate('report', l.data)} className="flex-1 min-w-0 text-left">
-          <div className="font-semibold text-[#0B1E3F] truncate">{l.name}</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-semibold text-[#0B1E3F] truncate">{l.name}</div>
+            {hasRateCon && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#FF6B35]/10 text-[#FF6B35] text-[10px] mono uppercase tracking-wider font-bold flex-shrink-0"
+                title="This carrier was scanned from a PDF rate confirmation upload."
+              >
+                <FileText className="w-3 h-3" /> Rate con
+              </span>
+            )}
+          </div>
           <div className="text-xs mono text-[#0B1E3F]/50 truncate">
             {[l.mc && `MC-${l.mc}`, l.dot && `DOT-${l.dot}`].filter(Boolean).join(' · ') || 'No ID'} · {count > 1 ? `${count} searches` : `last ${timeAgo(l.created_at)}`}
             {count === 1 && l.email_query && ` · ${l.email_query}`}
