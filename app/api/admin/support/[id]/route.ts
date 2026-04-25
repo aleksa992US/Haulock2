@@ -35,20 +35,23 @@ async function getTicketRecipient(svc: any, userId: string): Promise<{ email: st
   }
 }
 
-async function authorizeAdmin(): Promise<{ ok: true; me: any } | { ok: false; status: number; error: string }> {
+// Returns either the authenticated admin user OR a NextResponse the caller
+// should bail out with. This avoids a discriminated-union return that
+// TypeScript's build pipeline doesn't always narrow correctly.
+async function authorizeAdmin(): Promise<{ me: any } | NextResponse> {
   const supabase = getServerSupabase();
-  if (!supabase) return { ok: false, status: 500, error: 'Supabase not configured' };
+  if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
   const { data: userData } = await supabase.auth.getUser();
   const me = userData?.user;
-  if (!me?.email) return { ok: false, status: 401, error: 'Not authenticated' };
-  if (!(await isAdmin(me.email))) return { ok: false, status: 403, error: 'Forbidden' };
-  return { ok: true, me };
+  if (!me?.email) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  if (!(await isAdmin(me.email))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  return { me };
 }
 
 // Admin GET — full ticket + thread + the user's email/name.
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   const auth = await authorizeAdmin();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth instanceof NextResponse) return auth;
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
@@ -79,7 +82,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 // and flips status from 'open' to 'working' if it was still open.
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const auth = await authorizeAdmin();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth instanceof NextResponse) return auth;
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
@@ -127,7 +130,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 // Admin status change — open / working / solved.
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const auth = await authorizeAdmin();
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth instanceof NextResponse) return auth;
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
