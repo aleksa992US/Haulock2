@@ -1,6 +1,10 @@
-// Twitter renders its own image card and falls back to og:image when
-// twitter:image is missing, but some clients (and the Twitter Card
-// Validator) only honor an explicit twitter:image. We reuse the exact
-// same JSX as the Open Graph image — Next.js' file convention picks this
-// up at /twitter-image and auto-wires the meta tag.
-export { runtime, alt, size, contentType, default } from './opengraph-image';
+// Twitter card image. Same render as the OG image — Next.js requires the
+// `runtime`, `alt`, `size`, `contentType` exports be string literals
+// directly in this file (not re-exported), so we duplicate them rather
+// than re-export from opengraph-image.
+export { default } from './opengraph-image';
+
+export const runtime = 'edge';
+export const alt = 'Haulock — Verify any broker or carrier. Stop freight fraud.';
+export const size = { width: 1200, height: 630 };
+export const contentType = 'image/png';
