@@ -58,7 +58,13 @@
       "Read(//tmp/**)",
       "Bash(curl -s --max-time 15 \"https://ai.fmcsa.dot.gov/SMS/Carrier/3170105/Overview.aspx\" -A \"Mozilla/5.0\" -L -o /tmp/apollo_sms.html)",
       "Read(//private/tmp/**)",
-      "Bash(python3)"
+      "Bash(python3)",
+      "Bash(awk 'NR>=5742 && NR<=6900 && /^}$/{print NR\": \"$0; exit}' /Users/viceseo/Documents/GitHub/Haulock2/components/Haulock.tsx)",
+      "Bash(grep -n \"ConfirmModal$\\\\|<ConfirmModal\" /Users/viceseo/Documents/GitHub/Haulock2/components/Haulock.tsx)",
+      "Bash(curl -s --max-time 10 'https://data.transportation.gov/resource/6eyk-hxee.json?$where=upper\\(legal_name\\)%20like%20%27%25ARRIVE%20LOGISTICS%25%27&$limit=5')",
+      "Bash(curl -s --max-time 10 \"https://data.transportation.gov/resource/6eyk-hxee.json?docket_number=MC961717\")",
+      "Bash(curl -s --max-time 10 'https://data.transportation.gov/resource/6eyk-hxee.json?$where=upper\\(legal_name\\)%20like%20%27DM%20TRANS%25%27&$limit=5')",
+      "Bash(curl -s --max-time 10 'https://data.transportation.gov/resource/6eyk-hxee.json?$where=upper\\(legal_name\\)%20like%20%27DM%20TRANS%2C%25%27%20OR%20upper\\(legal_name\\)%20like%20%27DM%20TRANS%20LLC%25%27&$limit=5')"
     ]
   }
 }

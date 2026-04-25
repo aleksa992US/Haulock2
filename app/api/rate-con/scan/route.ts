@@ -98,44 +98,124 @@ export async function POST(req: Request) {
     raw ? String(raw).replace(/[^0-9]/g, '') : '';
   const mcDigits = cleanDigits(extraction.broker_mc);
   const dotDigits = cleanDigits(extraction.broker_dot);
-  // Many legitimate rate cons don't include MC/DOT in the body (it's often only
-  // in the letterhead logo, which OCR sometimes misses). Fall back to broker
-  // name — Socrata handles name queries well inside lookupCarrier's fallback.
-  // We'll cross-check the address below for extra confidence.
-  const lookupQuery = mcDigits
-    ? `MC-${mcDigits}`
-    : dotDigits
-    ? `DOT-${dotDigits}`
-    : extraction.broker_name || null;
-  const parsed = lookupQuery ? parseQuery(lookupQuery) : null;
-  const matchedByName = !mcDigits && !dotDigits && !!extraction.broker_name;
 
-  const carrierPromise: Promise<CarrierReport | null> = parsed
-    ? (async () => {
-        try {
-          // Rate-con context: we KNOW we're looking up a broker, so prefer
-          // records with active broker authority to disambiguate when multiple
-          // carriers share a name. Pass broker address as a geographic hint.
-          const c = await lookupCarrier(parsed, {
-            preferActiveBroker: true,
-            addressHint: extraction.broker_address || undefined,
-          });
-          if (c?.address) {
-            const addressCheck = await checkAddress(c.address, c.name);
-            if (addressCheck.configured) c.addressCheck = addressCheck;
-          }
-          return c;
-        } catch {
-          return null;
+  // Build a list of broker-name candidates from whatever Claude extracted.
+  // Real rate cons routinely format the broker as a "legal-name dba trade-name"
+  // pair ("DM Trans, LLC dba Arrive Logistics"). FMCSA's name search returns
+  // nothing for the full string because "dba" / "d/b/a" / "DBA" are not part
+  // of any real legal name. We try the full string first, then the parts
+  // before and after the dba split — whichever resolves first wins.
+  const expandBrokerNameCandidates = (raw: string | null | undefined): string[] => {
+    if (!raw) return [];
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    const out = new Set<string>([trimmed]);
+    // Split on dba / d/b/a / DBA in any case, with optional commas around it.
+    const dbaRegex = /\s*(?:,\s*)?\bd\s*\/?\s*b\s*\/?\s*a\b\s*(?:,\s*)?/i;
+    const parts = trimmed.split(dbaRegex).map((p) => p.replace(/^[,\s]+|[,\s]+$/g, '').trim()).filter((p) => p.length >= 4);
+    for (const p of parts) out.add(p);
+    return Array.from(out);
+  };
+
+  const brokerNameCandidates = expandBrokerNameCandidates(extraction.broker_name);
+  const lookupQueryFromIds = mcDigits ? `MC-${mcDigits}` : dotDigits ? `DOT-${dotDigits}` : null;
+  const matchedByName = !mcDigits && !dotDigits && brokerNameCandidates.length > 0;
+
+  // Stricter name match used to validate that a candidate resolved to the
+  // RIGHT carrier. FMCSA's Socrata fallback fuzzy-matches names too
+  // generously — "DM Trans, LLC" comes back as "TDM TRANSPORT INC"
+  // because they happen to share "TRANS". We reject those by requiring
+  // every significant token from the candidate (≥3 chars, after stripping
+  // entity suffixes) to actually appear in the matched legal name.
+  const STRICT_ENTITY_NOISE = /\b(LLC|L\.?L\.?C|INC|INCORPORATED|CORP|CORPORATION|LTD|LIMITED|LP|LLP|PLLC|CO|COMPANY|GROUP|HOLDINGS?)\b/g;
+  // Strict name match: every significant token (>= 3 chars) from the
+  // candidate must appear in EITHER the FMCSA legal_name OR the dba_name.
+  // FMCSA stores broker dba names separately (Arrive Logistics is
+  // legal_name="DM TRANS LLC", dba_name="ARRIVE LOGISTICS"), so a search
+  // for "Arrive Logistics" only validates if we check both.
+  const strictNameMatch = (candidate: string, carrier: CarrierReport): boolean => {
+    if (!candidate) return false;
+    const norm = (s: string) => s.toUpperCase().replace(/[.,]/g, '').replace(STRICT_ENTITY_NOISE, '').replace(/\s+/g, ' ').trim();
+    const candidateTokens = norm(candidate).split(' ').filter((w) => w.length >= 3);
+    if (candidateTokens.length === 0) return false;
+    const haystacks = [carrier.name, carrier.dba].filter((n): n is string => Boolean(n));
+    if (haystacks.length === 0) return false;
+    return haystacks.some((h) => {
+      const tokens = new Set(norm(h).split(' ').filter((w) => w.length >= 3));
+      return candidateTokens.every((t) => tokens.has(t));
+    });
+  };
+
+  // Look up the broker. If we have an MC/DOT, that's authoritative. If we
+  // only have a name, try each candidate variant ("DM Trans, LLC", "Arrive
+  // Logistics", etc.) and ONLY accept matches whose returned legal name
+  // actually shares every significant token with the candidate. Collect
+  // all valid distinct matches: the first one with active broker
+  // authority is the primary; any others get surfaced as linked entities
+  // so the user can run a separate scan on them.
+  const carrierLookup: Promise<{ primary: CarrierReport | null; alts: CarrierReport[] }> = (async () => {
+    const tryOne = async (q: string): Promise<CarrierReport | null> => {
+      const parsed = parseQuery(q);
+      if (!parsed) return null;
+      try {
+        const c = await lookupCarrier(parsed, {
+          preferActiveBroker: true,
+          addressHint: extraction.broker_address || undefined,
+        });
+        if (c?.address) {
+          const addressCheck = await checkAddress(c.address, c.name);
+          if (addressCheck.configured) c.addressCheck = addressCheck;
         }
-      })()
-    : Promise.resolve(null);
+        return c;
+      } catch {
+        return null;
+      }
+    };
+
+    if (lookupQueryFromIds) {
+      const c = await tryOne(lookupQueryFromIds);
+      return { primary: c, alts: [] };
+    }
+
+    const seen = new Set<string>();
+    const matches: CarrierReport[] = [];
+    for (const candidate of brokerNameCandidates) {
+      const c = await tryOne(candidate);
+      if (!c || c.source === 'mock') {
+        console.log('[rate-con/scan] candidate produced no FMCSA hit', { candidate });
+        continue;
+      }
+      if (!strictNameMatch(candidate, c)) {
+        console.warn('[rate-con/scan] rejected loose match', { candidate, returned: c.name, dba: c.dba });
+        continue;
+      }
+      const key = `${c.mc || ''}|${c.dot || ''}`;
+      if (key === '|') continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      matches.push(c);
+      console.log('[rate-con/scan] accepted match', { candidate, name: c.name, mc: c.mc, dot: c.dot });
+    }
+    if (matches.length === 0) return { primary: null, alts: [] };
+    // Pick the best primary: prefer matches with active broker authority,
+    // since this whole flow is for verifying a BROKER. Otherwise take the
+    // first valid match.
+    const brokerActive = matches.find((m) => m.brokerAuthority === 'Active');
+    const primary = brokerActive || matches[0];
+    const alts = matches.filter((m) => m !== primary);
+    return { primary, alts };
+  })();
 
   const domainPromise: Promise<any> = extraction.broker_email
     ? checkDomain(extraction.broker_email).catch(() => undefined)
     : Promise.resolve(undefined);
 
-  let [carrierResult, domainCheck] = await Promise.all([carrierPromise, domainPromise]);
+  const [resolved, domainCheck] = await Promise.all([carrierLookup, domainPromise]);
+  let carrierResult: CarrierReport | null = resolved.primary;
+  // Distinct alternative MCs that ALSO matched (e.g. the legal name vs the
+  // dba pointing at two different real entities). Surfaced as linked
+  // entities so the user can scan them separately if they want.
+  const alternativeMatches: CarrierReport[] = resolved.alts;
 
   // Safety net: if Claude put the CARRIER's MC into broker_mc (a common failure
   // mode — carrier MC is often the only one explicit on the rate con), the
@@ -188,21 +268,37 @@ export async function POST(req: Request) {
     phone: extraction.broker_phone ?? undefined,
     source: 'mock' as const,
     fetchedAt: new Date().toISOString(),
-    score: 0,
-    verdict: 'low' as const,
+    // Couldn't find the broker in FMCSA. The user should treat this as
+    // "we don't know" rather than "low risk". Start at score 30 / verdict
+    // medium so the recommendation reads CAUTION, not "Safe to book".
+    score: 30,
+    verdict: 'medium' as const,
     flags: [],
   };
 
-  // When FMCSA fails (mockCarrier fallback kicked in), the hardcoded mock returns
-  // an unrelated demo name like "Summit Logistics Inc" that doesn't match the broker
-  // the user is trying to verify. Overlay Claude's extraction on top of the mock so
-  // the report at least reflects the actual rate con content. The "FMCSA lookup
-  // failed" flag is still present, so the UI banner correctly warns the user.
+  // When FMCSA failed to resolve the broker, overlay Claude's extraction on
+  // the placeholder so the report at least reflects what's in the PDF, AND
+  // add a prominent "could not verify in FMCSA" flag so the verdict math
+  // and the visible explanation agree.
   if (carrier.source === 'mock') {
     if (extraction.broker_name) carrier.name = extraction.broker_name;
     if (extraction.broker_mc) carrier.mc = String(extraction.broker_mc).replace(/[^0-9]/g, '') || carrier.mc;
     if (extraction.broker_dot) carrier.dot = String(extraction.broker_dot).replace(/[^0-9]/g, '') || carrier.dot;
     if (extraction.broker_phone) carrier.phone = extraction.broker_phone;
+    carrier.flags.push({
+      sev: 'warning',
+      title: 'Could not verify broker in FMCSA',
+      desc: brokerNameCandidates.length > 1
+        ? `Searched FMCSA for "${extraction.broker_name}" and the dba variants (${brokerNameCandidates.slice(1).join(', ')}). No single match.`
+        : `Searched FMCSA for "${extraction.broker_name || 'this broker'}". No match found.`,
+      // Real points so scoreCarrier() lifts the verdict out of LOW RISK.
+      // 30 pts puts us cleanly in CAUTION territory — the user should slow
+      // down and verify the broker independently rather than treating this
+      // as "safe to book".
+      pts: 30,
+      details: 'The rate con did not include an MC/DOT and our name search returned nothing definitive. This does NOT mean the broker is fraudulent — it usually means the legal name on file differs from the one printed on the letterhead. But it does mean we cannot confirm authority status, insurance, or safety record from this scan alone.',
+      recommendation: 'Phone the number on the rate confirmation and ask for the broker\'s MC docket number directly. Look it up on FMCSA SAFER (safer.fmcsa.dot.gov) before booking.',
+    });
   }
 
   // 5a) Informational note when broker was matched by name only — lets the user
@@ -272,6 +368,46 @@ export async function POST(req: Request) {
     });
   }
 
+  // When the rate con said "X dba Y" and BOTH halves resolved to real
+  // FMCSA records (e.g., "DM Trans, LLC" → MC-A and "Arrive Logistics" →
+  // MC-B), surface the alts as linked entities so the existing
+  // "Cross-references & shared identifiers" panel renders them as
+  // clickable scan-able cards. Lets the user verify the dba half too
+  // without retyping anything.
+  if (alternativeMatches.length > 0) {
+    const existing = (carrier as any).linkedEntities || [];
+    const existingKeys = new Set<string>(
+      existing.map((e: any) => `${e.kind}:${e.value}`)
+    );
+    const seedFlag: any[] = [];
+    for (const alt of alternativeMatches) {
+      const value = alt.mc || alt.dot;
+      if (!value) continue;
+      const kind: 'mc' | 'dot' = alt.mc ? 'mc' : 'dot';
+      const key = `${kind}:${value}`;
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      seedFlag.push({
+        kind,
+        value,
+        citations: 1,
+        sources: ['rate-con dba'],
+        evidence: `Cited as DBA / legal-name pair on the rate confirmation: ${alt.name}`,
+      });
+    }
+    if (seedFlag.length > 0) {
+      (carrier as any).linkedEntities = [...existing, ...seedFlag];
+      carrier.flags.push({
+        sev: 'info',
+        title: `Rate con names a DBA pair — ${seedFlag.length} alternative ${seedFlag.length === 1 ? 'entity' : 'entities'} found`,
+        desc: `The rate con header lists "${extraction.broker_name}". Both halves of the "X dba Y" pair resolve to active FMCSA records: ${alternativeMatches.map((m) => `${m.name}${m.mc ? ` (MC-${m.mc})` : ''}`).join(' and ')}. Click the linked-entity cards below to scan the other half.`,
+        pts: 0,
+        details: `Primary match: ${carrier.name}${carrier.mc ? ` · MC-${carrier.mc}` : ''}\nAlternatives: ${alternativeMatches.map((m) => `${m.name}${m.mc ? ` · MC-${m.mc}` : ''}`).join(', ')}`,
+        recommendation: 'Verify both entities. A legitimate DBA pair is fine; conflicting authority status (one active, one revoked) is a red flag.',
+      });
+    }
+  }
+
   const scored = scoreCarrier(carrier);
 
   // 6) Merge with domain info + rate-con extraction, save to history
@@ -285,7 +421,10 @@ export async function POST(req: Request) {
 
   const row = {
     user_id: user.id,
-    query: lookupQuery || 'rate-con upload',
+    // Whatever we actually used to look the broker up — MC/DOT from the PDF
+    // when present, otherwise the first name candidate we tried (the full
+    // extracted broker_name). Keeps history-row search useful.
+    query: lookupQueryFromIds || brokerNameCandidates[0] || 'rate-con upload',
     name: merged.name,
     mc: merged.mc || null,
     dot: merged.dot || null,

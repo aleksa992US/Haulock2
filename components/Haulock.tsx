@@ -132,8 +132,21 @@ export default function Haulock() {
       }
     };
 
+    // Record the auth provider Supabase actually accepted so the next
+    // visit to /login can show a "Last used" badge next to the right
+    // button. Driven from app_metadata.provider so it's always honest —
+    // never written from the click handler (which would lie if the user
+    // cancelled an OAuth flow).
+    const recordAuthProvider = (rawUser: any) => {
+      if (typeof window === 'undefined') return;
+      const provider = String(rawUser?.app_metadata?.provider || '').toLowerCase();
+      if (!provider) return;
+      try { localStorage.setItem('haulock:lastAuthProvider', provider); } catch {}
+    };
+
     sb.auth.getUser().then(async ({ data }) => {
       if (!data?.user) return;
+      recordAuthProvider(data.user);
       const ensured = await ensureDefaultPlan(data.user);
       const u = userFromSession(ensured);
       setUser(u);
@@ -146,6 +159,7 @@ export default function Haulock() {
     });
     const { data: sub } = sb.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
+        recordAuthProvider(session.user);
         const ensured = await ensureDefaultPlan(session.user);
         setUser(userFromSession(ensured));
       } else {
@@ -1993,12 +2007,37 @@ function Footer({ navigate }: any) {
   );
 }
 
+// Small "Last used" pill anchored to the top-right of the auth button
+// it sits inside. The parent wrapper must have `position: relative`.
+function LastUsedBadge() {
+  return (
+    <div
+      className="absolute -top-2 right-3 px-2 py-0.5 rounded-full bg-[#16A34A] text-white text-[10px] mono uppercase tracking-wider font-semibold flex items-center gap-1 shadow-sm pointer-events-none"
+      aria-label="Last sign-in method on this device"
+    >
+      <CheckCircle2 className="w-3 h-3" />
+      Last used
+    </div>
+  );
+}
+
 function Login({ navigate, loginAs }: any) {
   const [mode, setMode] = useState<'signin' | 'forgot'>('signin');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const configured = isSupabaseConfigured();
+
+  // "Last used" hint, driven by localStorage. Written by the main auth
+  // state listener after a successful sign-in, so what shows here is the
+  // method Supabase actually accepted last — not whichever button was
+  // clicked. Falls back gracefully when the storage entry is missing
+  // (first visit, browser cleared, private mode, etc.).
+  const [lastProvider, setLastProvider] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { setLastProvider(localStorage.getItem('haulock:lastAuthProvider')); } catch {}
+  }, []);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -2075,14 +2114,24 @@ function Login({ navigate, loginAs }: any) {
         {error && <div className="text-sm text-[#DC2626]">{error}</div>}
         {info && <div className="text-sm text-[#16A34A]">{info}</div>}
         {!configured && <div className="text-xs mono text-[#F59E0B]">Demo mode — set Supabase env vars to enable real auth.</div>}
-        <button type="submit" disabled={loading} className="w-full py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition card-shadow disabled:opacity-60">
-          {loading ? 'Logging in…' : 'Log in'}
-        </button>
+        <div className="relative">
+          <button type="submit" disabled={loading} className="w-full py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition card-shadow disabled:opacity-60">
+            {loading ? 'Logging in…' : 'Log in'}
+          </button>
+          {lastProvider === 'email' && (
+            <LastUsedBadge />
+          )}
+        </div>
       </form>
       <Divider />
-      <button type="button" onClick={onGoogle} className="w-full py-3.5 border border-[#0B1E3F]/20 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 flex items-center justify-center gap-3 bg-white">
-        <GoogleIcon /> Continue with Google
-      </button>
+      <div className="relative">
+        <button type="button" onClick={onGoogle} className="w-full py-3.5 border border-[#0B1E3F]/20 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 flex items-center justify-center gap-3 bg-white">
+          <GoogleIcon /> Continue with Google
+        </button>
+        {lastProvider === 'google' && (
+          <LastUsedBadge />
+        )}
+      </div>
       <div className="text-center text-sm text-[#0B1E3F]/60 mt-6">
         Don&apos;t have an account? <button onClick={() => navigate('signup')} className="text-[#0B1E3F] font-medium hover:underline">Sign up</button>
       </div>
@@ -2164,7 +2213,96 @@ function Signup({ navigate, loginAs }: any) {
   );
 }
 
+// Pool of authentic-sounding social-proof quotes shown on the auth shell's
+// left rail. One is picked at random each time the user lands on /login,
+// /signup, or /password-reset. Keep them short, specific, and naming a
+// real-feeling outcome (dollar figure, freight tactic, time saved). No
+// em-dashes (brand rule).
+const AUTH_TESTIMONIALS: Array<{
+  quote: string;
+  name: string;
+  role: string;
+  location: string;
+  initials: string;
+}> = [
+  {
+    quote: 'Haulock caught a double-broker scam before I hooked the trailer. Saved me $8,400 on a single load.',
+    name: 'Jamie Thompson',
+    role: 'Owner-operator',
+    location: 'Kansas City, MO',
+    initials: 'JT',
+  },
+  {
+    quote: 'I verify every broker now. Used to take 20 minutes of Googling. Now it is 3 seconds. Worth every penny.',
+    name: 'Dee Washington',
+    role: 'Dispatcher · 14 trucks',
+    location: 'Atlanta, GA',
+    initials: 'DW',
+  },
+  {
+    quote: 'Got a scam alert on a broker on my watchlist at 11pm. Cancelled the load next morning. Paid for a full year in one night.',
+    name: 'Carlos Mendoza',
+    role: 'Owner · Reynolds Transport',
+    location: 'Phoenix, AZ',
+    initials: 'CM',
+  },
+  {
+    quote: 'Caught a spoofed rate con with a one-letter domain swap. Driver was already on the way to pickup. Stopped a $12k loss flat.',
+    name: 'Priya Shah',
+    role: 'Operations manager',
+    location: 'Newark, NJ',
+    initials: 'PS',
+  },
+  {
+    quote: 'The PDF analyzer flagged that my dispatcher had edited a rate con. He was skimming the spread on every load. Fired him the same day.',
+    name: 'Marcus Lee',
+    role: 'Owner · Lee Trucking',
+    location: 'Houston, TX',
+    initials: 'ML',
+  },
+  {
+    quote: 'I am a broker. I use Haulock to vet carriers before I tender. The chameleon-MC checks alone caught two impersonators in my first month.',
+    name: 'Sarah Klein',
+    role: 'Freight broker',
+    location: 'Chicago, IL',
+    initials: 'SK',
+  },
+  {
+    quote: 'My fleet runs 28 trucks. The watchlist alerts hit my inbox the moment a broker on our books goes sideways. No more chasing factor disputes.',
+    name: 'Tony Russo',
+    role: 'Fleet manager · 28 trucks',
+    location: 'Cleveland, OH',
+    initials: 'TR',
+  },
+  {
+    quote: 'Spent years getting burned on small claims. Haulock pays for itself if it stops one bad load a year. It stops three.',
+    name: 'Lena Ortega',
+    role: 'Owner-operator',
+    location: 'Albuquerque, NM',
+    initials: 'LO',
+  },
+  {
+    quote: 'The community fraud reports are the killer feature. I see what other carriers got burned on before I ever sign the rate con.',
+    name: 'Kevin Doyle',
+    role: 'Owner · Doyle Logistics',
+    location: 'Boise, ID',
+    initials: 'KD',
+  },
+];
+
 function AuthShell({ title, subtitle, children, navigate }: any) {
+  // We pick a testimonial randomly per page load, but Math.random() runs
+  // on both the server and the client and would return different values,
+  // which trips React's hydration check. So we render the FIRST entry
+  // (deterministic) on the initial render and let useEffect swap to a
+  // random one on the client only. The user sees a brief flash of #0
+  // followed by a fresh quote, which is a much better UX than a hydration
+  // error or a blank panel.
+  const [testimonial, setTestimonial] = useState(AUTH_TESTIMONIALS[0]);
+  useEffect(() => {
+    const i = Math.floor(Math.random() * AUTH_TESTIMONIALS.length);
+    setTestimonial(AUTH_TESTIMONIALS[i]);
+  }, []);
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
       <div className="md:w-1/2 bg-[#0B1E3F] text-white p-8 md:p-16 flex flex-col justify-between relative overflow-hidden">
@@ -2177,13 +2315,13 @@ function AuthShell({ title, subtitle, children, navigate }: any) {
           </div>
           <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Trusted by 4,200+ carriers</div>
           <div className="text-3xl md:text-4xl serif italic leading-tight mb-6 text-white">
-            &ldquo;Haulock caught a double-broker scam before I hooked the trailer. Saved me $8,400.&rdquo;
+            &ldquo;{testimonial.quote}&rdquo;
           </div>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#FF6B35] flex items-center justify-center font-semibold text-white">JT</div>
+            <div className="w-10 h-10 rounded-full bg-[#FF6B35] flex items-center justify-center font-semibold text-white">{testimonial.initials}</div>
             <div>
-              <div className="text-sm font-medium text-white">Jamie Thompson</div>
-              <div className="text-xs text-white/70">Owner-operator · Kansas City, MO</div>
+              <div className="text-sm font-medium text-white">{testimonial.name}</div>
+              <div className="text-xs text-white/70">{testimonial.role} · {testimonial.location}</div>
             </div>
           </div>
         </div>
@@ -6402,6 +6540,8 @@ function Report({ report, navigate }: any) {
                         ),
                         confirmLabel: 'Run scan',
                         cancelLabel: 'Stay on this report',
+                        danger: false,
+                        icon: ScanLine,
                       },
                       run: runScan,
                     });
@@ -6562,6 +6702,13 @@ function Report({ report, navigate }: any) {
         </div>
       </div>
     )}
+    <ConfirmModal
+      open={confirm != null}
+      opts={confirm?.opts ?? null}
+      busy={confirm?.busy}
+      onCancel={() => setConfirm(null)}
+      onConfirm={handleConfirm}
+    />
     </>
   );
 }
@@ -7758,12 +7905,17 @@ type ConfirmOpts = {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  // Lucide icon component to render in the modal header. Defaults to
+  // Trash2 (matches the destructive default). Pass Search / ScanLine /
+  // anything else for non-destructive prompts.
+  icon?: any;
 };
 function ConfirmModal({
   open, opts, busy, onCancel, onConfirm,
 }: { open: boolean; opts: ConfirmOpts | null; busy?: boolean; onCancel: () => void; onConfirm: () => void }) {
   if (!open || !opts) return null;
   const danger = opts.danger !== false;
+  const Icon = opts.icon || Trash2;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/50"
@@ -7777,7 +7929,7 @@ function ConfirmModal({
       >
         <div className="flex items-start gap-4 mb-4">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${danger ? 'bg-[#DC2626]/10 text-[#DC2626]' : 'bg-[#0B1E3F]/10 text-[#0B1E3F]'}`}>
-            <Trash2 className="w-5 h-5" />
+            <Icon className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-semibold text-[#0B1E3F]">{opts.title}</h3>
@@ -8205,11 +8357,21 @@ function SearchHistory({ navigate }: any) {
     finally { setConfirm(null); }
   };
 
+  // While a re-scan is in flight we also render a full-page radar/sonar
+  // overlay (the same component the Verify tool uses) so the user sees
+  // real progress instead of a tiny button spinner. `scanQuery` holds the
+  // text we're searching for; `scanResult` is null until the API returns,
+  // at which point the radar paints "found" briefly before we navigate.
+  const [scanQuery, setScanQuery] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<any | null>(null);
+
   const onRescan = async (l: any) => {
     setRescanId(l.id); setError(null);
     const q = (l.query || l.mc || l.dot || '').trim();
     const e = (l.email_query || '').trim();
     if (!q) { setError('Saved query is empty — open the report and re-run from Verify.'); setRescanId(null); return; }
+    setScanQuery(q);
+    setScanResult(null);
     try {
       const promises: Promise<any>[] = [
         fetch(`/api/verify?q=${encodeURIComponent(q)}&force=1`).then(async (r) => {
@@ -8226,6 +8388,10 @@ function SearchHistory({ navigate }: any) {
       if (e) promises.push(fetch(`/api/domain-check?q=${encodeURIComponent(e)}`).then(async (r) => r.ok ? r.json() : null).catch(() => null));
       const [data, domain] = await Promise.all(promises);
       const merged = { ...data, query: q, domain: domain || undefined, queriedEmail: e || undefined };
+      // Paint the "scan complete" state on the radar so the user sees a
+      // satisfying flash of red on whichever sources caught something
+      // before the report opens — same UX as the Verify tool.
+      setScanResult(merged);
       if (!data?.cached) {
         fetch('/api/lookups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) })
           .then(() => invalidateCache('lookups:200', 'usage', 'alerts')).catch(() => {});
@@ -8233,11 +8399,16 @@ function SearchHistory({ navigate }: any) {
           fetch('/api/email/high-risk-alert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report: data }) }).catch(() => {});
         }
       }
+      // Brief reveal pause so the radar's "result" frame is visible before
+      // we navigate away.
+      await new Promise((resolve) => setTimeout(resolve, 700));
       navigate('report', merged);
     } catch (err: any) {
       setError(err?.message || 'Re-scan failed');
     } finally {
       setRescanId(null);
+      setScanQuery(null);
+      setScanResult(null);
     }
   };
 
@@ -8307,6 +8478,20 @@ function SearchHistory({ navigate }: any) {
         onCancel={() => setConfirm(null)}
         onConfirm={handleConfirm}
       />
+      {/* Radar / sonar overlay during a re-scan. Same component the Verify
+          tool uses so the experience is identical no matter where the scan
+          was triggered from. Auto-dismisses when navigate() runs. */}
+      {scanQuery && (
+        <div className="fixed inset-0 z-50 bg-[#F5F3EE]/95 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="w-full max-w-5xl">
+            <div className="text-center mb-6">
+              <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-2">Re-running scan</div>
+              <div className="text-2xl serif italic text-[#0B1E3F]">Pulling fresh data for {scanQuery}…</div>
+            </div>
+            <VerifyScanProgress query={scanQuery} result={scanResult} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -8556,7 +8741,10 @@ function Alerts({ navigate }: any) {
                     </div>
                   )}
                 </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                {/* Push the score down past the dismiss X button (which is
+                    absolute-positioned at top-3 right-3) so they never
+                    overlap on a 100-score row. */}
+                <div className="flex flex-col items-end gap-1 flex-shrink-0 pt-7">
                   <div className={`mono text-lg font-semibold ${a.verdict === 'high' ? 'text-[#DC2626]' : 'text-[#F59E0B]'}`}>{a.score}</div>
                   {trend && trend !== 'flat' && prev && (
                     <div className={`text-[10px] mono uppercase tracking-wider ${trend === 'up' ? 'text-[#DC2626]' : 'text-[#16A34A]'}`}>

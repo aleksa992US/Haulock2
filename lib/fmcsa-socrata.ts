@@ -166,9 +166,17 @@ function rankCandidates(rows: SocrataRow[], nameQuery: string, opts: SocrataLook
 
   const score = (r: SocrataRow): number => {
     let s = 0;
-    // Exact cleaned-name match is the strongest signal.
-    if (cleanCompanyName(String(r.legal_name || '')) === target) s += 10;
-    else if (target && String(r.legal_name || '').toUpperCase().includes(target)) s += 3;
+    // Exact cleaned-name match is the strongest signal — check BOTH the
+    // legal_name and the dba_name. A search for "Arrive Logistics" should
+    // resolve to MC-787104 (legal_name="DM TRANS LLC", dba_name="ARRIVE
+    // LOGISTICS"), so dba_name has to score equally with legal_name.
+    const legalClean = cleanCompanyName(String(r.legal_name || ''));
+    const dbaClean = cleanCompanyName(String(r.dba_name || r.dba || ''));
+    if (legalClean === target || dbaClean === target) s += 10;
+    else if (target && (
+      String(r.legal_name || '').toUpperCase().includes(target) ||
+      String(r.dba_name || r.dba || '').toUpperCase().includes(target)
+    )) s += 3;
 
     // Preferred authority type for this caller.
     if (opts.preferActiveBroker) {
