@@ -56,6 +56,20 @@ export const metadata: Metadata = {
     siteName: 'Haulock',
     title: TITLE,
     description: DESCRIPTION,
+    // Absolute URL for the OG image. Next.js auto-generates the file from
+    // `app/opengraph-image.tsx` and wires `og:image` automatically, but
+    // some platforms (WhatsApp, iMessage, LinkedIn) cache aggressively and
+    // prefer absolute URLs explicitly listed here. 1200×630 is the size
+    // every platform supports.
+    images: [
+      {
+        url: `${SITE_URL}/opengraph-image`,
+        width: 1200,
+        height: 630,
+        alt: 'Haulock — Verify any freight broker or carrier in seconds',
+        type: 'image/png',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
@@ -63,6 +77,7 @@ export const metadata: Metadata = {
     description: SHORT_DESC,
     creator: '@haulock',
     site: '@haulock',
+    images: [`${SITE_URL}/twitter-image`],
   },
   robots: {
     index: true,
