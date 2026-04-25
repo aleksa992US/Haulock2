@@ -3761,16 +3761,73 @@ function StripeOverviewCard() {
         <Stat label="Abandoned" value={data?.totals?.incomplete ?? '—'} sub="Checkout dropped" />
       </div>
 
-      {data?.planBreakdown && (
+      {(data?.planBreakdown || data?.billingBreakdown || data?.totals?.ever_paid_customers != null) && (
         <div className="flex flex-wrap gap-2 mb-5">
-          {Object.entries(data.planBreakdown).map(([plan, count]) => (
-            <span key={plan} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0B1E3F]/5 text-xs mono">
+          {data?.planBreakdown && Object.entries(data.planBreakdown).map(([plan, count]) => (
+            <span key={`plan-${plan}`} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0B1E3F]/5 text-xs mono" title="Active subscribers on this plan tier">
               <span className="uppercase tracking-wider text-[#0B1E3F]/60">{plan}</span>
               <span className="font-semibold text-[#0B1E3F]">{String(count)}</span>
             </span>
           ))}
+          {data?.billingBreakdown && (
+            <>
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#16A34A]/10 text-xs mono" title="Active subscribers paying monthly">
+                <span className="uppercase tracking-wider text-[#16A34A]">Monthly</span>
+                <span className="font-semibold text-[#0B1E3F]">{String(data.billingBreakdown.monthly ?? 0)}</span>
+              </span>
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0B1E3F]/10 text-xs mono" title="Active subscribers paying annually">
+                <span className="uppercase tracking-wider text-[#0B1E3F]/70">Annual</span>
+                <span className="font-semibold text-[#0B1E3F]">{String(data.billingBreakdown.annual ?? 0)}</span>
+              </span>
+            </>
+          )}
+          {data?.totals?.ever_paid_customers != null && (
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0B1E3F]/5 text-xs mono" title="Distinct customers who have ever paid us, regardless of current status">
+              <span className="uppercase tracking-wider text-[#0B1E3F]/60">Ever paid</span>
+              <span className="font-semibold text-[#0B1E3F]">{String(data.totals.ever_paid_customers)}</span>
+            </span>
+          )}
         </div>
       )}
+
+      {Array.isArray(data?.monthlyGrowth) && data.monthlyGrowth.length > 0 && (() => {
+        const maxBar = Math.max(1, ...data.monthlyGrowth.map((m: any) => Math.max(m.new || 0, m.canceled || 0)));
+        const totalNew = data.monthlyGrowth.reduce((s: number, m: any) => s + (m.new || 0), 0);
+        const totalCanceled = data.monthlyGrowth.reduce((s: number, m: any) => s + (m.canceled || 0), 0);
+        return (
+          <div className="mb-5 p-4 bg-[#F5F3EE]/60 rounded-xl">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Subscriber growth · last 12 months</div>
+                <div className="text-xs mono text-[#0B1E3F]/70 mt-0.5">
+                  <span className="text-[#16A34A] font-semibold">+{totalNew}</span> new ·{' '}
+                  <span className="text-[#DC2626] font-semibold">-{totalCanceled}</span> canceled ·{' '}
+                  <span className="text-[#0B1E3F] font-semibold">net {totalNew - totalCanceled >= 0 ? '+' : ''}{totalNew - totalCanceled}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 text-[10px] mono text-[#0B1E3F]/60">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#16A34A]" /> new</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#DC2626]" /> canceled</span>
+              </div>
+            </div>
+            <div className="flex items-end gap-1.5 h-24">
+              {data.monthlyGrowth.map((m: any) => {
+                const newPct = ((m.new || 0) / maxBar) * 100;
+                const cancelPct = ((m.canceled || 0) / maxBar) * 100;
+                return (
+                  <div key={m.month} className="flex-1 flex flex-col items-stretch min-w-0" title={`${m.label} ${m.month.slice(0, 4)} · +${m.new || 0} new · -${m.canceled || 0} canceled`}>
+                    <div className="flex-1 flex items-end gap-0.5">
+                      <div className="flex-1 bg-[#16A34A] rounded-t" style={{ height: `${newPct}%`, minHeight: m.new > 0 ? 2 : 0 }} />
+                      <div className="flex-1 bg-[#DC2626] rounded-t" style={{ height: `${cancelPct}%`, minHeight: m.canceled > 0 ? 2 : 0 }} />
+                    </div>
+                    <div className="text-[9px] mono text-[#0B1E3F]/50 text-center mt-1 truncate">{m.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Recent subscriptions</div>
       <div className="border border-[#0B1E3F]/10 rounded-lg overflow-hidden">
@@ -3784,7 +3841,14 @@ function StripeOverviewCard() {
         {data?.recent?.length ? (
           <div className="divide-y divide-[#0B1E3F]/5">
             {data.recent.map((s: any) => {
-              const statusColor = s.status === 'active' || s.status === 'trialing' ? '#16A34A' : s.status === 'past_due' || s.status === 'unpaid' ? '#F59E0B' : '#DC2626';
+              const isCanceling = s.cancel_at_period_end === true && (s.status === 'active' || s.status === 'trialing');
+              const statusColor = isCanceling ? '#F59E0B'
+                : s.status === 'active' || s.status === 'trialing' ? '#16A34A'
+                : s.status === 'past_due' || s.status === 'unpaid' ? '#F59E0B'
+                : '#DC2626';
+              const cancelDate = isCanceling && s.current_period_end
+                ? new Date(s.current_period_end * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                : null;
               const paid = s.paid_amount;
               const list = s.list_amount;
               const hasDiscount = paid != null && list != null && paid < list;
@@ -3797,12 +3861,35 @@ function StripeOverviewCard() {
                     )}
                   </div>
                   <div className="mono text-[#0B1E3F]/80 capitalize">{s.plan || '—'}{s.billing ? ` · ${s.billing === 'annual' ? 'yr' : 'mo'}` : ''}</div>
-                  <div className="mono text-xs" style={{ color: statusColor }}>{s.status}</div>
+                  <div className="mono text-xs leading-tight" style={{ color: statusColor }}>
+                    {isCanceling ? 'canceling' : s.status}
+                    {cancelDate && (
+                      <div className="text-[10px] opacity-80">ends {cancelDate}</div>
+                    )}
+                  </div>
                   <div className="mono text-xs text-right">
                     <div className="text-[#0B1E3F]/80">{paid != null ? fmtMoney(paid, s.currency) : list != null ? fmtMoney(list, s.currency) : '—'}</div>
                     {hasDiscount && (
                       <div className="text-[10px] text-[#0B1E3F]/40 line-through">{fmtMoney(list!, s.currency)}</div>
                     )}
+                    {(() => {
+                      const gross = Number(s.lifetime_spent) || 0;
+                      const refunded = Number(s.lifetime_refunded) || 0;
+                      const net = Math.max(0, gross - refunded);
+                      if (gross === 0) return null;
+                      return (
+                        <>
+                          <div className={`text-[10px] ${net > 0 ? 'text-[#16A34A]' : 'text-[#0B1E3F]/40'}`} title="Net lifetime revenue (paid minus refunded)">
+                            {fmtMoney(net, s.currency)} net
+                          </div>
+                          {refunded > 0 && (
+                            <div className="text-[10px] text-[#DC2626]" title="Total refunded to this customer">
+                              -{fmtMoney(refunded, s.currency)} refund
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div className="mono text-xs text-right text-[#0B1E3F]/60">{timeAgo(new Date(s.created * 1000).toISOString())}</div>
                 </div>
