@@ -45,6 +45,14 @@ public/*.csv
 public/*-census*.txt
 public/motor-carrier*.csv
 
+# Local data drops for import scripts (TSV / CSV / etc).
+# Keep the folder structure + README, ignore the actual data files inside.
+/data/**
+!/data/
+!/data/README.md
+!/data/legacy/
+!/data/legacy/.gitkeep
+
 # vercel
 .vercel
 

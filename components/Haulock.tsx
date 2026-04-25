@@ -176,7 +176,70 @@ export default function Haulock() {
   );
 }
 
+type LandingTickerItem = { id: string; verdict: string; color: string; entity: string };
+type LandingFeaturedFlag = {
+  sev: 'critical' | 'warning' | 'info' | string;
+  title: string;
+  desc?: string;
+  pts?: number;
+};
+type LandingFeaturedScan = {
+  name: string;
+  mc: string | null;
+  dot: string | null;
+  score: number;
+  verdict: 'high' | 'medium' | 'low' | string;
+  entity: string;
+  flagCount: number;
+  flags: LandingFeaturedFlag[];
+  scannedAt: string;
+} | null;
+type LandingStats = {
+  stats: { totalVerifications: number; totalFraudReports: number; activeFmcsaFlags: number };
+  ticker: LandingTickerItem[];
+  featuredScan: LandingFeaturedScan;
+};
+
+function useLandingStats(): LandingStats | null {
+  const [data, setData] = useState<LandingStats | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/landing-stats')
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => { if (!cancelled && j) setData(j); })
+      .catch(() => { /* leave null — UI shows graceful fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+  return data;
+}
+
+// Brave / search-engine snippets often contain bolding markup and HTML
+// entities. Render them as plain text so the user doesn't see raw
+// "<strong>" or "&amp;" inline. We DON'T use dangerouslySetInnerHTML
+// because the snippet is third-party content and we never want a
+// hostile-snippet XSS vector.
+function cleanSearchSnippet(s: string): string {
+  return String(s || '')
+    .replace(/<\/?[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 10_000)   return `${(n / 1_000).toFixed(0)}K`;
+  if (n >= 1_000)    return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  return String(n);
+}
+
 function Landing({ navigate }: any) {
+  const live = useLandingStats();
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} />
@@ -214,33 +277,39 @@ function Landing({ navigate }: any) {
             </div>
           </div>
           <div className="lg:col-span-6 fade-up fade-up-3 relative">
-            <HeroDashboardMockup />
+            <HeroDashboardMockup featured={live?.featuredScan ?? null} />
           </div>
         </div>
       </section>
 
       <section className="border-y border-[#0B1E3F]/10 bg-white overflow-hidden py-5 text-[#0B1E3F]">
         <div className="flex gap-16 ticker whitespace-nowrap">
-          {[...Array(2)].map((_, round) => (
-            <div key={round} className="flex gap-16 items-center">
-              {[
-                { mc: 'MC-847•••', v: 'HIGH RISK', color: '#DC2626' },
-                { mc: 'MC-226•••', v: 'VERIFIED', color: '#16A34A' },
-                { mc: 'MC-498•••', v: 'CAUTION', color: '#F59E0B' },
-                { mc: 'MC-329•••', v: 'HIGH RISK', color: '#DC2626' },
-                { mc: 'MC-671•••', v: 'VERIFIED', color: '#16A34A' },
-                { mc: 'MC-552•••', v: 'HIGH RISK', color: '#DC2626' },
-                { mc: 'MC-112•••', v: 'CAUTION', color: '#F59E0B' },
-                { mc: 'MC-283•••', v: 'HIGH RISK', color: '#DC2626' },
-              ].map((item, i) => (
-                <div key={i} className="flex items-center gap-3 text-sm shrink-0">
-                  <span className="mono" style={{ color: 'rgba(11,30,63,0.6)' }}>{item.mc}</span>
-                  <span className="mono font-semibold" style={{ color: item.color }}>{item.v}</span>
-                  <span style={{ color: 'rgba(11,30,63,0.3)' }}>·</span>
-                </div>
-              ))}
-            </div>
-          ))}
+          {(() => {
+            // Real recent verdicts from /api/landing-stats. The verdict on
+            // each row was scored at lookup time using the broker-vs-carrier
+            // rules in lib/risk.ts, so it's already entity-aware. We display
+            // the entity badge (BROKER / CARRIER / BROKER+CARRIER) alongside
+            // so the ticker reflects the same logic the dashboard uses.
+            const items: LandingTickerItem[] = (live?.ticker?.length ?? 0) > 0
+              ? live!.ticker
+              : [
+                  { id: 'MC-847•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
+                  { id: 'MC-226•••', verdict: 'VERIFIED',  color: '#16A34A', entity: 'CARRIER' },
+                  { id: 'MC-498•••', verdict: 'CAUTION',   color: '#F59E0B', entity: 'BROKER' },
+                ];
+            return [...Array(2)].map((_, round) => (
+              <div key={round} className="flex gap-16 items-center">
+                {items.map((item, i) => (
+                  <div key={`${round}-${i}`} className="flex items-center gap-3 text-sm shrink-0">
+                    <span className="mono" style={{ color: 'rgba(11,30,63,0.6)' }}>{item.id}</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] mono uppercase tracking-wider" style={{ background: 'rgba(11,30,63,0.06)', color: 'rgba(11,30,63,0.65)' }}>{item.entity}</span>
+                    <span className="mono font-semibold" style={{ color: item.color }}>{item.verdict}</span>
+                    <span style={{ color: 'rgba(11,30,63,0.3)' }}>·</span>
+                  </div>
+                ))}
+              </div>
+            ));
+          })()}
         </div>
       </section>
 
@@ -271,41 +340,7 @@ function Landing({ navigate }: any) {
           <div className="grid lg:grid-cols-2 gap-6">
             <RateConMockup />
 
-            <div className="bg-white rounded-2xl p-8 relative overflow-hidden card-shadow-lg text-[#0B1E3F]">
-              <div className="flex items-center justify-between mb-6">
-                <div className="text-[#0B1E3F]">
-                  <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1">Haulock scan · 2.1s</div>
-                  <div className="text-2xl font-semibold text-[#0B1E3F]">Westport Logistics Group LLC</div>
-                  <div className="text-sm mono text-[#0B1E3F]/50">MC-637••• · DOT-3019•••</div>
-                </div>
-                <RiskGauge score={78} size="sm" />
-              </div>
-
-              <div className="p-4 bg-[#DC2626]/10 border border-[#DC2626]/30 rounded-xl mb-6">
-                <div className="flex items-center gap-2 text-xs mono uppercase tracking-wider text-[#DC2626] mb-1">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Do not book
-                </div>
-                <div className="text-sm font-medium text-[#0B1E3F]">4 critical red flags · 2 community reports</div>
-              </div>
-
-              <div className="space-y-2">
-                {[
-                  { s: 'critical', t: 'Authority reactivated 12 days ago', d: 'Dormant 3 years prior', p: 30 },
-                  { s: 'warning', t: 'Address flipped 3× this year', d: 'Chicago → Atlanta → Miami', p: 30 },
-                  { s: 'warning', t: 'Insurance lapsed 8 days ago', d: 'No replacement policy filed', p: 20 },
-                  { s: 'info', t: '2 verified fraud reports', d: 'Non-payment complaints', p: 30 },
-                ].map((flag, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg text-[#0B1E3F]" style={{ backgroundColor: 'rgba(11,30,63,0.05)' }}>
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: flag.s === 'critical' ? '#DC2626' : flag.s === 'warning' ? '#F59E0B' : 'rgba(11,30,63,0.4)' }} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-[#0B1E3F]">{flag.t}</div>
-                      <div className="text-xs text-[#0B1E3F]/60">{flag.d}</div>
-                    </div>
-                    <div className="mono text-xs text-[#0B1E3F]/40">+{flag.p}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <InTheWildCard featured={live?.featuredScan ?? null} />
           </div>
         </div>
       </section>
@@ -690,23 +725,71 @@ const HERO_SCENARIOS: Array<{
   },
 ];
 
-function HeroDashboardMockup() {
+function HeroDashboardMockup({ featured }: { featured?: LandingFeaturedScan }) {
   const [idx, setIdx] = useState<number | null>(null);
   useEffect(() => {
     setIdx(Math.floor(Math.random() * HERO_SCENARIOS.length));
   }, []);
-  if (idx === null) {
+  if (idx === null && !featured) {
     return (
       <div className="relative text-[#0B1E3F]">
         <div className="bg-white rounded-3xl card-shadow-lg border border-[#0B1E3F]/10" style={{ minHeight: 540 }} />
       </div>
     );
   }
-  const s = HERO_SCENARIOS[idx];
+
+  // Build a unified "scenario" shape from either a real featured scan
+  // (preferred — actual lookup with anonymized MC/DOT and stored flags) or
+  // a fallback hardcoded HERO_SCENARIOS entry while the API is loading or
+  // when no risky scans exist yet.
+  const flagColor = (level: 'critical' | 'warning' | 'good') => level === 'critical' ? '#DC2626' : level === 'warning' ? '#F59E0B' : '#16A34A';
+  let s: {
+    name: string; mc: string; dot: string; score: number;
+    badgeLabel: string; badgeColor: string;
+    verdictTitle: string; verdictLine: string; verdictTone: 'danger' | 'warn' | 'good';
+    flags: { s: 'critical' | 'warning' | 'good'; t: string; i: any }[];
+    scanTime: string; dataSources: number;
+    communityAlert?: string;
+    entity?: string;
+    isReal: boolean;
+  };
+
+  if (featured) {
+    const v = featured.verdict;
+    const tone: 'danger' | 'warn' | 'good' = v === 'high' ? 'danger' : v === 'medium' ? 'warn' : 'good';
+    const badgeLabel = v === 'high' ? 'HIGH RISK' : v === 'medium' ? 'CAUTION' : 'VERIFIED';
+    const badgeColor = v === 'high' ? '#DC2626' : v === 'medium' ? '#F59E0B' : '#16A34A';
+    const verdictTitle = v === 'high' ? 'Do not book' : v === 'medium' ? 'Proceed with care' : 'Safe to book';
+    const verdictLine = featured.flagCount > 0
+      ? `${featured.flagCount} red flag${featured.flagCount === 1 ? '' : 's'} detected · scored using ${featured.entity.toLowerCase()} rules`
+      : `Scored as ${badgeLabel.toLowerCase()} using ${featured.entity.toLowerCase()} rules`;
+    const flagSevToTone = (sev: string): 'critical' | 'warning' | 'good' =>
+      sev === 'critical' ? 'critical' : sev === 'warning' ? 'warning' : 'good';
+    const flags = featured.flags.length > 0
+      ? featured.flags.map((f) => ({ s: flagSevToTone(f.sev), t: f.title, i: f.sev === 'critical' ? AlertTriangle : Flag }))
+      : [{ s: 'good' as const, t: 'No red flags detected', i: CheckCircle2 }];
+
+    s = {
+      name: featured.name,
+      mc: featured.mc || '—',
+      dot: featured.dot || '—',
+      score: featured.score,
+      badgeLabel, badgeColor,
+      verdictTitle, verdictLine, verdictTone: tone,
+      flags,
+      scanTime: '—',
+      dataSources: 14,
+      entity: featured.entity,
+      isReal: true,
+    };
+  } else {
+    const fallback = HERO_SCENARIOS[idx ?? 0];
+    s = { ...fallback, isReal: false };
+  }
+
   const toneBg = s.verdictTone === 'danger' ? 'bg-[#DC2626]/10 border-[#DC2626]/30' : s.verdictTone === 'warn' ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30' : 'bg-[#16A34A]/10 border-[#16A34A]/30';
   const toneText = s.verdictTone === 'danger' ? 'text-[#DC2626]' : s.verdictTone === 'warn' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
   const VerdictIcon = s.verdictTone === 'good' ? CheckCircle2 : AlertTriangle;
-  const flagColor = (level: 'critical' | 'warning' | 'good') => level === 'critical' ? '#DC2626' : level === 'warning' ? '#F59E0B' : '#16A34A';
   return (
     <div className="relative text-[#0B1E3F]">
       <div className="absolute -top-4 -right-4 z-20 floaty">
@@ -726,7 +809,18 @@ function HeroDashboardMockup() {
         </div>
         <div className="flex items-start justify-between mb-6">
           <div className="text-[#0B1E3F]">
-            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1">Broker lookup</div>
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1 flex items-center gap-2 flex-wrap">
+              <span>{s.entity ? `${s.entity.toLowerCase()} lookup` : 'Broker lookup'}</span>
+              {s.isReal && (
+                <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#16A34A]/10 text-[#16A34A] flex items-center gap-1">
+                  <span className="relative flex w-1.5 h-1.5">
+                    <span className="absolute inline-flex w-full h-full bg-[#16A34A] rounded-full opacity-75 animate-ping" />
+                    <span className="relative inline-flex w-1.5 h-1.5 bg-[#16A34A] rounded-full" />
+                  </span>
+                  Live
+                </span>
+              )}
+            </div>
             <div className="text-xl font-semibold text-[#0B1E3F] mb-0.5">{s.name}</div>
             <div className="text-xs mono text-[#0B1E3F]/50">{s.mc} · {s.dot}</div>
           </div>
@@ -761,6 +855,297 @@ function HeroDashboardMockup() {
         </div>
         <div className="text-sm text-white">{s.communityAlert}</div>
       </div>
+    </div>
+  );
+}
+
+// Sonar / radar scan animation shown while a quick-lookup verify request is
+// in flight. The radar sweeps continuously and source "blips" light up on a
+// timed cadence so the user gets visual confirmation that we're hitting all
+// data sources (FMCSA, Places, Web, Domain, Social). Timings are optimistic;
+// the real fetch can finish before or after the choreography.
+// Per-source "spooky check": given the resolved carrier object, decide if
+// this source should light up red on the scanner. We avoid `result.sources`
+// alone because some sources mark `ok=false` for benign reasons (no sender
+// email supplied, no website to compare). We want red ONLY when the check
+// actually caught a fraud signal.
+function isSourceSpooky(key: string, carrier: any | null | undefined): boolean {
+  if (!carrier) return false;
+  const flagsMatch = (re: RegExp) =>
+    Array.isArray(carrier.flags) && carrier.flags.some((f: any) => re.test(String(f?.title || '')));
+  switch (key) {
+    case 'fmcsa':
+      // Authority not active, OOS, no insurance, missing MCS-150, etc.
+      return flagsMatch(/operating authority is not active|out of service|no liability insurance|no surety bond|MCS-150|reactivated/i);
+    case 'places':
+      return flagsMatch(/address resolves to a different business|address is a mail-forwarding|business at this address is closed/i);
+    case 'web':
+      return flagsMatch(/website domain doesn|carrier has no public website/i);
+    case 'domain':
+      return flagsMatch(/no email server|domain registered.*days ago|domain registered less than/i);
+    case 'social':
+      // Empty social isn't necessarily spooky for small carriers — keep green.
+      return false;
+    case 'lookalike':
+      return Boolean(carrier.lookalikeMatch);
+    case 'chameleon':
+      return Array.isArray(carrier.chameleonLinks) && carrier.chameleonLinks.length > 0;
+    case 'reputation':
+      return Array.isArray(carrier?.webReputation?.hits) && carrier.webReputation.hits.length > 0;
+    case 'entities':
+      return Array.isArray(carrier.linkedEntities) && carrier.linkedEntities.length > 0;
+    case 'sms':
+      // SMS is "spooky" when FMCSA itself has flagged a BASIC alert.
+      return carrier?.sms?.fetched && Object.values(carrier.sms.basics || {}).some((b: any) => b?.alert);
+  }
+  return false;
+}
+
+function VerifyScanProgress({ query, result }: { query?: string; result?: any | null }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Date.now() - start), 100);
+    return () => clearInterval(t);
+  }, []);
+
+  // 8 source checks, evenly distributed around the radar (45° apart) and
+  // sequenced ~700ms apart so the user sees real progress while the actual
+  // backend scan runs in parallel.
+  const sources: Array<{
+    key: string;
+    label: string;
+    desc: string;
+    chip?: string;          // small monospace tag shown next to the description
+    icon: typeof Shield;
+    angle: number;
+    radius: number;
+    activateAt: number;
+  }> = [
+    { key: 'fmcsa',     label: 'FMCSA registry',         desc: 'Authority status · insurance · crashes · OOS rates',                 chip: 'mobile.fmcsa.dot.gov',     icon: Shield,        angle:  20, radius: 92, activateAt:   500 },
+    { key: 'sms',       label: 'FMCSA SMS · BASIC scores',desc: 'Federal safety scoring · BASIC alerts · 24-mo inspections + crashes', chip: 'ai.fmcsa.dot.gov/SMS',    icon: ShieldCheck,   angle:  60, radius: 70, activateAt:  1700 },
+    { key: 'places',    label: 'Google Places',          desc: 'Business address · operating status · mailbox detection',             chip: 'places.googleapis.com',    icon: MapPin,        angle: 100, radius: 92, activateAt:  3000 },
+    { key: 'web',       label: 'Web presence',           desc: 'Carrier website discovery via Brave Search',                          chip: 'api.search.brave.com',     icon: Globe,         angle: 140, radius: 70, activateAt:  4300 },
+    { key: 'domain',    label: 'Domain & email infra',   desc: 'WHOIS age · MX records · SPF · Google Safe Browsing',                 chip: 'WHOIS · DNS · GSB',        icon: Mail,          angle: 180, radius: 92, activateAt:  5500 },
+    { key: 'social',    label: 'Social media footprint', desc: 'Facebook · LinkedIn · Instagram · X · YouTube · TikTok',              chip: '6 platforms',              icon: Users,         angle: 220, radius: 70, activateAt:  6700 },
+    { key: 'lookalike', label: 'Lookalike-domain check', desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',             chip: 'Levenshtein ≤ 2',          icon: AlertTriangle, angle: 260, radius: 92, activateAt:  7900 },
+    { key: 'chameleon', label: 'Cross-reference scan',   desc: 'Phone or address shared with another flagged FMCSA record',           chip: 'FMCSA Socrata · Haulock DB', icon: Eye,         angle: 300, radius: 70, activateAt:  9100 },
+    { key: 'reputation',label: 'Web fraud reputation',   desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',   chip: '5 fraud queries',          icon: Search,        angle: 340, radius: 92, activateAt: 10300 },
+  ];
+  // The bar fills toward 95% and parks there until the API result arrives.
+  // We tune the curve so it tracks the typical 12-15s real-world scan
+  // duration instead of racing to 95% at 6s and then sitting there. A
+  // sub-linear easing makes the early progress feel snappy and the tail
+  // feel patient — which matches how the actual sources resolve in
+  // parallel (most fast, FMCSA + Brave the slow ones).
+  const TARGET_FULL_MS = 13000;
+  const seconds = (elapsed / 1000).toFixed(1);
+  const linearPct = Math.min(1, elapsed / TARGET_FULL_MS);
+  const easedPct = 1 - Math.pow(1 - linearPct, 1.6); // sub-linear ease-out
+  const progressPct = Math.min(95, Math.round(easedPct * 95));
+  const completedCount = sources.filter((s) => elapsed >= s.activateAt).length;
+
+  const polar = (angleDeg: number, radiusPct: number) => {
+    const rad = (angleDeg - 90) * (Math.PI / 180);
+    const r = (radiusPct / 100) * 90;
+    return { x: 100 + r * Math.cos(rad), y: 100 + r * Math.sin(rad) };
+  };
+
+  return (
+    <div className="bg-white rounded-3xl border border-[#0B1E3F]/10 card-shadow text-[#0B1E3F] text-left w-full overflow-hidden">
+      <style jsx>{`
+        @keyframes radar-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes radar-ping {
+          0%   { transform: scale(0.35); opacity: 0.85; }
+          100% { transform: scale(1.0); opacity: 0; }
+        }
+        @keyframes blip-pop {
+          0%   { transform: scale(0); opacity: 0; }
+          40%  { transform: scale(1.7); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes blip-glow {
+          0%, 100% { filter: drop-shadow(0 0 2px rgba(22,163,74,0.6)); }
+          50%      { filter: drop-shadow(0 0 6px rgba(22,163,74,0.9)); }
+        }
+        @keyframes blip-glow-spooky {
+          0%, 100% { filter: drop-shadow(0 0 2px rgba(220,38,38,0.7)); }
+          50%      { filter: drop-shadow(0 0 8px rgba(220,38,38,1)); }
+        }
+        .radar-sweep { transform-origin: center; animation: radar-sweep 2.6s linear infinite; }
+        .radar-ping  { transform-origin: center; animation: radar-ping 2.8s ease-out infinite; }
+        .blip        { transform-origin: center; animation: blip-pop 0.55s ease-out forwards, blip-glow 1.8s ease-in-out infinite; }
+        .blip-spooky { transform-origin: center; animation: blip-pop 0.55s ease-out forwards, blip-glow-spooky 1.2s ease-in-out infinite; }
+      `}</style>
+
+      {(() => {
+        // Once the API has resolved we can colour the header banner red if
+        // ANY source caught something. Until then it's the neutral navy.
+        const spookyCount = result ? sources.filter((s) => isSourceSpooky(s.key, result)).length : 0;
+        const headerSpooky = spookyCount > 0;
+        return (
+          <div className={`px-8 md:px-10 pt-8 pb-6 border-b border-[#0B1E3F]/8 bg-gradient-to-br ${headerSpooky ? 'from-[#DC2626]/[0.06] to-transparent' : 'from-[#0B1E3F]/[0.02] to-transparent'}`}>
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${headerSpooky ? 'bg-[#DC2626]' : 'bg-[#0B1E3F]'}`}>
+                  <Radio className={`w-6 h-6 ${headerSpooky ? 'text-white' : 'text-[#16A34A]'}`} />
+                </div>
+                <span className="absolute -top-1 -right-1 flex w-3 h-3">
+                  <span className={`absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping ${headerSpooky ? 'bg-[#DC2626]' : 'bg-[#16A34A]'}`} />
+                  <span className={`relative inline-flex w-3 h-3 rounded-full ${headerSpooky ? 'bg-[#DC2626]' : 'bg-[#16A34A]'}`} />
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className={`text-xs mono uppercase tracking-[0.18em] mb-1 ${headerSpooky ? 'text-[#DC2626] font-semibold' : 'text-[#0B1E3F]/50'}`}>
+                  {result
+                    ? (headerSpooky ? `${spookyCount} red flag${spookyCount === 1 ? '' : 's'} detected` : 'Scan complete · all checks clean')
+                    : 'Live scan in progress'}
+                </div>
+                <div className="text-2xl md:text-3xl font-semibold leading-tight truncate">{query || 'Carrier verification'}</div>
+                <div className="text-sm text-[#0B1E3F]/55 mt-0.5">
+                  <span className="mono">{seconds}s elapsed</span>
+                  <span className="mx-2 text-[#0B1E3F]/25">·</span>
+                  <span>{completedCount} / {sources.length} checks complete</span>
+                  {result && spookyCount > 0 && (
+                    <>
+                      <span className="mx-2 text-[#0B1E3F]/25">·</span>
+                      <span className="text-[#DC2626] font-semibold">{spookyCount} caught issues</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Body — radar (left) + sources (right). Left-aligned, full-width. */}
+      <div className="grid lg:grid-cols-5 gap-8 lg:gap-12 px-8 md:px-10 py-10">
+        {/* Radar */}
+        <div className="lg:col-span-2 flex items-start justify-start">
+          <div className="relative aspect-square w-full max-w-md">
+            <svg viewBox="0 0 200 200" className="w-full h-full">
+              <defs>
+                <radialGradient id="radar-bg" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#16A34A" stopOpacity="0.06" />
+                  <stop offset="100%" stopColor="#0B1E3F" stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="sweep-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#16A34A" stopOpacity="0" />
+                  <stop offset="100%" stopColor="#16A34A" stopOpacity="0.6" />
+                </linearGradient>
+              </defs>
+
+              <circle cx="100" cy="100" r="90" fill="url(#radar-bg)" />
+
+              {[28, 50, 72, 90].map((r) => (
+                <circle key={r} cx="100" cy="100" r={r} fill="none" stroke="#0B1E3F" strokeOpacity="0.12" strokeWidth="0.5" />
+              ))}
+              <line x1="10"  y1="100" x2="190" y2="100" stroke="#0B1E3F" strokeOpacity="0.08" strokeWidth="0.4" />
+              <line x1="100" y1="10"  x2="100" y2="190" stroke="#0B1E3F" strokeOpacity="0.08" strokeWidth="0.4" />
+              <line x1="36"  y1="36"  x2="164" y2="164" stroke="#0B1E3F" strokeOpacity="0.05" strokeWidth="0.4" />
+              <line x1="164" y1="36"  x2="36"  y2="164" stroke="#0B1E3F" strokeOpacity="0.05" strokeWidth="0.4" />
+
+              <circle cx="100" cy="100" r="90" fill="none" stroke="#0B1E3F" strokeOpacity="0.2" strokeWidth="1" />
+
+              <g className="radar-ping">
+                <circle cx="100" cy="100" r="84" fill="none" stroke="#16A34A" strokeOpacity="0.5" strokeWidth="0.8" />
+              </g>
+              <g className="radar-ping" style={{ animationDelay: '1.4s' }}>
+                <circle cx="100" cy="100" r="84" fill="none" stroke="#16A34A" strokeOpacity="0.5" strokeWidth="0.8" />
+              </g>
+
+              <g className="radar-sweep">
+                <path d="M 100 100 L 100 10 A 90 90 0 0 1 175 60 Z" fill="url(#sweep-grad)" />
+                <line x1="100" y1="100" x2="100" y2="10" stroke="#16A34A" strokeOpacity="0.9" strokeWidth="1.2" />
+              </g>
+
+              {sources.map((s) => {
+                const pos = polar(s.angle, s.radius);
+                const active = elapsed >= s.activateAt;
+                if (!active) return null;
+                const spooky = isSourceSpooky(s.key, result);
+                const fillColor = spooky ? '#DC2626' : '#16A34A';
+                return (
+                  <g key={s.key} className={spooky ? 'blip-spooky' : 'blip'} style={{ transformOrigin: `${pos.x}px ${pos.y}px` }}>
+                    <circle cx={pos.x} cy={pos.y} r={spooky ? 7 : 6} fill={fillColor} fillOpacity="0.22" />
+                    <circle cx={pos.x} cy={pos.y} r={spooky ? 3.5 : 3} fill={fillColor} />
+                  </g>
+                );
+              })}
+
+              <circle cx="100" cy="100" r="3" fill="#0B1E3F" />
+              <circle cx="100" cy="100" r="6" fill="none" stroke="#0B1E3F" strokeOpacity="0.3" strokeWidth="0.5" />
+            </svg>
+          </div>
+        </div>
+
+        {/* Sources list — 1 column on small, 2 columns on desktop. */}
+        <div className="lg:col-span-3">
+          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-4">Cross-checking 9 sources in parallel</div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {sources.map((s) => {
+              const active = elapsed >= s.activateAt;
+              const spooky = isSourceSpooky(s.key, result);
+              const Icon = s.icon;
+              // Card style: pending (dim) / clean (green) / spooky (red).
+              // We only switch to "clean" or "spooky" once the source has
+              // activated AND the API result is in — otherwise it's the
+              // mid-scan green-ish "checked, awaiting result" state.
+              const cardCls = !active
+                ? 'border-[#0B1E3F]/8 bg-white opacity-60'
+                : spooky
+                  ? 'border-[#DC2626]/40 bg-[#DC2626]/5 ring-1 ring-[#DC2626]/20'
+                  : 'border-[#16A34A]/25 bg-[#16A34A]/5';
+              const iconCls = !active
+                ? 'bg-[#0B1E3F]/5 text-[#0B1E3F]/40'
+                : spooky
+                  ? 'bg-[#DC2626] text-white'
+                  : 'bg-[#16A34A] text-white';
+              const labelCls = !active ? 'text-[#0B1E3F]/60' : spooky ? 'text-[#DC2626]' : 'text-[#0B1E3F]';
+              const StatusIcon = !active ? Icon : spooky ? AlertTriangle : CheckCircle2;
+              return (
+                <div key={s.key} className={`flex items-start gap-3 p-3 rounded-xl border transition ${cardCls}`}>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition ${iconCls}`}>
+                    <StatusIcon className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm font-semibold leading-tight ${labelCls}`}>
+                      {s.label}
+                      {spooky && <span className="ml-1.5 text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#DC2626] text-white align-middle">Caught</span>}
+                    </div>
+                    <div className={`text-[11px] mt-1 leading-snug ${active ? (spooky ? 'text-[#DC2626]/85' : 'text-[#0B1E3F]/65') : 'text-[#0B1E3F]/40'}`}>{s.desc}</div>
+                    {s.chip && (
+                      <div className={`mt-1.5 inline-block text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded ${active ? (spooky ? 'bg-[#DC2626]/15 text-[#DC2626]' : 'bg-[#0B1E3F]/8 text-[#0B1E3F]/60') : 'bg-[#0B1E3F]/4 text-[#0B1E3F]/35'}`}>
+                        {s.chip}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer — progress bar + caption */}
+      {(() => {
+        const anySpooky = result ? sources.some((s) => isSourceSpooky(s.key, result)) : false;
+        return (
+          <div className="px-8 md:px-10 pb-8">
+            <div className="h-1.5 bg-[#0B1E3F]/8 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-200 ease-linear ${anySpooky ? 'bg-gradient-to-r from-[#DC2626] to-[#FF6B35]' : 'bg-gradient-to-r from-[#16A34A] to-[#0B1E3F]'}`}
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between text-[11px] text-[#0B1E3F]/55">
+              <div className="mono uppercase tracking-wider">FMCSA · Socrata · Google Places · Brave · WHOIS · DNS · Safe Browsing</div>
+              <div className={`mono ${anySpooky ? 'text-[#DC2626] font-semibold' : ''}`}>{progressPct}%</div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -849,7 +1234,177 @@ function RateConScanProgress({ fileName }: { fileName?: string }) {
   );
 }
 
+// "In the wild" scan card next to the rate-con mockup. Shows a real recent
+// risky lookup (anonymized) when one exists, or a hardcoded scenario as a
+// fallback — so the section is never empty before the first scan lands.
+function InTheWildCard({ featured }: { featured?: LandingFeaturedScan }) {
+  const FALLBACK = {
+    name: 'Westport Logistics Group LLC',
+    mc: 'MC-637•••',
+    dot: 'DOT-3019•••',
+    score: 78,
+    verdict: 'high' as const,
+    entity: 'BROKER',
+    flagCount: 4,
+    flags: [
+      { sev: 'critical' as const, title: 'Authority reactivated 12 days ago', desc: 'Dormant 3 years prior',     pts: 30 },
+      { sev: 'warning'  as const, title: 'Address flipped 3× this year',     desc: 'Chicago → Atlanta → Miami',  pts: 30 },
+      { sev: 'warning'  as const, title: 'Insurance lapsed 8 days ago',      desc: 'No replacement policy filed', pts: 20 },
+      { sev: 'info'     as const, title: '2 verified fraud reports',         desc: 'Non-payment complaints',     pts: 30 },
+    ] as LandingFeaturedFlag[],
+    isReal: false,
+  };
+  const isReal = !!featured;
+  const s = featured
+    ? {
+        name: featured.name,
+        mc: featured.mc || '—',
+        dot: featured.dot || '—',
+        score: featured.score,
+        verdict: featured.verdict,
+        entity: featured.entity,
+        flagCount: featured.flagCount,
+        flags: featured.flags,
+        isReal: true,
+      }
+    : FALLBACK;
+
+  const verdictLabel = s.verdict === 'high' ? 'Do not book' : s.verdict === 'medium' ? 'Proceed with care' : 'Safe to book';
+  const verdictBg = s.verdict === 'high' ? 'bg-[#DC2626]/10 border-[#DC2626]/30' : s.verdict === 'medium' ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30' : 'bg-[#16A34A]/10 border-[#16A34A]/30';
+  const verdictText = s.verdict === 'high' ? 'text-[#DC2626]' : s.verdict === 'medium' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
+  const flagDot = (sev: string) => sev === 'critical' ? '#DC2626' : sev === 'warning' ? '#F59E0B' : 'rgba(11,30,63,0.4)';
+
+  return (
+    <div className="bg-white rounded-2xl p-8 relative overflow-hidden card-shadow-lg text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-6">
+        <div className="text-[#0B1E3F]">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1 flex items-center gap-2 flex-wrap">
+            <span>{s.entity ? `${s.entity.toLowerCase()} scan` : 'Haulock scan'}</span>
+            {s.isReal ? (
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#16A34A]/10 text-[#16A34A] flex items-center gap-1">
+                <span className="relative flex w-1.5 h-1.5">
+                  <span className="absolute inline-flex w-full h-full bg-[#16A34A] rounded-full opacity-75 animate-ping" />
+                  <span className="relative inline-flex w-1.5 h-1.5 bg-[#16A34A] rounded-full" />
+                </span>
+                Live
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#0B1E3F]/5 text-[#0B1E3F]/55">Sample</span>
+            )}
+          </div>
+          <div className="text-2xl font-semibold text-[#0B1E3F]">{s.name}</div>
+          <div className="text-sm mono text-[#0B1E3F]/50">{s.mc} · {s.dot}</div>
+        </div>
+        <RiskGauge score={s.score} size="sm" />
+      </div>
+
+      <div className={`p-4 ${verdictBg} border rounded-xl mb-6`}>
+        <div className={`flex items-center gap-2 text-xs mono uppercase tracking-wider mb-1 ${verdictText}`}>
+          <AlertTriangle className="w-3.5 h-3.5" /> {verdictLabel}
+        </div>
+        <div className="text-sm font-medium text-[#0B1E3F]">
+          {s.flagCount > 0
+            ? `${s.flagCount} red flag${s.flagCount === 1 ? '' : 's'} · scored using ${(s.entity || '').toLowerCase()} rules`
+            : `Scored using ${(s.entity || '').toLowerCase()} rules`}
+        </div>
+      </div>
+
+      {s.flags.length > 0 ? (
+        <div className="space-y-2">
+          {s.flags.map((flag, i) => (
+            <div key={i} className="flex items-center gap-3 p-3 rounded-lg text-[#0B1E3F]" style={{ backgroundColor: 'rgba(11,30,63,0.05)' }}>
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: flagDot(flag.sev) }} />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-[#0B1E3F]">{flag.title}</div>
+                {flag.desc && <div className="text-xs text-[#0B1E3F]/60">{flag.desc}</div>}
+              </div>
+              {typeof flag.pts === 'number' && <div className="mono text-xs text-[#0B1E3F]/40">+{flag.pts}</div>}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-sm text-[#0B1E3F]/55 italic">No red flags on this scan — the scoring engine considered every signal and found nothing actionable.</div>
+      )}
+    </div>
+  );
+}
+
+// 10 sample rate-con templates rotated on every page load. We never expose
+// the broker name itself — it gets fully redacted to bullets so the visual
+// shape of a real letterhead is preserved, but no letters can be read. Same
+// for the email username (which would otherwise leak the same name).
+//
+// `brand` is kept internally only for length-based redaction; it never gets
+// rendered as text. `tagline` is generic copy that doesn't reveal identity.
+const RATE_CON_TEMPLATES: Array<{
+  brand: string;
+  tagline: string;
+  mc: string;
+  dot: string;
+  loadId: string;
+  date: string;
+  pickup: { name: string; line: string };
+  delivery: { name: string; line: string };
+  miles: number;
+  rate: string;
+  emailDomainTld: string; // .net / .com / .co / etc — preserves shape without leaking name
+  phone: string;
+}> = [
+  { brand: 'WESTPORT LOGISTICS',     tagline: 'Professional Logistics Solutions', mc: 'MC-637•••', dot: 'DOT-3019•••', loadId: 'RC-2026-0481', date: '04/23/2026',
+    pickup:   { name: 'Thompson Distribution Center', line: 'Dallas, TX 75201 · 04/24 08:00' },
+    delivery: { name: 'Atlanta Warehouse Co.',        line: 'Atlanta, GA 30303 · 04/26 14:00' },
+    miles: 790,  rate: '$2,450.00', emailDomainTld: '.net', phone: '(305) 555-0183' },
+  { brand: 'NIGHTHAWK FREIGHT',      tagline: 'Premium Carrier Network',          mc: 'MC-498•••', dot: 'DOT-2851•••', loadId: 'RC-2026-1147', date: '04/19/2026',
+    pickup:   { name: 'Riverside Foods Cold Storage', line: 'Fresno, CA 93706 · 04/20 06:30' },
+    delivery: { name: 'Pacific Grocer DC',            line: 'Seattle, WA 98108 · 04/22 16:00' },
+    miles: 950,  rate: '$3,180.00', emailDomainTld: '.com', phone: '(702) 555-0427' },
+  { brand: 'BLUEPOINT BROKERAGE',    tagline: 'Coast-to-Coast Freight Solutions', mc: 'MC-712•••', dot: 'DOT-3344•••', loadId: 'RC-2026-0822', date: '04/15/2026',
+    pickup:   { name: 'Midwest Steel Yard #4',        line: 'Gary, IN 46402 · 04/16 09:00' },
+    delivery: { name: 'East Coast Fabricators',       line: 'Newark, NJ 07105 · 04/18 12:00' },
+    miles: 740,  rate: '$1,925.00', emailDomainTld: '.net', phone: '(908) 555-0316' },
+  { brand: 'SUMMIT TRANSPORT GROUP', tagline: 'Trusted Since 2014',               mc: 'MC-552•••', dot: 'DOT-2614•••', loadId: 'RC-2026-2041', date: '04/11/2026',
+    pickup:   { name: 'Sunbelt Building Supply',      line: 'Phoenix, AZ 85007 · 04/12 07:15' },
+    delivery: { name: 'Front Range Construction',     line: 'Denver, CO 80216 · 04/13 18:00' },
+    miles: 860,  rate: '$2,290.00', emailDomainTld: '.co',  phone: '(480) 555-0291' },
+  { brand: 'IRONSIDE LOGISTICS',     tagline: 'Reliable. Fast. Insured.',         mc: 'MC-104•••', dot: 'DOT-1772•••', loadId: 'RC-2026-0359', date: '04/22/2026',
+    pickup:   { name: 'Gulf Coast Polymers Inc.',     line: 'Houston, TX 77002 · 04/23 11:00' },
+    delivery: { name: 'Lakeside Manufacturing',       line: 'Chicago, IL 60607 · 04/25 09:30' },
+    miles: 1080, rate: '$3,420.00', emailDomainTld: '.com', phone: '(346) 555-0654' },
+  { brand: 'CRESCENT FREIGHT LINE',  tagline: 'Specialized Heavy Haul',           mc: 'MC-826•••', dot: 'DOT-3927•••', loadId: 'RC-2026-1763', date: '04/17/2026',
+    pickup:   { name: 'Cypress Plant Equipment',      line: 'Baton Rouge, LA 70802 · 04/18 05:00' },
+    delivery: { name: 'Highland Energy Services',     line: 'Tulsa, OK 74103 · 04/19 22:00' },
+    miles: 660,  rate: '$2,150.00', emailDomainTld: '.io',  phone: '(225) 555-0148' },
+  { brand: 'KEYSTONE FREIGHTWAYS',   tagline: 'East Coast Specialists',           mc: 'MC-329•••', dot: 'DOT-1184•••', loadId: 'RC-2026-0912', date: '04/14/2026',
+    pickup:   { name: 'Beacon Industrial Parts',      line: 'Pittsburgh, PA 15203 · 04/15 08:45' },
+    delivery: { name: 'Riverbend Assembly Plant',     line: 'Detroit, MI 48207 · 04/15 19:30' },
+    miles: 290,  rate: '$1,180.00', emailDomainTld: '.us',  phone: '(412) 555-0780' },
+  { brand: 'PACIFIC TIDE LOGISTICS', tagline: 'Port-to-Door Service',             mc: 'MC-671•••', dot: 'DOT-2998•••', loadId: 'RC-2026-1505', date: '04/20/2026',
+    pickup:   { name: 'Long Beach Port Terminal 7',   line: 'Long Beach, CA 90802 · 04/21 04:00' },
+    delivery: { name: 'High Desert Distribution',     line: 'Las Vegas, NV 89030 · 04/21 21:00' },
+    miles: 270,  rate: '$1,640.00', emailDomainTld: '.net', phone: '(562) 555-0974' },
+  { brand: 'CARDINAL LANE EXPRESS',  tagline: 'Premium Dry Van Carrier',          mc: 'MC-847•••', dot: 'DOT-3461•••', loadId: 'RC-2026-2208', date: '04/13/2026',
+    pickup:   { name: 'Bluegrass Beverage Co.',       line: 'Louisville, KY 40202 · 04/14 06:00' },
+    delivery: { name: 'Carolina Wholesale Foods',     line: 'Charlotte, NC 28208 · 04/14 21:00' },
+    miles: 525,  rate: '$1,775.00', emailDomainTld: '.com', phone: '(502) 555-0231' },
+  { brand: 'RIDGELINE BROKERAGE',    tagline: 'Mountain West Logistics',          mc: 'MC-226•••', dot: 'DOT-1438•••', loadId: 'RC-2026-0677', date: '04/16/2026',
+    pickup:   { name: 'Northern Lumber Mills',        line: 'Boise, ID 83702 · 04/17 07:30' },
+    delivery: { name: 'Wasatch Building Center',      line: 'Salt Lake City, UT 84104 · 04/18 10:00' },
+    miles: 350,  rate: '$1,450.00', emailDomainTld: '.co',  phone: '(208) 555-0589' },
+];
+
+// Replace every letter with • but keep word breaks, so the redacted name
+// has the same visual rhythm as a real letterhead without leaking any text.
+function blurName(s: string): string {
+  return s.replace(/[A-Za-z]/g, '•');
+}
+
 function RateConMockup() {
+  // Randomize on mount only (avoids SSR/CSR mismatch warnings).
+  const [idx, setIdx] = useState<number | null>(null);
+  useEffect(() => {
+    setIdx(Math.floor(Math.random() * RATE_CON_TEMPLATES.length));
+  }, []);
+  const s = RATE_CON_TEMPLATES[idx ?? 0];
   return (
     <div className="relative">
       <div className="absolute -top-3 left-8 z-10 px-3 py-1 bg-[#FF6B35] text-white text-xs mono uppercase tracking-wider rounded-full">
@@ -860,12 +1415,12 @@ function RateConMockup() {
         <div className="relative text-[#0B1E3F]">
           <div className="flex items-center justify-between pb-4 border-b-2 border-[#0B1E3F]/20 mb-4">
             <div className="text-[#0B1E3F]">
-              <div className="text-xl font-bold tracking-tight text-[#0B1E3F]">WESTPORT LOGISTICS GROUP</div>
-              <div className="text-xs mono text-[#0B1E3F]/60">Professional Logistics Solutions</div>
+              <div className="text-xl font-bold tracking-tight text-[#0B1E3F]">{blurName(s.brand)}</div>
+              <div className="text-xs mono text-[#0B1E3F]/60">{s.tagline}</div>
             </div>
             <div className="text-right text-xs mono text-[#0B1E3F]/70">
-              <div>MC-637•••</div>
-              <div>DOT-3019•••</div>
+              <div>{s.mc}</div>
+              <div>{s.dot}</div>
             </div>
           </div>
           <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">RATE CONFIRMATION</div>
@@ -873,37 +1428,37 @@ function RateConMockup() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="text-xs text-[#0B1E3F]/60 mb-0.5">Load #</div>
-                <div className="mono font-medium text-[#0B1E3F]">RC-2026-0481</div>
+                <div className="mono font-medium text-[#0B1E3F]">{s.loadId}</div>
               </div>
               <div>
                 <div className="text-xs text-[#0B1E3F]/60 mb-0.5">Date</div>
-                <div className="mono font-medium text-[#0B1E3F]">04/23/2026</div>
+                <div className="mono font-medium text-[#0B1E3F]">{s.date}</div>
               </div>
             </div>
             <div className="p-3 rounded text-[#0B1E3F]" style={{ backgroundColor: 'rgba(11,30,63,0.05)' }}>
               <div className="text-xs text-[#0B1E3F]/60 mb-1">PICKUP</div>
-              <div className="font-medium text-[#0B1E3F]">Thompson Distribution Center</div>
-              <div className="text-xs mono text-[#0B1E3F]/70">Dallas, TX 75201 · 04/24 08:00</div>
+              <div className="font-medium text-[#0B1E3F]">{s.pickup.name}</div>
+              <div className="text-xs mono text-[#0B1E3F]/70">{s.pickup.line}</div>
             </div>
             <div className="p-3 rounded text-[#0B1E3F]" style={{ backgroundColor: 'rgba(11,30,63,0.05)' }}>
               <div className="text-xs text-[#0B1E3F]/60 mb-1">DELIVERY</div>
-              <div className="font-medium text-[#0B1E3F]">Atlanta Warehouse Co.</div>
-              <div className="text-xs mono text-[#0B1E3F]/70">Atlanta, GA 30303 · 04/26 14:00</div>
+              <div className="font-medium text-[#0B1E3F]">{s.delivery.name}</div>
+              <div className="text-xs mono text-[#0B1E3F]/70">{s.delivery.line}</div>
             </div>
             <div className="grid grid-cols-2 gap-3 pt-2">
               <div>
                 <div className="text-xs text-[#0B1E3F]/60">Miles</div>
-                <div className="mono text-[#0B1E3F]">790</div>
+                <div className="mono text-[#0B1E3F]">{s.miles}</div>
               </div>
               <div>
                 <div className="text-xs text-[#0B1E3F]/60">Rate</div>
-                <div className="mono font-bold text-lg text-[#0B1E3F]">$2,450.00</div>
+                <div className="mono font-bold text-lg text-[#0B1E3F]">{s.rate}</div>
               </div>
             </div>
             <div className="pt-4 mt-4 border-t border-[#0B1E3F]/15 text-xs text-[#0B1E3F]">
               <div className="text-[#0B1E3F]/60 mb-1">Contact</div>
-              <div className="mono text-[#0B1E3F]">dispatch@westport-logistics.net</div>
-              <div className="mono text-[#0B1E3F]/70">(305) 555-0183</div>
+              <div className="mono text-[#0B1E3F]">dispatch@••••••••••{s.emailDomainTld}</div>
+              <div className="mono text-[#0B1E3F]/70">{s.phone}</div>
             </div>
           </div>
           <div className="absolute top-28 -right-2 flex items-center gap-2 px-2 py-1 bg-[#DC2626] text-white text-xs mono rounded-full">
@@ -2012,6 +2567,298 @@ function StripeOverviewCard() {
   );
 }
 
+// Admin-only "History data growth" card — shows how many rows have been
+// written to carrier_snapshots over time, broken down by source (lookup vs
+// bulk-ingest) and change type (initial vs update). Lets us watch the
+// dataset compound into a real moat.
+function SnapshotsStatsCard() {
+  type SnapshotsStats = {
+    totals: { allTime: number; last24h: number; last7d: number; priorWeek: number; distinctCarriersLast7d: number };
+    daily: { date: string; total: number; lookup: number; bulk: number; initial: number; updates: number }[];
+    recent: { name: string | null; dot: string | null; mc: string | null; capturedAt: string; changedFields: string[]; source: string }[];
+    fetchedAt: string;
+  };
+  const [stats, setStats] = useState<SnapshotsStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = async () => {
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/snapshots-stats');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      setStats(data);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load snapshot stats');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const fmtCount = (n: number) => n.toLocaleString();
+  const wow = stats ? stats.totals.last7d - stats.totals.priorWeek : 0;
+  const wowPct = stats && stats.totals.priorWeek > 0 ? Math.round((wow / stats.totals.priorWeek) * 100) : null;
+
+  const maxDay = stats ? Math.max(1, ...stats.daily.map((d) => d.total)) : 1;
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs mono uppercase tracking-wider text-[#16A34A] font-semibold">History data growth</span>
+            <span className="px-2 py-0.5 bg-[#16A34A]/10 text-[#16A34A] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">Carrier snapshots</span>
+          </div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">Daily snapshot capture</h2>
+          <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Append-only identity history. Every change Haulock observes lives here forever.</div>
+        </div>
+        <button onClick={load} className="px-3 py-1.5 border border-[#0B1E3F]/15 bg-white rounded-full text-xs font-medium hover:bg-[#0B1E3F]/5">Refresh</button>
+      </div>
+
+      {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+
+      {stats == null ? (
+        <div className="py-8 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+            <div className="p-4 bg-[#F5F3EE]/60 rounded-xl">
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">All-time rows</div>
+              <div className="text-2xl font-semibold mt-1">{fmtCount(stats.totals.allTime)}</div>
+            </div>
+            <div className="p-4 bg-[#F5F3EE]/60 rounded-xl">
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Last 24 hours</div>
+              <div className="text-2xl font-semibold mt-1">{fmtCount(stats.totals.last24h)}</div>
+            </div>
+            <div className="p-4 bg-[#F5F3EE]/60 rounded-xl">
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Last 7 days</div>
+              <div className="text-2xl font-semibold mt-1">{fmtCount(stats.totals.last7d)}</div>
+              {wowPct != null && (
+                <div className={`text-[10px] mono mt-1 ${wow >= 0 ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>
+                  {wow >= 0 ? '↑' : '↓'} {Math.abs(wowPct)}% vs prior week
+                </div>
+              )}
+            </div>
+            <div className="p-4 bg-[#F5F3EE]/60 rounded-xl">
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Distinct carriers · 7d</div>
+              <div className="text-2xl font-semibold mt-1">{fmtCount(stats.totals.distinctCarriersLast7d)}</div>
+            </div>
+            <div className="p-4 bg-[#F5F3EE]/60 rounded-xl">
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Avg / day · 30d</div>
+              <div className="text-2xl font-semibold mt-1">
+                {fmtCount(Math.round(stats.daily.reduce((a, d) => a + d.total, 0) / Math.max(1, stats.daily.length)))}
+              </div>
+            </div>
+          </div>
+
+          {/* Daily bar chart — last 30 days. Each bar split into update + initial. */}
+          <div className="mb-2 flex items-center justify-between text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">
+            <span>Last 30 days</span>
+            <span className="flex items-center gap-3">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#16A34A]" /> updates</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#0B1E3F]/55" /> initial</span>
+            </span>
+          </div>
+          <div className="flex items-end gap-1 h-32 mb-4 border-b border-[#0B1E3F]/10">
+            {stats.daily.map((d) => {
+              const pct = (d.total / maxDay) * 100;
+              const initialPct = d.total > 0 ? (d.initial / d.total) * pct : 0;
+              const updatesPct = pct - initialPct;
+              return (
+                <div key={d.date} className="flex-1 flex flex-col justify-end items-stretch min-w-0" title={`${d.date} · ${d.total} rows · ${d.lookup} lookup · ${d.bulk} bulk`}>
+                  <div className="bg-[#16A34A]" style={{ height: `${updatesPct}%` }} />
+                  <div className="bg-[#0B1E3F]/55" style={{ height: `${initialPct}%` }} />
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-[9px] mono text-[#0B1E3F]/45 mb-5">
+            <span>{stats.daily[0]?.date}</span>
+            <span>today</span>
+          </div>
+
+          {/* Recent activity feed */}
+          {stats.recent.length > 0 && (
+            <div>
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Recent activity</div>
+              <div className="space-y-1.5">
+                {stats.recent.map((r, i) => {
+                  const isInitial = r.changedFields?.includes('initial');
+                  const fieldsList = isInitial ? 'first record' : (r.changedFields || []).slice(0, 4).join(', ');
+                  return (
+                    <div key={i} className="flex items-start gap-3 p-2.5 bg-[#F5F3EE]/40 rounded-lg">
+                      <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${isInitial ? 'bg-[#0B1E3F]/55' : 'bg-[#16A34A]'}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-[#0B1E3F] truncate">{r.name || '—'}</span>
+                          <span className="text-[10px] mono text-[#0B1E3F]/55">
+                            {[r.mc && `MC-${r.mc}`, r.dot && `DOT-${r.dot}`].filter(Boolean).join(' · ') || 'no id'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">
+                          <span className="mono">{timeAgo(r.capturedAt)}</span>
+                          <span className="mx-1.5 text-[#0B1E3F]/25">·</span>
+                          <span>{fieldsList}{!isInitial && (r.changedFields?.length || 0) > 4 ? ` +${r.changedFields.length - 4}` : ''}</span>
+                          <span className="mx-1.5 text-[#0B1E3F]/25">·</span>
+                          <span className="text-[#0B1E3F]/55">{r.source}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Supabase storage usage — calls pg_database_size + per-table breakdown,
+// then compares against the operator's actual disk allocation (read on the
+// server from env). pg_database_size returns ONLY the database; Supabase's
+// dashboard shows DB + WAL + system on disk. We render both so the number
+// here matches what the dashboard says when you cross-check.
+function SupabaseStorageCard() {
+  type StorageStats = {
+    database_bytes: number;
+    fetched_at: string;
+    tables: { name: string; total_bytes: number; data_bytes: number; index_bytes: number; row_estimate: number }[];
+    plan: {
+      disk_bytes: number;
+      disk_gb: number;
+      system_reserve_bytes: number;
+      system_reserve_gb: number;
+      effective_db_budget_bytes: number;
+    };
+  };
+  const [stats, setStats] = useState<StorageStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const load = async () => {
+    setError(null); setHint(null);
+    try {
+      const res = await fetch('/api/admin/storage-stats');
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error || `Failed (${res.status})`);
+        if (data?.hint) setHint(data.hint);
+        return;
+      }
+      setStats(data);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load storage stats');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const fmtBytes = (n: number): string => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  };
+
+  const usedBytes = stats?.database_bytes ?? 0;
+  const diskBytes = stats?.plan.disk_bytes ?? 8 * 1024 * 1024 * 1024;
+  const dbBudgetBytes = stats?.plan.effective_db_budget_bytes ?? diskBytes;
+  // Headline percentage: the database vs the disk allocation MINUS system
+  // reserve (so 100% means "out of room for actual data growth"). Honest.
+  const usagePct = dbBudgetBytes > 0 ? Math.min(100, Math.round((usedBytes / dbBudgetBytes) * 100)) : 0;
+  const usageColor = usagePct >= 90 ? '#DC2626' : usagePct >= 70 ? '#F59E0B' : '#16A34A';
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 font-semibold">Supabase storage</span>
+            <span className="px-2 py-0.5 bg-[#0B1E3F]/5 text-[#0B1E3F]/70 rounded-full text-[10px] mono uppercase tracking-wider font-semibold">database size</span>
+          </div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">Database usage</h2>
+          <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Live from Postgres pg_database_size. Disk allocation read from <code className="mono">SUPABASE_DISK_GB</code> env var.</div>
+        </div>
+        <button onClick={load} className="px-3 py-1.5 border border-[#0B1E3F]/15 bg-white rounded-full text-xs font-medium hover:bg-[#0B1E3F]/5">Refresh</button>
+      </div>
+
+      {error && (
+        <div className="mb-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/20 rounded-lg text-sm text-[#DC2626]">
+          {error}
+          {hint && <div className="mt-1 text-xs text-[#0B1E3F]/65">{hint}</div>}
+        </div>
+      )}
+
+      {stats == null && !error ? (
+        <div className="py-8 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
+      ) : stats ? (
+        <>
+          <div className="flex items-end justify-between mb-2 flex-wrap gap-2">
+            <div>
+              <div className="text-3xl font-semibold" style={{ color: usageColor }}>
+                {fmtBytes(usedBytes)}
+                <span className="text-base font-normal text-[#0B1E3F]/55 ml-2">/ {fmtBytes(dbBudgetBytes)} budget</span>
+              </div>
+              <div className="text-xs text-[#0B1E3F]/55 mt-0.5">
+                {usagePct}% of usable database space ({stats.plan.disk_gb} GB allocated · ~{stats.plan.system_reserve_gb} GB reserved for WAL & system)
+              </div>
+            </div>
+            <div className={`text-[10px] mono uppercase tracking-wider font-semibold ${usagePct >= 90 ? 'text-[#DC2626]' : usagePct >= 70 ? 'text-[#F59E0B]' : 'text-[#16A34A]'}`}>
+              {usagePct >= 90 ? 'UPGRADE DISK'
+                : usagePct >= 70 ? 'Watch usage'
+                : 'Plenty of headroom'}
+            </div>
+          </div>
+          <div className="h-2 bg-[#0B1E3F]/8 rounded-full overflow-hidden mb-2 relative">
+            <div className="h-full transition-all duration-300" style={{ width: `${usagePct}%`, backgroundColor: usageColor }} />
+            {/* 70% / 90% threshold tick marks */}
+            <div className="absolute top-0 bottom-0 w-px bg-[#F59E0B]" style={{ left: '70%' }} />
+            <div className="absolute top-0 bottom-0 w-px bg-[#DC2626]" style={{ left: '90%' }} />
+          </div>
+          <div className="flex items-center justify-between text-[10px] mono text-[#0B1E3F]/45 mb-4">
+            <span>0</span>
+            <span className="text-[#F59E0B]">70% warn</span>
+            <span className="text-[#DC2626]">90% upgrade</span>
+            <span>{fmtBytes(dbBudgetBytes)}</span>
+          </div>
+
+          {/* Honest disclosure: the Supabase dashboard shows DB + WAL + system. */}
+          <div className="mb-5 p-3 bg-[#0B1E3F]/[0.03] rounded-lg text-[11px] text-[#0B1E3F]/65 leading-relaxed">
+            <strong className="text-[#0B1E3F]">Why this differs from the Supabase dashboard:</strong>{' '}
+            We report only the database itself ({fmtBytes(usedBytes)}). The dashboard's "Disk Size" total also includes WAL (~100 MB), system tables, and replication slots (~800 MB on a fresh project). Total disk = our number + ~{stats.plan.system_reserve_gb} GB of overhead.
+          </div>
+
+          {/* Per-table breakdown */}
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Largest tables</div>
+          <div className="space-y-1.5">
+            {stats.tables.slice(0, 8).map((t) => {
+              const tablePct = stats.database_bytes > 0
+                ? Math.round((t.total_bytes / stats.database_bytes) * 100)
+                : 0;
+              return (
+                <div key={t.name} className="p-2.5 bg-[#F5F3EE]/40 rounded-lg">
+                  <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+                    <span className="text-sm font-medium text-[#0B1E3F] mono truncate">{t.name}</span>
+                    <span className="text-xs mono text-[#0B1E3F]/65">
+                      {fmtBytes(t.total_bytes)}
+                      <span className="text-[#0B1E3F]/40"> · {tablePct}% of DB</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-[#0B1E3F]/8 rounded-full overflow-hidden">
+                    <div className="h-full bg-[#0B1E3F]/35" style={{ width: `${tablePct}%` }} />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] mono text-[#0B1E3F]/50 mt-1">
+                    <span>{t.row_estimate.toLocaleString()} rows</span>
+                    <span>data {fmtBytes(t.data_bytes)} · idx {fmtBytes(t.index_bytes)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function FmcsaPrewarmCard() {
   const [stats, setStats] = useState<{ total: number; staleOver30Days: number; oldest: string | null; newest: string | null } | null>(null);
   const [input, setInput] = useState('');
@@ -2119,11 +2966,14 @@ function Stat({ label, value, sub }: { label: string; value: any; sub?: string |
   );
 }
 
+type AdminTab = 'overview' | 'users' | 'fmcsa' | 'data';
+
 function AdminPage({ navigate }: any) {
   const [users, setUsers] = useState<any[] | null>(null);
   const [filter, setFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [tab, setTab] = useState<AdminTab>('overview');
 
   const load = async () => {
     setError(null);
@@ -2209,36 +3059,81 @@ function AdminPage({ navigate }: any) {
     watchlist: acc.watchlist + (u.usage?.watchlist || 0),
   }), { users: 0, admins: 0, lookupsThisMonth: 0, scansThisMonth: 0, watchlist: 0 });
 
+  // Tab definitions. `id` is the state value, `label` shows in the bar,
+  // `count` (optional) renders a small badge — handy for the user count.
+  const TABS: { id: AdminTab; label: string; count?: number }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'users',    label: 'Users',     count: users?.length ?? undefined },
+    { id: 'fmcsa',    label: 'FMCSA' },
+    { id: 'data',     label: 'Data & storage' },
+  ];
+
   return (
     <div className="space-y-8 text-[#0B1E3F]">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Admin</div>
-          <h1 className="text-4xl serif italic text-[#0B1E3F]">All Haulock users.</h1>
-          <p className="text-[#0B1E3F]/60 mt-2 text-sm">Usage, plans, and admin status per account.</p>
+          <h1 className="text-4xl serif italic text-[#0B1E3F]">Operator console.</h1>
+          <p className="text-[#0B1E3F]/60 mt-2 text-sm">Users, billing, FMCSA observability, data growth, and storage — one place.</p>
         </div>
-        <button onClick={load} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 w-fit">Refresh</button>
+        <button onClick={load} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 w-fit">Refresh users</button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Users</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.users}</div></div>
-        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Admins</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.admins}</div></div>
-        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Lookups this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.lookupsThisMonth}</div></div>
-        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Scans this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.scansThisMonth}</div></div>
-        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Watchlist rows</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.watchlist}</div></div>
-      </div>
-
-      <StripeOverviewCard />
-
-      <FmcsaStatsCard />
-
-      <FmcsaPrewarmCard />
-
-      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email, name, company, or MC…" className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40" />
+      {/* Tab bar */}
+      <div className="flex gap-1 p-1 bg-[#0B1E3F]/5 rounded-full w-fit flex-wrap">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition flex items-center gap-2 ${tab === t.id ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}
+          >
+            {t.label}
+            {t.count != null && (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] mono ${tab === t.id ? 'bg-white/15 text-white' : 'bg-[#0B1E3F]/10 text-[#0B1E3F]/65'}`}>
+                {t.count}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+
+      {/* OVERVIEW: top-of-funnel summary tiles + Stripe billing health */}
+      {tab === 'overview' && (
+        <div className="space-y-8">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Users</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.users}</div></div>
+            <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Admins</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.admins}</div></div>
+            <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Lookups this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.lookupsThisMonth}</div></div>
+            <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Scans this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.scansThisMonth}</div></div>
+            <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Watchlist rows</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.watchlist}</div></div>
+          </div>
+          <StripeOverviewCard />
+        </div>
+      )}
+
+      {/* FMCSA: API observability + cache prewarm */}
+      {tab === 'fmcsa' && (
+        <div className="space-y-8">
+          <FmcsaStatsCard />
+          <FmcsaPrewarmCard />
+        </div>
+      )}
+
+      {/* DATA & STORAGE: snapshot growth chart + Supabase disk usage */}
+      {tab === 'data' && (
+        <div className="space-y-8">
+          <SnapshotsStatsCard />
+          <SupabaseStorageCard />
+        </div>
+      )}
+
+      {/* USERS: filter + user list */}
+      {tab === 'users' && (<>
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email, name, company, or MC…" className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40" />
+      </div>
 
       {users == null ? (
         <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
@@ -2311,6 +3206,7 @@ function AdminPage({ navigate }: any) {
           </div>
         </div>
       )}
+      </>)}
     </div>
   );
 }
@@ -2797,10 +3693,35 @@ function VerifyTool({ navigate }: any) {
   const [emailInput, setEmailInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorSuggestions, setErrorSuggestions] = useState<string[] | null>(null);
+  // When the API resolves we hold the result for a brief reveal moment so
+  // the scanner can paint red on whichever sources caught something spooky
+  // before we navigate to the full report.
+  const [scanResult, setScanResult] = useState<any | null>(null);
   const [rcFile, setRcFile] = useState<File | null>(null);
   const [rcLoading, setRcLoading] = useState(false);
   const [rcError, setRcError] = useState<string | null>(null);
   const [rcDrag, setRcDrag] = useState(false);
+  const emailInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  // Common prefixes seen on broker rate-con emails. Click to pre-fill the
+  // email field with `<prefix>@` and focus the cursor after the @ so the
+  // user just types the domain.
+  const applyEmailPrefix = (prefix: string) => {
+    const existing = emailInput;
+    const atIdx = existing.indexOf('@');
+    const tail = atIdx >= 0 ? existing.slice(atIdx + 1) : '';
+    const next = `${prefix}@${tail}`;
+    setEmailInput(next);
+    // Defer focus until the value has been applied so caret lands at the end.
+    setTimeout(() => {
+      const el = emailInputRef.current;
+      if (!el) return;
+      el.focus();
+      const pos = next.length;
+      el.setSelectionRange(pos, pos);
+    }, 0);
+  };
 
   const scanRateCon = async (file: File) => {
     if (!file) return;
@@ -2827,15 +3748,25 @@ function VerifyTool({ navigate }: any) {
     const q = (override ?? input).trim();
     const e = (emailOverride ?? emailInput).trim();
     if (!q) { setError('Enter an MC number, DOT number, or company name.'); return; }
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setErrorSuggestions(null);
     try {
+      // Pass the email field through to the verify route so it can run
+      // lookalike-domain detection against the carrier's real FMCSA-listed
+      // website — catches typosquats / homograph spoofs the eye misses.
+      const verifyUrl = `/api/verify?q=${encodeURIComponent(q)}${e ? `&email=${encodeURIComponent(e)}` : ''}`;
       const promises: Promise<any>[] = [
-        fetch(`/api/verify?q=${encodeURIComponent(q)}`).then(async (r) => {
+        fetch(verifyUrl).then(async (r) => {
           const j = await r.json();
           if (!r.ok) {
             if (r.status === 402) throw new Error(j?.error || 'Monthly lookup limit reached. Upgrade your plan for more.');
-            if (r.status === 503) throw new Error(j?.error || 'FMCSA is temporarily unavailable. Please try again in a minute.');
             if (r.status === 429) throw new Error(j?.error || 'Too many lookups — slow down and try again shortly.');
+            // Both 404 (name not found) and 503 (upstream down) now carry
+            // an actionable `suggestions` array — surface either.
+            if ((r.status === 404 || r.status === 503) && Array.isArray(j?.suggestions)) {
+              setErrorSuggestions(j.suggestions);
+            } else {
+              setErrorSuggestions(null);
+            }
             throw new Error(j?.error || `Lookup failed (${r.status})`);
           }
           return j;
@@ -2865,7 +3796,14 @@ function VerifyTool({ navigate }: any) {
           }).catch(() => {});
         }
       }
+      // Brief "reveal" beat — flash the scanner cards red/green based on
+      // the actual carrier response so the user sees what was caught before
+      // landing on the full report. ~1.4s is long enough to register
+      // visually without feeling like a delay.
+      setScanResult(merged);
+      await new Promise((r) => setTimeout(r, 1400));
       navigate('report', merged);
+      setScanResult(null);
     } catch (err: any) {
       setError(err?.message || 'Lookup failed');
     } finally {
@@ -2890,19 +3828,47 @@ function VerifyTool({ navigate }: any) {
         ))}
       </div>
       {tab === 'quick' && (
+        loading ? (
+          <VerifyScanProgress query={input} result={scanResult} />
+        ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 md:p-12 card-shadow text-[#0B1E3F]">
           <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">MC number, DOT number, or company name</label>
           <div className="flex gap-3">
             <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') runLookup(); }} placeholder="e.g., MC-847291 or Acme Freight Brokers" className="flex-1 px-5 py-4 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-lg focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
             <button onClick={() => runLookup()} disabled={loading} className="px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
-              {loading ? (<><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Checking...</>) : (<>Verify <ArrowRight className="w-4 h-4" /></>)}
+              Verify <ArrowRight className="w-4 h-4" />
             </button>
           </div>
           <div className="mt-5">
             <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">Email or domain from the rate con <span className="normal-case text-[#0B1E3F]/40 tracking-normal">(optional — checks domain age, MX, SPF)</span></label>
-            <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') runLookup(); }} placeholder="dispatch@acmefreight.com or acmefreight.com" className="w-full px-5 py-4 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-lg focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+            <input ref={emailInputRef} value={emailInput} onChange={(e) => setEmailInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') runLookup(); }} placeholder="dispatch@acmefreight.com or acmefreight.com" className="w-full px-5 py-4 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-lg focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45">Common prefixes</span>
+              {['dispatch', 'safety', 'ops', 'compliance', 'accounting', 'billing', 'carriers', 'rates'].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => applyEmailPrefix(p)}
+                  className="px-2.5 py-1 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-xs mono text-[#0B1E3F]/75 hover:text-[#0B1E3F] transition"
+                >
+                  {p}@
+                </button>
+              ))}
+            </div>
           </div>
-          {error && <div className="mt-4 text-sm text-[#DC2626]">{error}</div>}
+          {error && (
+            <div className="mt-4 p-4 bg-[#DC2626]/5 border border-[#DC2626]/25 rounded-xl">
+              <div className="flex items-start gap-2 mb-2">
+                <AlertTriangle className="w-4 h-4 text-[#DC2626] flex-shrink-0 mt-0.5" />
+                <div className="text-sm font-semibold text-[#0B1E3F]">{error}</div>
+              </div>
+              {errorSuggestions && errorSuggestions.length > 0 && (
+                <ul className="mt-2 ml-6 space-y-1.5 text-sm text-[#0B1E3F]/75 list-disc">
+                  {errorSuggestions.map((s, i) => <li key={i} className="leading-relaxed">{s}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
           <div className="mt-8 pt-8 border-t border-[#0B1E3F]/10">
             <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-4">Try a sample</div>
             <div className="flex flex-wrap gap-2">
@@ -2912,6 +3878,7 @@ function VerifyTool({ navigate }: any) {
             </div>
           </div>
         </div>
+        )
       )}
       {tab === 'ratecon' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
@@ -3158,7 +4125,66 @@ function Report({ report, navigate }: any) {
   const [reportOpen, setReportOpen] = useState(false);
   const [rescanning, setRescanning] = useState(false);
   const [rescanError, setRescanError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState(false);
+  const sendEmailReport = async () => {
+    if (emailSending) return;
+    const recipients = emailTo.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (recipients.length === 0) { setEmailError('Enter at least one email address.'); return; }
+    setEmailSending(true); setEmailError(null);
+    try {
+      const res = await fetch('/api/report/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ report: r, to: recipients, message: emailMessage }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `Send failed (${res.status})`);
+      setEmailSent(true);
+      setTimeout(() => { setEmailOpen(false); setEmailSent(false); setEmailTo(''); setEmailMessage(''); }, 1500);
+    } catch (e: any) {
+      setEmailError(e?.message || 'Send failed');
+    } finally {
+      setEmailSending(false);
+    }
+  };
   const rescanQuery = r.mc || r.dot;
+  const onExportPdf = async () => {
+    if (exporting) return;
+    setExporting(true); setExportError(null);
+    try {
+      const res = await fetch('/api/report/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ report: r }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `Export failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const idPart = (r.mc || r.dot || (r.name || 'carrier')).toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 40);
+      a.download = `haulock-report-${idPart}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: any) {
+      setExportError(e?.message || 'PDF export failed');
+      setTimeout(() => setExportError(null), 4000);
+    } finally {
+      setExporting(false);
+    }
+  };
   const onRescan = async () => {
     if (!rescanQuery) return;
     setRescanning(true); setRescanError(null);
@@ -3194,7 +4220,8 @@ function Report({ report, navigate }: any) {
   const reportsRes = useCachedFetch<{ reports: any[] }>(reportsKey || '__none__', reportsUrl);
   const communityReports = reportsRes.data?.reports ?? [];
 
-  const onWatch = async () => {
+  const [watchOpen, setWatchOpen] = useState(false);
+  const confirmWatch = async () => {
     if (watching === 'saving' || !r?.name || (!r.mc && !r.dot)) return;
     setWatching('saving');
     try {
@@ -3205,6 +4232,7 @@ function Report({ report, navigate }: any) {
       });
       if (res.ok) invalidateCache('watchlist', 'usage');
       setWatching(res.ok ? 'saved' : 'error');
+      if (res.ok) setTimeout(() => setWatchOpen(false), 800);
     } catch {
       setWatching('error');
     }
@@ -3264,15 +4292,20 @@ function Report({ report, navigate }: any) {
               </div>
             )}
             {rescanError && <div className="mt-2 text-sm text-[#DC2626]">{rescanError}</div>}
+            {exportError && <div className="mt-2 text-sm text-[#DC2626]">{exportError}</div>}
           </div>
           <div className="flex gap-2">
-            <button className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2"><Share2 className="w-4 h-4" /> Share</button>
-            <button className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2"><Download className="w-4 h-4" /> Export PDF</button>
+            <button onClick={() => setEmailOpen(true)} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2" title="Email this report (PDF attached) via Resend">
+              <Mail className="w-4 h-4" /> Email
+            </button>
+            <button onClick={onExportPdf} disabled={exporting} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2 disabled:opacity-60" title="Download a branded PDF copy of this report">
+              {exporting ? <><div className="w-3.5 h-3.5 border-2 border-[#0B1E3F]/30 border-t-[#0B1E3F] rounded-full animate-spin" /> Generating…</> : <><Download className="w-4 h-4" /> Export PDF</>}
+            </button>
             <button onClick={onRescan} disabled={!rescanQuery || rescanning} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2 disabled:opacity-50" title="Runs a fresh FMCSA lookup — uses 1 credit">
               {rescanning ? <><div className="w-3.5 h-3.5 border-2 border-[#0B1E3F]/30 border-t-[#0B1E3F] rounded-full animate-spin" /> Scanning…</> : <><Search className="w-4 h-4" /> Scan again</>}
             </button>
             <button onClick={() => setReportOpen(true)} disabled={!r.mc && !r.dot} className="px-4 py-2 border border-[#DC2626]/30 bg-white rounded-full text-sm font-medium text-[#DC2626] hover:bg-[#DC2626]/5 transition flex items-center gap-2 disabled:opacity-50"><Flag className="w-4 h-4" /> Report fraud</button>
-            <button onClick={onWatch} disabled={watching === 'saving' || watching === 'saved' || (!r.mc && !r.dot)} className={`px-4 py-2 rounded-full text-sm font-medium transition flex items-center gap-2 disabled:opacity-60 ${watching === 'saved' ? 'bg-[#16A34A] text-white' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}><Eye className="w-4 h-4" /> {watching === 'saving' ? 'Saving…' : watching === 'saved' ? 'Watching' : watching === 'error' ? 'Error — retry' : 'Watch'}</button>
+            <button onClick={() => setWatchOpen(true)} disabled={watching === 'saved' || (!r.mc && !r.dot)} className={`px-4 py-2 rounded-full text-sm font-medium transition flex items-center gap-2 disabled:opacity-60 ${watching === 'saved' ? 'bg-[#16A34A] text-white' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}><Eye className="w-4 h-4" /> {watching === 'saved' ? 'Watching' : 'Watch'}</button>
           </div>
         </div>
       </div>
@@ -3401,7 +4434,7 @@ function Report({ report, navigate }: any) {
                 </div>
               )}
               {r.webPresence.snippet && (
-                <div className="mt-4 p-4 bg-[#0B1E3F]/[0.03] rounded-lg text-sm text-[#0B1E3F]/75 italic leading-relaxed">&ldquo;{r.webPresence.snippet}&rdquo;</div>
+                <div className="mt-4 p-4 bg-[#0B1E3F]/[0.03] rounded-lg text-sm text-[#0B1E3F]/75 italic leading-relaxed">&ldquo;{cleanSearchSnippet(r.webPresence.snippet)}&rdquo;</div>
               )}
             </>
           ) : (
@@ -3560,27 +4593,96 @@ function Report({ report, navigate }: any) {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Email domain check</h2>
+              {r.queriedEmail && (
+                <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mt-1">
+                  You searched with <span className="text-[#0B1E3F] normal-case">{r.queriedEmail}</span>
+                </div>
+              )}
               <div className="text-sm mono text-[#0B1E3F]/60 mt-1">{r.domain.domain}{r.domain.whois?.registrar ? ` · ${r.domain.whois.registrar}` : ''}</div>
             </div>
             <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${r.domain.verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : r.domain.verdict === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : r.domain.verdict === 'low' ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/10 text-[#0B1E3F]'}`}>
               {r.domain.verdict === 'high' ? 'HIGH RISK' : r.domain.verdict === 'medium' ? 'CAUTION' : r.domain.verdict === 'low' ? 'LOW RISK' : 'UNKNOWN'} · {r.domain.score}/100
             </div>
           </div>
-          <div className="grid md:grid-cols-3 gap-4 mb-6">
+          {(() => {
+            // Email-domain-matches-website check: when the user supplied
+            // an email and that email's domain is the same as the
+            // carrier's FMCSA-listed website, that's a *positive* signal
+            // worth surfacing loudly. Most spoofed rate-cons fail this.
+            const queriedDomain = (r.queriedEmail || '').toLowerCase().split('@').pop()?.replace(/^www\./, '') || '';
+            const carrierDomain = (r.webPresence?.domain || '').toLowerCase().replace(/^www\./, '');
+            const exactMatch = queriedDomain && carrierDomain && queriedDomain === carrierDomain;
+            if (exactMatch) {
+              return (
+                <div className="p-4 mb-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[#16A34A]/15 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Email matches the carrier&rsquo;s FMCSA-listed website</div>
+                    <div className="text-xs text-[#0B1E3F]/65 mt-0.5">
+                      <span className="mono">{r.queriedEmail}</span> uses <span className="mono">{queriedDomain}</span>, the same domain as the carrier&rsquo;s real website. Strong legitimacy signal — spoofed rate-cons usually use a near-but-different domain.
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
               <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Domain age</div>
               <div className="text-lg font-semibold text-[#0B1E3F]">{r.domain.whois?.ageDays != null ? (r.domain.whois.ageDays < 365 ? `${r.domain.whois.ageDays} days` : `${(r.domain.whois.ageDays / 365).toFixed(1)} years`) : '—'}</div>
               {r.domain.whois?.creationDate && <div className="text-xs text-[#0B1E3F]/50 mt-1">Registered {new Date(r.domain.whois.creationDate).toLocaleDateString()}</div>}
             </div>
             <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
-              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">MX records</div>
-              <div className={`text-lg font-semibold ${r.domain.mx?.hasMx ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{r.domain.mx?.hasMx ? 'Present' : 'None'}</div>
-              <div className="text-xs text-[#0B1E3F]/50 mt-1">{r.domain.mx?.hasMx ? `${r.domain.mx.records?.length || 0} mail server${(r.domain.mx.records?.length || 0) === 1 ? '' : 's'}` : 'Cannot receive email'}</div>
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Registrar</div>
+              <div className="text-sm font-semibold text-[#0B1E3F] truncate" title={r.domain.whois?.registrar || ''}>{r.domain.whois?.registrar || '—'}</div>
+              <div className="text-xs text-[#0B1E3F]/50 mt-1">Where the domain is registered</div>
+            </div>
+            <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Email provider</div>
+              <div className={`text-sm font-semibold truncate ${r.domain.mx?.hasMx ? 'text-[#0B1E3F]' : 'text-[#DC2626]'}`} title={r.domain.mx?.provider || (r.domain.mx?.records?.[0] ?? '')}>
+                {r.domain.mx?.hasMx
+                  ? (r.domain.mx.provider || 'Custom / unknown')
+                  : 'No email server'}
+              </div>
+              <div className="text-xs text-[#0B1E3F]/50 mt-1">
+                {r.domain.mx?.hasMx
+                  ? `${r.domain.mx.records?.length || 0} MX record${(r.domain.mx.records?.length || 0) === 1 ? '' : 's'}${r.domain.mx.provider ? '' : ' (no known provider match)'}`
+                  : 'Cannot receive email — strong fraud signal'}
+              </div>
             </div>
             <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
               <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">SPF record</div>
               <div className={`text-lg font-semibold ${r.domain.spf?.hasSpf ? 'text-[#16A34A]' : 'text-[#0B1E3F]/60'}`}>{r.domain.spf?.hasSpf ? 'Configured' : 'Not set'}</div>
-              <div className="text-xs text-[#0B1E3F]/50 mt-1">{r.domain.spf?.hasSpf ? 'Anti-spoofing in place' : 'No sender policy'}</div>
+              <div className="text-xs text-[#0B1E3F]/50 mt-1">{r.domain.spf?.hasSpf ? 'Anti-spoofing policy in place' : 'No sender policy'}</div>
+            </div>
+            <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">DMARC policy</div>
+              {r.domain.dmarc?.hasDmarc ? (
+                <>
+                  <div className={`text-lg font-semibold ${r.domain.dmarc.policy === 'reject' || r.domain.dmarc.policy === 'quarantine' ? 'text-[#16A34A]' : 'text-[#F59E0B]'}`}>
+                    p={r.domain.dmarc.policy || 'unknown'}
+                  </div>
+                  <div className="text-xs text-[#0B1E3F]/50 mt-1">
+                    {r.domain.dmarc.policy === 'reject' ? 'Strong — receivers reject spoofed mail'
+                      : r.domain.dmarc.policy === 'quarantine' ? 'Medium — receivers spam-bin spoofed mail'
+                      : r.domain.dmarc.policy === 'none' ? 'Weak — monitor-only, doesn\'t block spoofs'
+                      : 'Published, policy unknown'}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-lg font-semibold text-[#0B1E3F]/60">Not published</div>
+                  <div className="text-xs text-[#0B1E3F]/50 mt-1">Receivers can&rsquo;t verify spoofed mail from this domain</div>
+                </>
+              )}
+            </div>
+            <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Disposable provider</div>
+              <div className={`text-lg font-semibold ${r.domain.disposable ? 'text-[#DC2626]' : 'text-[#16A34A]'}`}>{r.domain.disposable ? 'Yes' : 'No'}</div>
+              <div className="text-xs text-[#0B1E3F]/50 mt-1">{r.domain.disposable ? 'Throwaway email — major fraud signal' : 'Not on the public throwaway list'}</div>
             </div>
           </div>
           {r.domain.disposable && (
@@ -3594,6 +4696,88 @@ function Report({ report, navigate }: any) {
           )}
         </div>
       )}
+      {((r.linkedEntities && r.linkedEntities.length > 0) || (r.chameleonLinks && r.chameleonLinks.length > 0)) && (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+            <div>
+              <h2 className="text-xl font-semibold text-[#0B1E3F]">Cross-references & shared identifiers</h2>
+              <div className="text-sm text-[#0B1E3F]/60 mt-1">Aliases, sister-entities, and shared phone/address links — auto-detected from FMCSA and trusted-source web coverage.</div>
+            </div>
+            <span className="px-3 py-1.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-xs mono uppercase tracking-wider font-semibold">
+              {(r.linkedEntities?.length || 0) + (r.chameleonLinks?.length || 0)} links
+            </span>
+          </div>
+
+          {r.chameleonLinks && r.chameleonLinks.length > 0 && (
+            <div className="mb-6">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Other FMCSA records sharing this phone or address</div>
+              <div className="space-y-2">
+                {r.chameleonLinks.map((link: any, i: number) => (
+                  <div key={i} className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/20 rounded-xl">
+                    <div className="w-8 h-8 rounded-lg bg-[#DC2626]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <AlertTriangle className="w-4 h-4 text-[#DC2626]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="px-2 py-0.5 bg-[#DC2626]/15 text-[#DC2626] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">{link.matchedOn} match</span>
+                        <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{link.source === 'fmcsa-flag' ? 'FMCSA enforcement' : link.source === 'our-lookup' ? 'Prior Haulock high-risk scan' : 'Community fraud report'}</span>
+                      </div>
+                      <div className="text-sm font-semibold text-[#0B1E3F]">{link.name}</div>
+                      <div className="text-[11px] mono text-[#0B1E3F]/55 mt-0.5">
+                        {[link.mc && `MC-${link.mc}`, link.dot && `DOT-${link.dot}`].filter(Boolean).join(' · ') || 'No ID'}
+                      </div>
+                      <div className="text-xs text-[#0B1E3F]/65 mt-1">{link.reason}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {r.linkedEntities && r.linkedEntities.length > 0 && (
+            <div>
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Aliases & sister-entities (from web coverage)</div>
+              <div className="grid sm:grid-cols-2 gap-2">
+                {r.linkedEntities.map((entity: any, i: number) => {
+                  const display = entity.kind === 'mc' ? `MC-${entity.value}` : entity.kind === 'dot' ? `DOT-${entity.value}` : entity.value;
+                  const Icon = entity.kind === 'company' ? Building2 : Shield;
+                  const onClick = () => {
+                    const q = entity.kind === 'mc' ? `MC-${entity.value}` : entity.kind === 'dot' ? `DOT-${entity.value}` : entity.value;
+                    fetch(`/api/verify?q=${encodeURIComponent(q)}`).then(async (resp) => {
+                      const data = await resp.json();
+                      if (resp.ok) navigate('report', data);
+                    }).catch(() => {});
+                  };
+                  return (
+                    <button key={i} onClick={onClick} className="flex items-start gap-3 p-3 bg-[#FF6B35]/5 border border-[#FF6B35]/20 rounded-xl hover:bg-[#FF6B35]/10 hover:border-[#FF6B35]/40 transition text-left">
+                      <div className="w-8 h-8 rounded-lg bg-[#FF6B35]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Icon className="w-4 h-4 text-[#FF6B35]" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="px-1.5 py-0.5 bg-[#FF6B35]/15 text-[#FF6B35] rounded text-[9px] mono uppercase tracking-wider font-semibold">{entity.kind}</span>
+                          <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{entity.citations}× cited · {entity.sources.length} source{entity.sources.length === 1 ? '' : 's'}</span>
+                        </div>
+                        <div className="text-sm font-semibold text-[#0B1E3F] truncate">{display}</div>
+                        <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5 truncate">{entity.sources.slice(0, 3).join(' · ')}</div>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-[#0B1E3F]/30 flex-shrink-0 mt-2" />
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-4 text-xs text-[#0B1E3F]/55 italic">
+                Click an alias to run a full Haulock scan on it. Coverage that mentions one entity in this network usually mentions all of them.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {r.sms?.fetched && <FmcsaSmsPanel sms={r.sms} dot={r.dot} />}
+      {r.legacyReference && (r.legacyReference.rating || (r.legacyReference.emailMatches?.length ?? 0) > 0) && (
+        <FmcsaArchivePanel data={r.legacyReference} navigate={navigate} />
+      )}
+      {(r.dot || r.mc) && <CarrierHistoryPanel dot={r.dot} mc={r.mc} />}
       <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-[#0B1E3F]">Red flags detected</h2>
@@ -3630,7 +4814,588 @@ function Report({ report, navigate }: any) {
       )}
     </div>
     {reportOpen && <ReportFraudModal broker={r} onClose={() => setReportOpen(false)} onSaved={() => { setReportOpen(false); if (reportsKey) invalidateCache(reportsKey); invalidateCache('fraud-reports:50'); reportsRes.refetch(); }} />}
+    {watchOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/40 backdrop-blur-sm" onClick={() => watching !== 'saving' && setWatchOpen(false)}>
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 max-w-md w-full p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-10 h-10 rounded-xl bg-[#0B1E3F]/5 flex items-center justify-center flex-shrink-0">
+              <Eye className="w-5 h-5 text-[#0B1E3F]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-base font-semibold text-[#0B1E3F]">Watch this {entityBadge(r).label.toLowerCase().includes('broker') ? 'broker' : 'carrier'}?</div>
+              <div className="text-xs text-[#0B1E3F]/60 mt-0.5">We&rsquo;ll alert you if anything changes — authority status, insurance, OOS, or new fraud reports.</div>
+            </div>
+            <button onClick={() => watching !== 'saving' && setWatchOpen(false)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F] -mt-1 -mr-1 p-1" aria-label="Close">
+              <XCircle className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-[#F5F3EE] border border-[#0B1E3F]/10 p-4 mb-4">
+            <div className="text-sm font-semibold text-[#0B1E3F]">{r.name}</div>
+            <div className="text-xs mono text-[#0B1E3F]/55 mt-0.5">{[r.mc && `MC-${r.mc}`, r.dot && `DOT-${r.dot}`].filter(Boolean).join(' · ') || 'No ID'}</div>
+            {r.address && <div className="text-xs text-[#0B1E3F]/55 mt-1">{r.address}</div>}
+          </div>
+
+          <div className="text-xs text-[#0B1E3F]/65 leading-relaxed mb-5">
+            This entry will appear on your <button onClick={() => { setWatchOpen(false); navigate('watchlist'); }} className="font-semibold text-[#0B1E3F] underline hover:no-underline">Watchlist page</button>. You can remove it any time.
+          </div>
+
+          {watching === 'error' && <div className="mb-3 text-sm text-[#DC2626]">Couldn&rsquo;t save — try again.</div>}
+
+          <div className="flex gap-2">
+            <button onClick={() => watching !== 'saving' && setWatchOpen(false)} disabled={watching === 'saving'} className="flex-1 px-4 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition disabled:opacity-50">Cancel</button>
+            <button onClick={confirmWatch} disabled={watching === 'saving' || watching === 'saved'} className={`flex-1 px-4 py-2.5 rounded-full text-sm font-medium transition flex items-center justify-center gap-2 disabled:opacity-60 ${watching === 'saved' ? 'bg-[#16A34A] text-white' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}>
+              {watching === 'saving' ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving…</>
+                : watching === 'saved' ? <><CheckCircle2 className="w-4 h-4" /> Added to watchlist</>
+                : <><Eye className="w-4 h-4" /> Confirm watch</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    {emailOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/40 backdrop-blur-sm" onClick={() => !emailSending && setEmailOpen(false)}>
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 max-w-md w-full p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-start gap-3 mb-5">
+            <div className="w-10 h-10 rounded-xl bg-[#0B1E3F]/5 flex items-center justify-center flex-shrink-0">
+              <Mail className="w-5 h-5 text-[#0B1E3F]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-base font-semibold text-[#0B1E3F]">Email this report</div>
+              <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Branded PDF attached · sent from haulock.com</div>
+            </div>
+            <button onClick={() => !emailSending && setEmailOpen(false)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F] -mt-1 -mr-1 p-1" aria-label="Close">
+              <XCircle className="w-5 h-5" />
+            </button>
+          </div>
+
+          <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Send to</label>
+          <input
+            value={emailTo}
+            onChange={(e) => setEmailTo(e.target.value)}
+            placeholder="dispatch@yourcompany.com, ops@partner.com"
+            disabled={emailSending}
+            autoFocus
+            className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
+          />
+          <div className="text-[11px] text-[#0B1E3F]/50 mt-1">Multiple recipients OK — comma or space separated. Up to 10.</div>
+
+          <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2 mt-4">Note <span className="normal-case text-[#0B1E3F]/40 tracking-normal">(optional)</span></label>
+          <textarea
+            value={emailMessage}
+            onChange={(e) => setEmailMessage(e.target.value.slice(0, 1000))}
+            placeholder="Quick note to the recipient — context, what to look at, etc."
+            disabled={emailSending}
+            rows={3}
+            className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none"
+          />
+
+          {emailError && <div className="mt-3 text-sm text-[#DC2626]">{emailError}</div>}
+          {emailSent && <div className="mt-3 text-sm text-[#16A34A] flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Sent. Closing…</div>}
+
+          <div className="flex gap-2 mt-5">
+            <button onClick={() => !emailSending && setEmailOpen(false)} disabled={emailSending} className="flex-1 px-4 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition disabled:opacity-50">Cancel</button>
+            <button onClick={sendEmailReport} disabled={emailSending || emailSent || !emailTo.trim()} className="flex-1 px-4 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition flex items-center justify-center gap-2 disabled:opacity-60">
+              {emailSending ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Sending…</>
+                : emailSent ? <><CheckCircle2 className="w-4 h-4" /> Sent</>
+                : <><Mail className="w-4 h-4" /> Send report</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
+  );
+}
+
+// FMCSA Safety Measurement System (SMS) panel — renders the BASIC scores,
+// inspection breakdown, and crash detail we pulled from FMCSA SMS. The
+// data is FMCSA's own; we cite the source clearly and link the canonical
+// SMS Overview page so the user can verify directly.
+function FmcsaSmsPanel({ sms, dot }: { sms: any; dot?: string }) {
+  const BASIC_LABELS: Record<string, string> = {
+    unsafeDriving: 'Unsafe Driving',
+    hoursOfService: 'Hours-of-Service Compliance',
+    driverFitness: 'Driver Fitness',
+    controlledSubstances: 'Controlled Substances / Alcohol',
+    vehicleMaintenance: 'Vehicle Maintenance',
+    hazmat: 'Hazardous Materials Compliance',
+    crashIndicator: 'Crash Indicator',
+  };
+  const BASIC_DESC: Record<string, string> = {
+    unsafeDriving: 'Speeding, reckless driving, lane changes — driver behavior on the road.',
+    hoursOfService: 'Logbook violations · driving past allowed hours · falsifying logs.',
+    driverFitness: 'Medical certification · CDL validity · driver-qualification files.',
+    controlledSubstances: 'Drug & alcohol testing program compliance.',
+    vehicleMaintenance: 'Brake, tire, lighting, and roadside-repair violations.',
+    hazmat: 'Hazardous-materials handling, paperwork, and equipment.',
+    crashIndicator: 'Crash history pattern relative to the carrier\'s exposure (miles + fleet).',
+  };
+  const order: Array<keyof typeof BASIC_LABELS> = [
+    'unsafeDriving', 'hoursOfService', 'driverFitness', 'controlledSubstances', 'vehicleMaintenance', 'hazmat', 'crashIndicator',
+  ];
+  const basics = (sms?.basics || {}) as Record<string, { measure: number; inspections: number; alert: boolean } | undefined>;
+  const inspections = sms?.inspections || null;
+  const crashes = sms?.crashes || null;
+  const overview = sms?.carrier || {};
+  const smsUrl = dot ? `https://ai.fmcsa.dot.gov/SMS/Carrier/${dot}/Overview.aspx` : null;
+  const alertedCount = order.filter((k) => basics[k]?.alert).length;
+  const basicsWithData = order.filter((k) => basics[k] != null).length;
+  // OOS rate computed from raw counts when the parser didn't capture a
+  // percentage — we always know what to display as long as we know the
+  // counts.
+  const vehOosPct = inspections
+    ? (inspections.vehicleOosPct != null
+        ? inspections.vehicleOosPct
+        : (inspections.vehicleInspections > 0 ? Math.round((inspections.vehicleOosCount / inspections.vehicleInspections) * 1000) / 10 : null))
+    : null;
+  const drvOosPct = inspections
+    ? (inspections.driverOosPct != null
+        ? inspections.driverOosPct
+        : (inspections.driverInspections > 0 ? Math.round((inspections.driverOosCount / inspections.driverInspections) * 1000) / 10 : null))
+    : null;
+  // Plain-English crash readout. 24 months of zero is rare in any sized
+  // fleet; double-digit crashes warrants reading the full SMS page.
+  const crashLine = crashes
+    ? (crashes.total === 0
+        ? 'Zero reported crashes in the last 24 months — exceptional.'
+        : crashes.fatal > 0
+          ? `${crashes.fatal} fatal crash${crashes.fatal === 1 ? '' : 'es'} on file. Read the full SMS Crashes report before booking.`
+          : crashes.total >= 10
+            ? `${crashes.total} crashes in 24 months — above-average for most fleet sizes. Worth investigating severity and frequency.`
+            : `${crashes.total} crash${crashes.total === 1 ? '' : 'es'} in 24 months — within typical range; check trend.`)
+    : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 font-semibold">FMCSA Safety Measurement System</span>
+            <span className="px-2 py-0.5 bg-[#0B1E3F]/5 text-[#0B1E3F]/65 rounded-full text-[10px] mono uppercase tracking-wider font-semibold">SMS · last 24 months</span>
+          </div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">BASIC scores, inspections & crashes</h2>
+          <div className="text-sm text-[#0B1E3F]/60 mt-1">
+            Direct from FMCSA SMS — the federal safety scoring system. {smsUrl && <>See the canonical page at <a href={smsUrl} target="_blank" rel="noreferrer" className="underline hover:text-[#0B1E3F]">ai.fmcsa.dot.gov</a>.</>}
+          </div>
+        </div>
+        {alertedCount > 0 ? (
+          <span className="px-3 py-1.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full text-xs mono uppercase tracking-wider font-semibold">
+            {alertedCount} BASIC alert{alertedCount === 1 ? '' : 's'} active
+          </span>
+        ) : (
+          <span className="px-3 py-1.5 bg-[#16A34A]/10 text-[#16A34A] rounded-full text-xs mono uppercase tracking-wider font-semibold">
+            No active alerts
+          </span>
+        )}
+      </div>
+
+      {/* Carrier overview block — fleet, classification, MCS-150 mileage */}
+      {(overview.totalTrucks != null || overview.totalDrivers != null || overview.cargoHauled || overview.carrierOperation || overview.mcs150Mileage != null) && (
+        <>
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Carrier overview (FMCSA)</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
+            {overview.totalTrucks != null && <SmsStatCard label="Total trucks" value={String(overview.totalTrucks)} />}
+            {overview.totalDrivers != null && <SmsStatCard label="Total drivers" value={String(overview.totalDrivers)} />}
+            {overview.carrierOperation && <SmsStatCard label="Operation" value={overview.carrierOperation} />}
+            {overview.cargoHauled && <SmsStatCard label="Cargo hauled" value={overview.cargoHauled} />}
+            {overview.mcs150Mileage != null && (
+              <SmsStatCard
+                label="MCS-150 mileage"
+                value={overview.mcs150Mileage.toLocaleString()}
+                footnote={overview.mcs150MileageYear ? `${overview.mcs150MileageYear} reporting year` : undefined}
+              />
+            )}
+            {overview.hazmatCarrier != null && (
+              <SmsStatCard
+                label="Hazmat carrier"
+                value={overview.hazmatCarrier ? 'Yes' : 'No'}
+                alert={overview.hazmatCarrier}
+              />
+            )}
+          </div>
+        </>
+      )}
+
+      {/* BASIC scores grid */}
+      <div className="flex items-end justify-between gap-3 mb-2 flex-wrap">
+        <div>
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">BASIC measures</div>
+          <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">
+            FMCSA percentile-ranks each carrier in 7 safety categories. <strong>Lower is better.</strong> Alert fires above the federal intervention threshold.
+          </div>
+        </div>
+        {basicsWithData === 0 && (
+          <span className="text-[11px] mono text-[#0B1E3F]/55 italic">Carrier below FMCSA's data-sufficiency threshold for public BASIC display</span>
+        )}
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-6">
+        {order.map((k) => {
+          const b = basics[k];
+          if (!b) {
+            return (
+              <div key={k} className="p-3 bg-[#F5F3EE]/40 border border-[#0B1E3F]/8 rounded-xl">
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mb-1">{BASIC_LABELS[k]}</div>
+                <div className="text-sm font-medium text-[#0B1E3F]/45 mb-0.5">No data</div>
+                <div className="text-[10px] text-[#0B1E3F]/40 leading-snug">{BASIC_DESC[k]}</div>
+              </div>
+            );
+          }
+          const cardCls = b.alert
+            ? 'bg-[#DC2626]/5 border-[#DC2626]/30'
+            : 'bg-[#F5F3EE]/60 border-[#0B1E3F]/8';
+          const measureCls = b.alert ? 'text-[#DC2626]' : 'text-[#0B1E3F]';
+          return (
+            <div key={k} className={`p-3 border rounded-xl ${cardCls}`}>
+              <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{BASIC_LABELS[k]}</div>
+                {b.alert && <span className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[9px] mono uppercase tracking-wider font-semibold">Alert</span>}
+              </div>
+              <div className={`text-2xl font-semibold ${measureCls}`}>{b.measure.toFixed(2)}</div>
+              <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">{b.inspections} inspection{b.inspections === 1 ? '' : 's'} fed this score</div>
+              <div className="text-[10px] text-[#0B1E3F]/55 leading-snug mt-1.5">{BASIC_DESC[k]}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Inspections summary — now always shows OOS percentages computed
+          from raw counts when the parser didn't capture them, plus a
+          one-line interpretation. */}
+      {inspections && (
+        <>
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Inspections (last 24 months)</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+            <SmsStatCard label="Vehicle inspections" value={String(inspections.vehicleInspections)} />
+            <SmsStatCard
+              label="Vehicle OOS"
+              value={`${inspections.vehicleOosCount}${vehOosPct != null ? ` · ${vehOosPct.toFixed(1)}%` : ''}`}
+              alert={vehOosPct != null && inspections.vehicleNationalAvgPct != null && vehOosPct > inspections.vehicleNationalAvgPct}
+              footnote={inspections.vehicleNationalAvgPct != null ? `nat avg ${inspections.vehicleNationalAvgPct.toFixed(1)}%` : undefined}
+            />
+            <SmsStatCard label="Driver inspections" value={String(inspections.driverInspections)} />
+            <SmsStatCard
+              label="Driver OOS"
+              value={`${inspections.driverOosCount}${drvOosPct != null ? ` · ${drvOosPct.toFixed(1)}%` : ''}`}
+              alert={drvOosPct != null && inspections.driverNationalAvgPct != null && drvOosPct > inspections.driverNationalAvgPct}
+              footnote={inspections.driverNationalAvgPct != null ? `nat avg ${inspections.driverNationalAvgPct.toFixed(1)}%` : undefined}
+            />
+          </div>
+          <div className="text-[11px] text-[#0B1E3F]/55 mb-6 leading-relaxed">
+            {inspections.vehicleInspections + inspections.driverInspections === 0
+              ? 'No roadside inspections on file in the last 24 months.'
+              : (vehOosPct === 0 && drvOosPct === 0)
+                ? `${inspections.vehicleInspections + inspections.driverInspections} total inspections, zero out-of-service findings — strong safety performance.`
+                : `${inspections.vehicleInspections + inspections.driverInspections} total inspections in 24 months. ${(vehOosPct ?? 0) >= 20 || (drvOosPct ?? 0) >= 5 ? 'OOS rates above national average — investigate before booking.' : 'OOS rates within typical range.'}`}
+          </div>
+        </>
+      )}
+
+      {/* Crashes summary — color-coded with severity, plus interpretation */}
+      {crashes && (
+        <>
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Crashes (last 24 months)</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+            <SmsStatCard label="Total" value={String(crashes.total)} alert={crashes.total >= 10} />
+            <SmsStatCard label="Fatal" value={String(crashes.fatal)} alert={crashes.fatal > 0} />
+            <SmsStatCard label="Injury" value={String(crashes.injury)} />
+            <SmsStatCard label="Tow-away" value={String(crashes.towaway)} />
+          </div>
+          {crashLine && (
+            <div className={`text-[11px] mb-6 leading-relaxed ${crashes.fatal > 0 || crashes.total >= 10 ? 'text-[#DC2626]' : 'text-[#0B1E3F]/65'}`}>
+              {crashLine}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Provenance footer */}
+      <div className="mt-2 pt-4 border-t border-[#0B1E3F]/8 text-[11px] text-[#0B1E3F]/55 leading-relaxed">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="px-1.5 py-0.5 rounded bg-[#0B1E3F]/5 mono uppercase tracking-wider text-[10px]">Provenance</span>
+          <span>Pulled directly from FMCSA SMS · cached 7 days · refreshed weekly to match SMS update cadence.</span>
+        </div>
+        {sms?.lastUpdate && <div className="mt-1.5">FMCSA last updated this carrier&rsquo;s SMS record: <strong className="text-[#0B1E3F]">{sms.lastUpdate}</strong></div>}
+        {sms?.lastSafetyMeasurementDate && <div className="mt-1">Last safety measurement period: <strong className="text-[#0B1E3F]">{sms.lastSafetyMeasurementDate}</strong></div>}
+      </div>
+    </div>
+  );
+}
+
+function SmsStatCard({ label, value, alert, footnote }: { label: string; value: string; alert?: boolean; footnote?: string }) {
+  const cls = alert
+    ? 'bg-[#DC2626]/5 border-[#DC2626]/30'
+    : 'bg-[#F5F3EE]/60 border-[#0B1E3F]/8';
+  const valueCls = alert ? 'text-[#DC2626]' : 'text-[#0B1E3F]';
+  return (
+    <div className={`p-3 border rounded-xl ${cls}`}>
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">{label}</div>
+      <div className={`text-base font-semibold ${valueCls}`}>{value}</div>
+      {footnote && <div className="text-[10px] mono text-[#0B1E3F]/45 mt-0.5">{footnote}</div>}
+    </div>
+  );
+}
+
+// FMCSA archive snapshot panel — renders neutral reference data drawn
+// from a historical FMCSA snapshot we have on file (~5 years old). Two
+// pieces: the recorded risk rating from that period, and other FMCSA
+// records that shared this carrier's email at that time.
+//
+// LEGAL POSTURE: every piece of copy in this panel is framed as
+// "FMCSA archive ~5 years ago" — never as Haulock's verdict. We
+// explicitly note that sharing identifiers can be legitimate.
+function FmcsaArchivePanel({ data, navigate }: { data: NonNullable<any>; navigate: any }) {
+  const ratingTone = (() => {
+    const r = (data.rating?.riskOverall || '').toLowerCase();
+    if (r.includes('unaccept')) return { fg: '#DC2626', bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30' };
+    if (r.includes('moderate')) return { fg: '#F59E0B', bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30' };
+    if (r.includes('accept'))   return { fg: '#16A34A', bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30' };
+    return { fg: '#0B1E3F', bg: 'bg-[#0B1E3F]/5', border: 'border-[#0B1E3F]/15' };
+  })();
+  const emailMatches: any[] = data.emailMatches || [];
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 font-semibold">FMCSA archive</span>
+            <span className="px-2 py-0.5 bg-[#0B1E3F]/5 text-[#0B1E3F]/65 rounded-full text-[10px] mono uppercase tracking-wider font-semibold">snapshot · ~5 years ago</span>
+          </div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">Historical reference data</h2>
+          <div className="text-sm text-[#0B1E3F]/60 mt-1">
+            What FMCSA had on file for this carrier in our archive snapshot from a few years back. Useful for spotting changes; <span className="font-medium">not Haulock's current assessment</span>.
+          </div>
+        </div>
+      </div>
+
+      {data.rating && data.rating.riskOverall && (
+        <div className={`p-4 rounded-xl border ${ratingTone.bg} ${ratingTone.border} mb-4`}>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/60">Archived risk rating</div>
+              <div className="mt-1 text-2xl font-semibold" style={{ color: ratingTone.fg }}>
+                {data.rating.riskOverall}
+              </div>
+              {typeof data.rating.trucksTotal === 'number' && (
+                <div className="text-xs text-[#0B1E3F]/65 mt-1">
+                  Fleet size at the time: {data.rating.trucksTotal} truck{data.rating.trucksTotal === 1 ? '' : 's'}
+                </div>
+              )}
+            </div>
+            <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">~ 5 years ago</div>
+          </div>
+          <div className="text-[11px] text-[#0B1E3F]/55 mt-3 leading-relaxed">
+            Pulled from our FMCSA archive snapshot. Operators and ownership change — compare against the current FMCSA data above before drawing conclusions.
+          </div>
+        </div>
+      )}
+
+      {emailMatches.length > 0 && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 font-semibold">Other FMCSA records using the same email</div>
+            <span className="px-2 py-0.5 bg-[#F59E0B]/10 text-[#F59E0B] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
+              {emailMatches.length} {emailMatches.length === 1 ? 'match' : 'matches'}
+            </span>
+          </div>
+
+          <div className="text-[11px] text-[#0B1E3F]/65 mb-3 italic leading-relaxed">
+            In the FMCSA archive snapshot, this email address was also tied to {emailMatches.length} other registered carrier{emailMatches.length === 1 ? '' : 's'}. <span className="font-medium not-italic">This can be legitimate</span> (multi-MC operators, shared dispatch services, accountants registering for clients) — but it's worth a closer look if you see other red flags.
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-2">
+            {emailMatches.slice(0, 8).map((m, i) => {
+              const idLine = [m.otherCarrier?.mc && `MC-${m.otherCarrier.mc}`, m.otherCarrier?.dot && `DOT-${m.otherCarrier.dot}`].filter(Boolean).join(' · ');
+              const onClick = async () => {
+                const q = m.otherCarrier?.mc ? `MC-${m.otherCarrier.mc}` : m.otherCarrier?.dot ? `DOT-${m.otherCarrier.dot}` : '';
+                if (!q) return;
+                try {
+                  const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
+                  const j = await res.json();
+                  if (res.ok) navigate('report', j);
+                } catch { /* ignore */ }
+              };
+              return (
+                <button
+                  key={i}
+                  onClick={onClick}
+                  disabled={!m.otherCarrier?.mc && !m.otherCarrier?.dot}
+                  className="text-left p-3 bg-[#F5F3EE]/60 hover:bg-[#F59E0B]/5 border border-[#0B1E3F]/8 hover:border-[#F59E0B]/30 rounded-xl transition disabled:cursor-default flex items-start gap-3"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-[#F59E0B]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Mail className="w-4 h-4 text-[#F59E0B]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F] truncate">{m.otherCarrier?.name || 'Unknown carrier'}</div>
+                    <div className="text-[10px] mono text-[#0B1E3F]/55 mt-0.5 truncate">{idLine || 'no id on record'}</div>
+                  </div>
+                  {(m.otherCarrier?.mc || m.otherCarrier?.dot) && <ArrowRight className="w-4 h-4 text-[#0B1E3F]/30 flex-shrink-0 mt-2" />}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 p-3 bg-[#0B1E3F]/[0.03] rounded-lg text-[11px] text-[#0B1E3F]/65 leading-relaxed">
+            <strong className="text-[#0B1E3F]">How to use this:</strong> if any of these other carriers are inactive, OOS, or have fraud reports, treat the shared email as a yellow flag — not proof. If they all look clean, this is probably one operator running multiple legitimate MCs.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Identity history panel — renders the dated change timeline for a carrier
+// from our `carrier_snapshots` table. Each entry shows what changed
+// (address, phone, authority, etc.) on that date so brokers can see at a
+// glance how stable the carrier's identity has been over time.
+//
+// FIELD-NAME LABELS: keep these readable. The DB stores raw keys like
+// `bipdOnFile`; we want to show the user "Liability insurance on file".
+const HISTORY_FIELD_LABELS: Record<string, string> = {
+  initial: 'First scan recorded',
+  name: 'Legal name',
+  dba: 'DBA',
+  address: 'Physical address',
+  phone: 'Phone',
+  emailDomain: 'Email domain',
+  authorityStatus: 'Operating authority',
+  commonAuthority: 'Common authority',
+  brokerAuthority: 'Broker authority',
+  contractAuthority: 'Contract authority',
+  authorityGrantDate: 'Authority granted',
+  safetyRating: 'Safety rating',
+  outOfService: 'Out-of-service',
+  bipdOnFile: 'Liability insurance',
+  bondOnFile: 'Surety bond',
+  cargoOnFile: 'Cargo insurance',
+  cargoRequired: 'Cargo required',
+  mcs150Date: 'MCS-150 date',
+  mcs150Outdated: 'MCS-150 outdated',
+  powerUnits: 'Power units',
+  drivers: 'Drivers',
+  crashTotal: 'Total crashes',
+  fatalCrash: 'Fatal crashes',
+};
+
+function fieldLabel(key: string): string {
+  return HISTORY_FIELD_LABELS[key] || key;
+}
+
+function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
+  const idQs = dot ? `dot=${encodeURIComponent(dot)}` : `mc=${encodeURIComponent(mc!)}`;
+  const cacheKey = `carrier-history:${idQs}`;
+  const res = useCachedFetch<{ history: any[]; count: number }>(cacheKey, `/api/carrier-history?${idQs}&limit=25`);
+  const history = res.data?.history;
+  if (!history || history.length === 0) return null; // hide panel until we have data
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+        <div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">Identity history</h2>
+          <div className="text-sm text-[#0B1E3F]/60 mt-1">Address, authority, insurance, and fleet-size changes Haulock has observed for this carrier over time.</div>
+        </div>
+        <span className="px-3 py-1.5 bg-[#0B1E3F]/5 rounded-full text-xs mono uppercase tracking-wider font-semibold text-[#0B1E3F]/70">
+          {history.length} change{history.length === 1 ? '' : 's'} on file
+        </span>
+      </div>
+      <ol className="relative border-l-2 border-[#0B1E3F]/10 pl-6 space-y-5">
+        {history.map((row: any, i: number) => {
+          const fields: string[] = Array.isArray(row.changed_fields) ? row.changed_fields : [];
+          const isInitial = fields.includes('initial');
+          const isLatest = i === 0;
+          // Relative time labels — never show exact date for legacy /
+          // archive snapshots. Soft framing avoids implying we have a
+          // precise audit trail when the entry came from a single
+          // imported snapshot.
+          const ageMs = Date.now() - new Date(row.captured_at).getTime();
+          const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+          const ageYears = ageDays / 365;
+          const dateLabel =
+            row.source === 'partner-2021' || ageYears >= 4 ? 'FMCSA archive · ~5 years ago'
+            : ageDays < 1 ? 'Today'
+            : ageDays < 7 ? `${ageDays} day${ageDays === 1 ? '' : 's'} ago`
+            : ageDays < 60 ? `${Math.round(ageDays / 7)} weeks ago`
+            : ageDays < 365 ? `${Math.round(ageDays / 30)} months ago`
+            : `${ageYears.toFixed(1)} years ago`;
+          return (
+            <li key={row.id} className="relative">
+              <span className={`absolute -left-[31px] top-1.5 w-3.5 h-3.5 rounded-full border-2 border-white ${isLatest ? 'bg-[#16A34A]' : isInitial ? 'bg-[#0B1E3F]/40' : 'bg-[#FF6B35]'}`} />
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">{dateLabel}</span>
+                {isLatest && <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#16A34A]/10 text-[#16A34A] font-semibold">Latest</span>}
+                {isInitial && <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#0B1E3F]/5 text-[#0B1E3F]/55 font-semibold">First record</span>}
+                {!isInitial && (
+                  <span className="text-[10px] text-[#0B1E3F]/45">{fields.length} field{fields.length === 1 ? '' : 's'} changed</span>
+                )}
+              </div>
+              {(() => {
+                // Format any value for display — handles null, booleans,
+                // and primitives. Returns '—' for empty/missing.
+                const fmt = (v: any): string => {
+                  if (v == null || v === '') return '—';
+                  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+                  return String(v);
+                };
+                if (isInitial) {
+                  // Initial / archive entry — show ALL fields we captured
+                  // as a baseline snapshot so the user can SEE the old
+                  // address, phone, fleet size, etc. (not just "first
+                  // record"). This is the entire point of having
+                  // historical data.
+                  const baseline = Object.entries(row.data || {})
+                    .filter(([k, v]) => v != null && v !== '' && k !== 'fingerprint');
+                  if (baseline.length === 0) {
+                    return <div className="text-sm text-[#0B1E3F]/65">First snapshot recorded — Haulock will track changes from here forward.</div>;
+                  }
+                  return (
+                    <>
+                      <div className="text-[11px] text-[#0B1E3F]/55 mb-2 italic">What FMCSA had on file at the time of this snapshot:</div>
+                      <div className="grid sm:grid-cols-2 gap-x-4 gap-y-2">
+                        {baseline.map(([k, v]) => (
+                          <div key={k} className="p-2.5 bg-[#0B1E3F]/[0.04] rounded-lg">
+                            <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-0.5">{fieldLabel(k)}</div>
+                            <div className="text-sm font-semibold text-[#0B1E3F] truncate">{fmt(v)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                }
+                // Change entry — show before → after for each changed
+                // field. The "before" is the previous (older) row's value.
+                const prevRow = history[i + 1];
+                const prevData: any = prevRow?.data || {};
+                return (
+                  <div className="grid sm:grid-cols-2 gap-x-4 gap-y-2">
+                    {fields.map((f) => {
+                      const before = prevData[f];
+                      const after = row.data?.[f];
+                      const beforeS = fmt(before);
+                      const afterS  = fmt(after);
+                      const changed = beforeS !== afterS;
+                      return (
+                        <div key={f} className="p-2.5 bg-[#F5F3EE]/60 rounded-lg">
+                          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">{fieldLabel(f)}</div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className={`font-medium truncate ${changed ? 'text-[#0B1E3F]/55 line-through' : 'text-[#0B1E3F]'}`} title={beforeS}>{beforeS}</span>
+                            {changed && <ArrowRight className="w-3 h-3 text-[#FF6B35] flex-shrink-0" />}
+                            {changed && <span className="font-semibold text-[#0B1E3F] truncate" title={afterS}>{afterS}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </li>
+          );
+        })}
+      </ol>
+      <div className="mt-5 text-[11px] text-[#0B1E3F]/50 italic">
+        History compounds with every search. The longer Haulock runs, the deeper this timeline goes — for free.
+      </div>
+    </div>
   );
 }
 
@@ -3668,6 +5433,14 @@ function ReportFraudModal({ broker, onClose, onSaved }: any) {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!description.trim()) {
+      setError('Please describe what happened — this helps other carriers spot the same scam.');
+      return;
+    }
+    if (description.trim().length < 20) {
+      setError('A bit more detail helps — at least 20 characters.');
+      return;
+    }
     setError(null); setSaving(true);
     try {
       const res = await fetch('/api/fraud-reports', {
@@ -3679,7 +5452,7 @@ function ReportFraudModal({ broker, onClose, onSaved }: any) {
           dot: broker.dot || null,
           type,
           amount: amount.trim() || null,
-          description: description.trim() || null,
+          description: description.trim(),
         }),
       });
       const data = await res.json();
@@ -3719,13 +5492,18 @@ function ReportFraudModal({ broker, onClose, onSaved }: any) {
             <input type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 4200" className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
           </div>
           <div>
-            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">What happened? (optional)</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} maxLength={2000} placeholder="Brief description of what happened. Other carriers will see this." className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
+            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">What happened? <span className="normal-case tracking-normal text-[#DC2626]">required</span></label>
+            <textarea required value={description} onChange={(e) => setDescription(e.target.value)} rows={5} minLength={20} maxLength={2000} placeholder="Describe the fraud in your own words — what was promised, what went wrong, any red flags you noticed. Other carriers will see this." className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
+            <div className="text-[11px] mono text-[#0B1E3F]/50 mt-1 text-right">{description.length} / 2000</div>
+          </div>
+          <div className="flex items-start gap-2 p-3 bg-[#DC2626]/5 border border-[#DC2626]/20 rounded-lg text-xs text-[#0B1E3F]/75">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-[#DC2626] flex-shrink-0" />
+            <div>This is a public report visible to other Haulock users. Submit only if you have first-hand experience — false reports can be removed and may affect your account.</div>
           </div>
           {error && <div className="text-sm text-[#DC2626]">{error}</div>}
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={onClose} className="flex-1 py-3 border border-[#0B1E3F]/15 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Cancel</button>
-            <button type="submit" disabled={saving} className="flex-1 py-3 bg-[#DC2626] text-white rounded-full font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-60">{saving ? 'Submitting…' : 'Submit report'}</button>
+            <button type="submit" disabled={saving} className="flex-1 py-3 bg-[#DC2626] text-white rounded-full font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-60">{saving ? 'Submitting…' : 'Submit fraud report'}</button>
           </div>
         </form>
       </div>
@@ -3839,6 +5617,43 @@ function RiskGauge({ score, size = 'lg' }: any) {
 function FraudReports({ navigate }: any) {
   const res = useCachedFetch<{ reports: any[] }>('fraud-reports:50', '/api/fraud-reports?limit=50');
   const reports = res.data?.reports ?? null;
+  const enforcementRes = useCachedFetch<{ actions: any[]; count: number }>('enforcement-actions:flagged', '/api/enforcement-actions?limit=300');
+  const enforcement = enforcementRes.data?.actions ?? null;
+  const [enforcementSearch, setEnforcementSearch] = useState('');
+  const [enforcementFlagFilter, setEnforcementFlagFilter] = useState<'all' | 'revocation' | 'no_insurance' | 'no_bond'>('all');
+
+  const flagMatchesFilter = (flags: string[], filter: typeof enforcementFlagFilter): boolean => {
+    if (filter === 'all') return true;
+    const blob = flags.join(' ').toLowerCase();
+    if (filter === 'revocation') return blob.includes('revocation');
+    if (filter === 'no_insurance') return blob.includes('liability insurance');
+    if (filter === 'no_bond') return blob.includes('surety bond');
+    return true;
+  };
+
+  const enforcementFiltered = (() => {
+    if (!enforcement) return null;
+    const q = enforcementSearch.trim().toLowerCase();
+    return enforcement.filter((a: any) => {
+      if (!flagMatchesFilter(a.flags || [], enforcementFlagFilter)) return false;
+      if (!q) return true;
+      const haystack = [a.name, a.dba, a.mc, a.dot, a.city, a.state, (a.flags || []).join(' ')]
+        .filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  })();
+
+  const enforcementCounts = (() => {
+    const all = enforcement || [];
+    const c = (filter: typeof enforcementFlagFilter) =>
+      all.filter((a: any) => flagMatchesFilter(a.flags || [], filter)).length;
+    return {
+      all: all.length,
+      revocation: c('revocation'),
+      no_insurance: c('no_insurance'),
+      no_bond: c('no_bond'),
+    };
+  })();
   const [filter, setFilter] = useState<'all' | 'non_payment' | 'double_broker' | 'identity_fraud' | 'fake_load' | 'other'>('all');
   const TYPE_LABEL: Record<string, string> = { non_payment: 'Non-payment', double_broker: 'Double brokering', identity_fraud: 'Identity fraud', fake_load: 'Fake load', other: 'Other' };
 
@@ -3855,6 +5670,18 @@ function FraudReports({ navigate }: any) {
       navigate('report', data);
     } catch { navigate('verify'); }
   };
+
+  const onOpenEnforcement = async (a: any) => {
+    const q = a.mc || a.dot;
+    if (!q) return;
+    try {
+      const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Lookup failed`);
+      navigate('report', data);
+    } catch { navigate('verify'); }
+  };
+
 
   const counts = {
     all: all.length,
@@ -3874,6 +5701,114 @@ function FraudReports({ navigate }: any) {
           <p className="text-[#0B1E3F]/60 mt-2 text-sm">Real fraud reports submitted by Haulock carriers. Cross-checks against your lookups in real time.</p>
         </div>
         <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 w-fit card-shadow"><Search className="w-4 h-4" /> Verify a broker</button>
+      </div>
+
+      {/* FMCSA enforcement red flags — carriers currently flagged in FMCSA's
+          public registry (pending revocation OR undeliverable mail). The
+          dataset doesn't carry an event date, so we surface "currently
+          active" rather than "newly added this month". */}
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+        <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+          <div>
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold">FMCSA red flags</span>
+              <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">Currently active</span>
+            </div>
+            <h2 className="text-xl font-semibold text-[#0B1E3F]">Carriers operating illegally or under revocation</h2>
+            <div className="text-xs text-[#0B1E3F]/60 mt-1">Pending authority revocation, active carriers with no liability insurance, or active brokers with no surety bond. Pulled live from FMCSA, refreshed daily.</div>
+          </div>
+          {enforcement && enforcement.length > 0 && (
+            <span className="px-3 py-1.5 bg-[#0B1E3F]/5 rounded-full text-xs font-medium text-[#0B1E3F]/70 mono">
+              {enforcementFiltered && enforcementFiltered.length !== enforcement.length
+                ? `${enforcementFiltered.length} of ${enforcement.length} flagged`
+                : `${enforcement.length} flagged`}
+            </span>
+          )}
+        </div>
+
+        {enforcement && enforcement.length > 0 && (
+          <div className="space-y-3 mb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0B1E3F]/40 pointer-events-none" />
+              <input
+                value={enforcementSearch}
+                onChange={(e) => setEnforcementSearch(e.target.value)}
+                placeholder="Search by name, MC, DOT, city, or state…"
+                className="w-full pl-10 pr-9 py-2.5 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/40"
+              />
+              {enforcementSearch && (
+                <button
+                  onClick={() => setEnforcementSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#0B1E3F]/40 hover:text-[#0B1E3F] p-1"
+                  aria-label="Clear search"
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { id: 'all', label: `All (${enforcementCounts.all})` },
+                { id: 'revocation', label: `Pending revocation (${enforcementCounts.revocation})` },
+                { id: 'no_insurance', label: `No liability insurance (${enforcementCounts.no_insurance})` },
+                { id: 'no_bond', label: `Broker, no surety bond (${enforcementCounts.no_bond})` },
+              ] as const).map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setEnforcementFlagFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${enforcementFlagFilter === f.id ? 'bg-[#FF6B35] text-white' : 'bg-white border border-[#0B1E3F]/15 text-[#0B1E3F]/75 hover:border-[#0B1E3F]/30'}`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {enforcement == null ? (
+          <div className="py-8 text-center text-sm text-[#0B1E3F]/50">Loading FMCSA red-flag feed…</div>
+        ) : enforcement.length === 0 ? (
+          <div className="py-8 text-center text-sm text-[#0B1E3F]/55">
+            FMCSA feed unavailable right now. Try again shortly.
+          </div>
+        ) : enforcementFiltered && enforcementFiltered.length === 0 ? (
+          <div className="py-8 text-center text-sm text-[#0B1E3F]/55">
+            No matches. Try a different search or clear the flag filter.
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+            {(enforcementFiltered || []).map((a: any, i: number) => (
+              <button
+                key={`${a.dot || a.mc || a.name}-${i}`}
+                onClick={() => onOpenEnforcement(a)}
+                disabled={!a.mc && !a.dot}
+                className="w-full text-left p-4 bg-[#F5F3EE]/60 hover:bg-[#FF6B35]/5 border border-transparent hover:border-[#FF6B35]/30 rounded-xl transition flex items-start gap-3 disabled:opacity-60 disabled:cursor-default disabled:hover:bg-[#F5F3EE]/60 disabled:hover:border-transparent"
+              >
+                <div className="w-9 h-9 rounded-lg bg-[#FF6B35]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <AlertTriangle className="w-4 h-4 text-[#FF6B35]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    {(a.flags || []).map((f: string) => (
+                      <span key={f} className="px-2 py-0.5 bg-[#FF6B35]/15 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">{f}</span>
+                    ))}
+                    {a.authorityType && <span className="text-[11px] mono text-[#0B1E3F]/45">· {a.authorityType}</span>}
+                  </div>
+                  <div className="text-sm font-semibold text-[#0B1E3F] truncate">{a.name}</div>
+                  <div className="text-[11px] mono text-[#0B1E3F]/55 truncate">
+                    {[a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`, [a.city, a.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                {(a.mc || a.dot) && <ArrowRight className="w-4 h-4 text-[#0B1E3F]/30 flex-shrink-0 mt-2" />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Community fraud reports</div>
+        <h2 className="text-xl font-semibold text-[#0B1E3F]">Submitted by Haulock carriers</h2>
       </div>
       <div className="flex flex-wrap gap-2">
         {([
@@ -4161,15 +6096,58 @@ function Alerts({ navigate }: any) {
   const res = useCachedFetch<{ alerts: any[] }>('alerts', '/api/alerts');
   const alerts = res.data?.alerts ?? null;
 
+  // Dedupe: one row per carrier (keyed by MC, DOT, or name in that order).
+  // Keep the MOST RECENT scan as the primary row, but track previous scan
+  // count + score history so the user sees the trend instead of an
+  // identical record repeated 4 times.
+  type DedupedAlert = {
+    primary: any;
+    scanCount: number;
+    history: { score: number; verdict: string; createdAt: string }[];
+    newFlagsSinceLastScan: any[];
+  };
+  const deduped: DedupedAlert[] = (() => {
+    if (!alerts) return [];
+    const buckets = new Map<string, any[]>();
+    for (const a of alerts) {
+      const key = a.mc ? `mc:${a.mc}` : a.dot ? `dot:${a.dot}` : `name:${(a.name || '').toLowerCase()}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(a);
+    }
+    const out: DedupedAlert[] = [];
+    for (const group of buckets.values()) {
+      // Sort newest first inside each bucket.
+      group.sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime());
+      const primary = group[0];
+      const previous = group[1];
+      // Compute "new flags since last scan" for the latest row.
+      let newFlags: any[] = [];
+      if (previous?.data?.flags && primary?.data?.flags) {
+        const prevTitles = new Set((previous.data.flags as any[]).map((f) => f?.title));
+        newFlags = (primary.data.flags as any[]).filter((f) => f?.title && !prevTitles.has(f.title));
+      }
+      out.push({
+        primary,
+        scanCount: group.length,
+        history: group.slice(0, 5).map((g) => ({ score: g.score, verdict: g.verdict, createdAt: g.created_at })),
+        newFlagsSinceLastScan: newFlags,
+      });
+    }
+    // Sort the deduped buckets by their latest scan, newest first.
+    out.sort((a, b) => new Date(b.primary.created_at).getTime() - new Date(a.primary.created_at).getTime());
+    return out;
+  })();
+
   return (
     <div className="space-y-8 text-[#0B1E3F]">
       <div>
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Alerts</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Recent risk signals from your lookups.</h1>
+        <p className="text-[#0B1E3F]/60 mt-2 text-sm">One entry per broker/carrier — newest scan, with what changed since the previous one.</p>
       </div>
       {alerts == null ? (
         <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
-      ) : alerts.length === 0 ? (
+      ) : deduped.length === 0 ? (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-16 text-center text-[#0B1E3F]/60 card-shadow">
           <Bell className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
           <div className="text-lg font-medium text-[#0B1E3F] mb-2">No alerts yet</div>
@@ -4178,22 +6156,61 @@ function Alerts({ navigate }: any) {
         </div>
       ) : (
         <div className="space-y-3">
-          {alerts.map((a: any) => {
+          {deduped.map((d) => {
+            const a = d.primary;
             const sev = a.verdict === 'high' ? 'critical' : 'warning';
             const topFlag = (a.data?.flags || [])[0];
+            const prev = d.history[1];
+            const trend: 'up' | 'down' | 'flat' | null = prev
+              ? a.score > prev.score ? 'up' : a.score < prev.score ? 'down' : 'flat'
+              : null;
             return (
               <button key={a.id} onClick={() => navigate('report', a.data)} className="w-full text-left flex items-start gap-4 p-5 bg-white rounded-2xl border border-[#0B1E3F]/10 hover:border-[#0B1E3F]/20 card-shadow transition text-[#0B1E3F]">
                 <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${sev === 'critical' ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'}`} />
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${a.verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : 'bg-[#F59E0B]/10 text-[#F59E0B]'}`}>{a.verdict === 'high' ? 'HIGH RISK' : 'CAUTION'}</span>
                     <span className="text-xs mono text-[#0B1E3F]/50">· {timeAgo(a.created_at)}</span>
+                    {d.scanCount > 1 && (
+                      <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/65">
+                        scanned {d.scanCount}×
+                      </span>
+                    )}
+                    {d.newFlagsSinceLastScan.length > 0 && (
+                      <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#FF6B35]/10 text-[#FF6B35] font-semibold">
+                        +{d.newFlagsSinceLastScan.length} new flag{d.newFlagsSinceLastScan.length === 1 ? '' : 's'}
+                      </span>
+                    )}
                   </div>
                   <div className="font-semibold text-[#0B1E3F] truncate">{a.name}</div>
                   <div className="text-sm mono text-[#0B1E3F]/50 mb-2">{[a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`].filter(Boolean).join(' · ') || 'No ID'}</div>
                   {topFlag && <div className="text-sm text-[#0B1E3F]/75">{topFlag.title} — {topFlag.desc}</div>}
+                  {d.scanCount > 1 && (
+                    <div className="mt-2 flex items-center gap-1.5 text-[11px] mono text-[#0B1E3F]/50">
+                      <span>history:</span>
+                      {d.history.map((h, i) => (
+                        <span
+                          key={i}
+                          className={`px-1.5 py-0.5 rounded ${
+                            h.verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]'
+                            : h.verdict === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]'
+                            : 'bg-[#16A34A]/10 text-[#16A34A]'
+                          }`}
+                        >
+                          {h.score}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className={`mono text-lg font-semibold ${a.verdict === 'high' ? 'text-[#DC2626]' : 'text-[#F59E0B]'}`}>{a.score}</div>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <div className={`mono text-lg font-semibold ${a.verdict === 'high' ? 'text-[#DC2626]' : 'text-[#F59E0B]'}`}>{a.score}</div>
+                  {trend && trend !== 'flat' && prev && (
+                    <div className={`text-[10px] mono uppercase tracking-wider ${trend === 'up' ? 'text-[#DC2626]' : 'text-[#16A34A]'}`}>
+                      {trend === 'up' ? '↑' : '↓'} {Math.abs(a.score - prev.score)}
+                    </div>
+                  )}
+                </div>
               </button>
             );
           })}

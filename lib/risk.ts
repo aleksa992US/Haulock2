@@ -114,8 +114,12 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
   // brokers. Minimum is $75,000 (stored as 75 in thousands). A broker without
   // the bond can't legally pay carriers and is almost certainly a fraud front.
   if (isPureBroker) {
+    // No bond on file: explicit $0 OR the field is entirely missing from
+    // the FMCSA response. Both states mean the broker hasn't filed a
+    // BMC-84 with FMCSA — operating illegally either way.
     const hasBond = (c.bondOnFile != null && c.bondOnFile > 0);
     if (!hasBond) {
+      const bondLabel = c.bondOnFile === 0 ? '$0' : 'Not filed with FMCSA';
       flags.push({
         sev: 'critical',
         title: 'No surety bond on file',
@@ -123,7 +127,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         pts: 40,
         details: 'The BMC-84 surety bond protects carriers and shippers when a broker fails to pay. A broker with no bond on file is operating illegally and carriers have no recourse if they stiff you.',
         metrics: [
-          { label: 'Bond on file', value: '$0' },
+          { label: 'Bond on file', value: bondLabel },
           { label: 'Bond required', value: '$75,000' },
         ],
         recommendation: 'Do not book. Ask the broker to show proof of their BMC-84 bond or BMC-85 trust fund before any payment terms.',
@@ -318,10 +322,98 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         pts: 20,
         recommendation: 'Verify the carrier\'s current operating location before booking.',
       });
+    } else if (
+      c.addressCheck.found
+      && !c.addressCheck.isMailbox
+      && c.addressCheck.matchedName
+      && c.name
+      && !carrierNamesMatch(c.name, c.addressCheck.matchedName)
+    ) {
+      // The address resolves to a real business — but a DIFFERENT one than
+      // the carrier we're checking. Classic shell-broker pattern: the
+      // registered "office" is just a coworking suite, executive-suite
+      // service, or a real tenant whose mailing address got reused.
+      const fmcsaSuite = extractSuite(c.address);
+      const placesSuite = extractSuite(c.addressCheck.matchedAddress);
+      const suiteMismatch = fmcsaSuite && placesSuite && fmcsaSuite !== placesSuite;
+      flags.push({
+        sev: 'warning',
+        title: 'Address resolves to a different business',
+        desc: `FMCSA lists ${c.name} at this address, but Google Places shows ${c.addressCheck.matchedName} as the business there${suiteMismatch ? ` (in ${placesSuite}, not ${fmcsaSuite})` : ''}. Could be a shared executive-suite / coworking address used by a shell broker.`,
+        pts: 25,
+        details: 'A common ghost-broker pattern: register an MC at a multi-tenant office building so the address looks legitimate, but no actual business operates there under the carrier name. Verify by phone, ask for a photo of their yard or terminal, or call the building manager.',
+        metrics: [
+          { label: 'FMCSA name', value: c.name },
+          { label: 'Business at address', value: c.addressCheck.matchedName },
+          ...(fmcsaSuite ? [{ label: 'FMCSA suite', value: fmcsaSuite }] : []),
+          ...(placesSuite ? [{ label: 'Places suite', value: placesSuite }] : []),
+        ],
+        recommendation: 'Do not assume "verified business" means this carrier exists. Phone the carrier and the building.',
+      });
     }
+  }
+
+  // (The pure-broker bond check above already covers the active-broker
+  // -without-bond pattern. We removed a duplicate copy of that check that
+  // was firing alongside it and producing two flags for the same issue.)
+
+  // Active authority (broker or carrier) but FMCSA has no phone number on
+  // file. Real operating businesses keep their contact info current — a
+  // missing phone on an Active record is a small but consistent fraud signal.
+  if ((c.brokerAuthority === 'Active' || isCarrier) && !c.phone) {
+    flags.push({
+      sev: 'info',
+      title: 'No phone number on FMCSA file',
+      desc: 'The carrier has active authority but no phone number listed in the federal registry.',
+      pts: 5,
+      details: 'Not conclusive — many small carriers update their MCS-150 sporadically. But it makes phone-based verification impossible and makes the operator harder to reach when something goes wrong.',
+      recommendation: 'Get a phone number directly from the rate confirmation, then verify it against an independent source (their website, Google Business, or the FMCSA L&I update).',
+    });
   }
 
   const score = Math.min(100, flags.reduce((s, f) => s + f.pts, 0));
   const verdict: CarrierReport['verdict'] = score >= 61 ? 'high' : score >= 31 ? 'medium' : 'low';
   return { ...c, score, verdict, flags };
+}
+
+// Common entity-suffix words to strip when comparing two company names.
+// "GRAY FALCON UNITED LLC" vs "Gray Falcon United" should be a match;
+// "Gray Falcon United" vs "Roadrunner Freight" should NOT be.
+const NAME_NOISE = new Set([
+  'llc', 'lc', 'inc', 'incorporated', 'corp', 'corporation', 'co', 'company',
+  'ltd', 'limited', 'lp', 'llp', 'pllc', 'pa', 'pc',
+  'the', 'and', '&', 'group', 'holdings',
+]);
+
+function tokenizeName(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !NAME_NOISE.has(w));
+}
+
+// Two carrier names "match" if they share at least one significant token
+// (after stripping LLC/Inc/etc. and "the"/"and"/etc.). Two completely
+// different companies share zero tokens. False positive risk is low because
+// we strip generic words, but we DO accept partial overlap as a match —
+// e.g., "Acme Freight" matches "Acme Logistics Group" because they share
+// "acme". The Gray Falcon vs Roadrunner Freight pair shares no tokens.
+function carrierNamesMatch(a: string, b: string): boolean {
+  const ta = tokenizeName(a);
+  const tb = tokenizeName(b);
+  if (ta.length === 0 || tb.length === 0) return true; // can't compare → don't false-flag
+  const set = new Set(ta);
+  return tb.some((t) => set.has(t));
+}
+
+// Pull the suite/unit/apartment number out of a US address string. Used to
+// detect "same building, different tenant" patterns where Places confirms a
+// different business at a different suite of the FMCSA-listed building.
+function extractSuite(addr: string | undefined): string | undefined {
+  if (!addr) return undefined;
+  const s = addr.toUpperCase();
+  // Match "STE 110", "SUITE 110", "UNIT 5B", "APT 12", "# 530".
+  const m = s.match(/\b(STE|SUITE|UNIT|APT|RM|ROOM|#)\s*([A-Z0-9-]+)/);
+  return m ? `${m[1]} ${m[2]}`.replace('SUITE', 'STE') : undefined;
 }

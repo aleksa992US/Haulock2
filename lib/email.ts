@@ -14,13 +14,30 @@ export function isResendConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
 }
 
-export type SendArgs = { to: string; subject: string; html: string; replyTo?: string };
+export type SendAttachment = { filename: string; content: Buffer | Uint8Array; contentType?: string };
+export type SendArgs = {
+  to: string | string[];
+  subject: string;
+  html: string;
+  replyTo?: string;
+  attachments?: SendAttachment[];
+};
 
-export async function sendEmail({ to, subject, html, replyTo }: SendArgs) {
+export async function sendEmail({ to, subject, html, replyTo, attachments }: SendArgs) {
   const resend = getResend();
   if (!resend) throw new Error('RESEND_API_KEY is not set');
   const from = process.env.RESEND_FROM || 'Haulock <onboarding@resend.dev>';
-  const { data, error } = await resend.emails.send({ from, to, subject, html, replyTo });
+  // Resend's SDK expects attachments as { filename, content } where content
+  // is a base64 string or a Buffer. We accept either Buffer or Uint8Array.
+  const resendAttachments = attachments?.map((a) => ({
+    filename: a.filename,
+    content: Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content),
+    contentType: a.contentType,
+  }));
+  const { data, error } = await resend.emails.send({
+    from, to, subject, html, replyTo,
+    attachments: resendAttachments as any,
+  });
   if (error) throw new Error(error.message || 'Resend send failed');
   return data;
 }
@@ -163,6 +180,113 @@ ${divider()}
   return {
     subject: `HIGH RISK alert: ${report.name}`,
     html: baseLayout({ preview: `Haulock flagged ${report.name} as HIGH RISK — here is why.`, body }),
+  };
+}
+
+// ---------- Report share (PDF attached) ----------
+
+export type ShareReportArgs = {
+  report: AlertReport & {
+    address?: string;
+    insuranceSummary?: string;
+    safetyRating?: string;
+    authorityStatus?: string;
+    brokerAuthority?: string;
+  };
+  senderName?: string;
+  senderEmail?: string;
+  message?: string;
+  siteUrl: string;
+};
+
+export function reportShareTemplate({ report, senderName, senderEmail, message, siteUrl }: ShareReportArgs): { subject: string; html: string } {
+  const idLine = [report.mc && `MC-${report.mc}`, report.dot && `DOT-${report.dot}`].filter(Boolean).join(' · ') || 'No ID';
+  const verdictLabel = report.verdict === 'high' ? 'HIGH RISK' : report.verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
+  const verdictColor = report.verdict === 'high' ? '#DC2626' : report.verdict === 'medium' ? '#F59E0B' : '#16A34A';
+  const verdictBg = report.verdict === 'high' ? 'rgba(220,38,38,0.08)' : report.verdict === 'medium' ? 'rgba(245,158,11,0.10)' : 'rgba(22,163,74,0.10)';
+  const recLine = report.verdict === 'high' ? 'Do not book this load.' : report.verdict === 'medium' ? 'Proceed with caution.' : 'Safe to book.';
+  const topFlags = (report.flags || []).slice(0, 4);
+  const senderLabel = senderName ? `${escapeHtml(senderName)}${senderEmail ? ` (${escapeHtml(senderEmail)})` : ''}` : 'Someone';
+
+  const messageBlock = message && message.trim() ? `
+<div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:18px 20px;margin:0 0 24px 0;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">Note from ${escapeHtml(senderName || 'sender')}</div>
+  <div style="font-size:14px;line-height:1.6;color:#0B1E3F;white-space:pre-wrap;">${escapeHtml(message.trim())}</div>
+</div>` : '';
+
+  const flagsHtml = topFlags.length ? `
+<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin:0 0 10px 0;">Top red flags</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:24px;">
+${topFlags.map((f) => `
+  <tr><td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.06);">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="width:10px;vertical-align:top;padding-top:6px;"><div style="width:6px;height:6px;border-radius:50%;background:${f.sev === 'critical' ? '#DC2626' : f.sev === 'warning' ? '#F59E0B' : 'rgba(11,30,63,0.4)'};"></div></td>
+        <td style="padding-left:10px;">
+          <div style="font-size:14px;font-weight:600;color:#0B1E3F;margin-bottom:2px;">${escapeHtml(f.title)}</div>
+          <div style="font-size:13px;color:rgba(11,30,63,0.6);line-height:1.5;">${escapeHtml(f.desc)}</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>`).join('')}
+</table>` : `<div style="font-size:14px;color:rgba(11,30,63,0.6);margin:0 0 24px 0;">No red flags detected on this lookup.</div>`;
+
+  const detailRow = (label: string, value: string) => `
+<tr>
+  <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.06);font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.10em;text-transform:uppercase;color:rgba(11,30,63,0.55);width:46%;">${escapeHtml(label)}</td>
+  <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.06);font-size:14px;font-weight:600;color:#0B1E3F;text-align:right;">${escapeHtml(value || '—')}</td>
+</tr>`;
+
+  const detailRows = [
+    detailRow('Operating authority', report.authorityStatus || '—'),
+    detailRow('Broker authority', report.brokerAuthority || '—'),
+    detailRow('Safety rating', report.safetyRating || 'Not rated'),
+    detailRow('Insurance on file', report.insuranceSummary || '—'),
+    detailRow('Address', report.address || '—'),
+  ].join('');
+
+  const body = `
+<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">Shared by ${senderLabel}</div>
+${h1(`Risk report: ${italicAccent(escapeHtml(report.name))}`)}
+<div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);margin:0 0 24px 0;">${escapeHtml(idLine)}</div>
+
+${messageBlock}
+
+<div style="background:${verdictBg};border:1px solid ${verdictColor}33;border-radius:14px;padding:20px 22px;margin:0 0 24px 0;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+      <td style="vertical-align:middle;">
+        <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Risk level</div>
+        <div style="font-size:22px;font-weight:700;color:${verdictColor};line-height:1.1;">${verdictLabel}</div>
+        <div style="font-size:14px;font-weight:600;color:#0B1E3F;margin-top:6px;">${recLine}</div>
+      </td>
+      <td style="vertical-align:middle;text-align:right;">
+        <div style="display:inline-block;padding:14px 20px;background:#ffffff;border:2px solid ${verdictColor};border-radius:50%;min-width:30px;">
+          <div style="font-size:24px;font-weight:700;color:#0B1E3F;line-height:1;">${report.score}</div>
+          <div style="font-size:9px;color:rgba(11,30,63,0.55);font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.10em;">/ 100</div>
+        </div>
+      </td>
+    </tr>
+  </table>
+</div>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:24px;">${detailRows}</table>
+
+${flagsHtml}
+
+<div style="background:rgba(255,107,53,0.08);border-radius:10px;padding:14px 18px;margin:0 0 24px 0;font-size:13px;color:#0B1E3F;">
+  <strong style="color:#FF6B35;">PDF attached</strong> — full branded report with all checks (FMCSA, Google Places, web presence, domain, social media).
+</div>
+
+${button(siteUrl, 'Open in Haulock →')}
+
+<div style="font-size:12px;color:rgba(11,30,63,0.5);line-height:1.6;">
+  Pulled from FMCSA, Google Places, and our web/domain enrichment. Generated by Haulock.
+</div>`;
+
+  return {
+    subject: `Haulock report · ${report.name} · ${verdictLabel}`,
+    html: baseLayout({ preview: `${verdictLabel} — ${report.name} (${idLine})`, body }),
   };
 }
 

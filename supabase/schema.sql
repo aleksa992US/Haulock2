@@ -29,6 +29,93 @@ create index if not exists fmcsa_cache_cached_at_idx on public.fmcsa_cache(cache
 alter table public.fmcsa_cache enable row level security;
 -- Only the service role writes to this table; no user-facing policies needed.
 
+-- Append-only identity / carrier-state HISTORY. Every successful lookup
+-- writes a row HERE if (and only if) the meaningful fields changed since
+-- the last row for the same DOT/MC. Over time this becomes a queryable
+-- timeline of address changes, authority changes, insurance changes, etc.
+-- — the same data BrokerSnapshot sells for $200/mo, generated for free
+-- as a side-effect of normal usage.
+create table if not exists public.carrier_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  dot text,
+  mc text,
+  name text,
+  -- Hash of the meaningful fields. Used as a cheap "did anything change?"
+  -- check before an insert so we never duplicate a snapshot.
+  fingerprint text not null,
+  -- The meaningful fields themselves, JSON-serialized. Smaller than the
+  -- full FMCSA response and faster to diff.
+  data jsonb not null,
+  -- Field names that changed vs the previous snapshot for this carrier.
+  -- ['initial'] for the first row. Lets us render a clean diff timeline
+  -- without reading every prior row.
+  changed_fields text[] not null default array[]::text[],
+  -- Where the snapshot came from: 'lookup' (real-time user search) or
+  -- 'bulk' (nightly FMCSA CSV import — added later).
+  source text not null default 'lookup',
+  captured_at timestamptz not null default now()
+);
+create index if not exists carrier_snapshots_dot_captured_idx on public.carrier_snapshots (dot, captured_at desc);
+create index if not exists carrier_snapshots_mc_captured_idx  on public.carrier_snapshots (mc, captured_at desc);
+alter table public.carrier_snapshots enable row level security;
+-- Reads happen through the service role (via /api/carrier-history). No user-facing policies.
+
+-- Third-party historical risk ratings imported from a partner data dump.
+-- Stored separately from our own scoring so we never confuse the two; we
+-- just surface "rated X in 2021" as a reference signal on the report.
+-- Source is intentionally generic (no partner attribution stored) — the
+-- public surface is "third-party brokerage rating, 2021".
+create table if not exists public.legacy_risk_ratings (
+  id uuid primary key default gen_random_uuid(),
+  mc text,
+  dot text,
+  name text,
+  risk_overall text,             -- 'Acceptable' | 'Moderate' | 'Unacceptable' | other
+  trucks_total int,
+  captured_at date not null,
+  source text not null default 'partner-2021',
+  created_at timestamptz not null default now()
+);
+create index if not exists legacy_risk_ratings_mc_idx  on public.legacy_risk_ratings(mc)  where mc  is not null;
+create index if not exists legacy_risk_ratings_dot_idx on public.legacy_risk_ratings(dot) where dot is not null;
+alter table public.legacy_risk_ratings enable row level security;
+-- Service role only.
+
+-- Storage-usage RPC for the admin "Storage" panel. Returns the database
+-- size + a per-table breakdown so the operator can see when we're getting
+-- close to a Supabase plan limit (free=500MB, Pro=8GB) and which tables
+-- are eating the most space. Service-role only.
+create or replace function public.haulock_storage_stats()
+returns jsonb
+language sql
+security definer
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'database_bytes', pg_database_size(current_database()),
+    'fetched_at', now(),
+    'tables', coalesce((
+      select jsonb_agg(t order by t.total_bytes desc)
+      from (
+        select
+          c.relname                     as name,
+          pg_total_relation_size(c.oid) as total_bytes,
+          pg_relation_size(c.oid)       as data_bytes,
+          pg_indexes_size(c.oid)        as index_bytes,
+          coalesce(s.n_live_tup, 0)     as row_estimate
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        left join pg_stat_user_tables s
+          on s.schemaname = n.nspname and s.relname = c.relname
+        where n.nspname = 'public'
+          and c.relkind = 'r'
+      ) t
+    ), '[]'::jsonb)
+  );
+$$;
+revoke execute on function public.haulock_storage_stats() from public;
+grant execute on function public.haulock_storage_stats() to service_role;
+
 -- Per-call FMCSA observability log. One row per outgoing call to FMCSA
 -- (not per user request — cache hits don't log here).
 create table if not exists public.fmcsa_events (

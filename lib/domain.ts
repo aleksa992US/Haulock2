@@ -22,10 +22,22 @@ export type DomainCheck = {
   mx: {
     hasMx: boolean;
     records?: string[];
+    // Friendly classification of WHO actually runs this domain's email.
+    // "Google Workspace" / "Microsoft 365" → enterprise email, legitimate.
+    // "Cloudflare email routing" / "Forwarder only" → light setup.
+    // null → unknown / non-standard.
+    provider?: string | null;
     error?: string;
   };
   spf: {
     hasSpf: boolean;
+  };
+  // DMARC = the spec that tells receivers how strictly to enforce SPF/DKIM
+  // alignment. Real businesses publish a DMARC policy; spoofers usually
+  // don't. Cheap, free DNS lookup.
+  dmarc: {
+    hasDmarc: boolean;
+    policy?: 'none' | 'quarantine' | 'reject' | string;
   };
   disposable: boolean;
   safeBrowsing?: {
@@ -81,11 +93,70 @@ async function getMx(domain: string): Promise<DomainCheck['mx']> {
   try {
     const records = await dns.resolveMx(domain);
     const exchanges = records.map((r) => r.exchange).filter(Boolean);
-    return { hasMx: exchanges.length > 0, records: exchanges };
+    return {
+      hasMx: exchanges.length > 0,
+      records: exchanges,
+      provider: detectMxProvider(exchanges),
+    };
   } catch (e: any) {
     const code = e?.code || '';
-    if (code === 'ENODATA' || code === 'ENOTFOUND') return { hasMx: false };
-    return { hasMx: false, error: code || 'MX lookup failed' };
+    if (code === 'ENODATA' || code === 'ENOTFOUND') return { hasMx: false, provider: null };
+    return { hasMx: false, provider: null, error: code || 'MX lookup failed' };
+  }
+}
+
+// Pattern-match the MX exchange hostnames to identify the email provider.
+// Real businesses use one of a handful of well-known providers; novel
+// hostnames suggest a small / hobbyist setup or a shell domain.
+function detectMxProvider(exchanges: string[]): string | null {
+  if (!exchanges || exchanges.length === 0) return null;
+  const all = exchanges.map((x) => x.toLowerCase()).join(' ');
+  const checks: Array<{ re: RegExp; name: string }> = [
+    // Big enterprise / SMB providers
+    { re: /(^|\.)google(?:mail)?\.com$|aspmx.*google|googlemail/, name: 'Google Workspace' },
+    { re: /\.protection\.outlook\.com$|\.mail\.protection\.outlook\.com$|mail\.outlook\.com$/, name: 'Microsoft 365' },
+    { re: /\.pphosted\.com$|proofpoint/, name: 'Proofpoint' },
+    { re: /\.mimecast\.com$/, name: 'Mimecast' },
+    { re: /\.barracudanetworks\.com$/, name: 'Barracuda' },
+    { re: /\.iphmx\.com$|cisco\.iphmx/, name: 'Cisco IronPort' },
+    // Smaller business providers
+    { re: /\.zoho\.com$|zohomail/, name: 'Zoho Mail' },
+    { re: /\.fastmail(?:\.com)?$|messagingengine\.com$/, name: 'Fastmail' },
+    { re: /\.protonmail\.ch$|\.proton\.me$/, name: 'ProtonMail' },
+    { re: /\.icloud\.com$/, name: 'iCloud' },
+    { re: /\.yandex\.(?:com|ru|net)$/, name: 'Yandex' },
+    { re: /\.yahoodns\.net$|\.yahoo\.com$/, name: 'Yahoo' },
+    // Hosting bundles (lots of small biz domains live here)
+    { re: /secureserver\.net$/, name: 'GoDaddy / Smartermail' },
+    { re: /\.namecheap\.com$|privateemail\.com$|jellyfish\.systems$/, name: 'Namecheap Private Email' },
+    { re: /\.bluehost\.com$|\.hostgator\.com$|\.dreamhost\.com$/, name: 'Bluehost / cPanel host' },
+    { re: /\.ionos\.(?:com|de)$|hosteurope/, name: 'IONOS / 1&1' },
+    { re: /\.titan\.email$/, name: 'Titan (Hostinger / Namecheap)' },
+    // Email-routing / forwarder services (lighter signal)
+    { re: /\.cloudflare\.net$/, name: 'Cloudflare email routing' },
+    { re: /improvmx\.com$|forwardemail/, name: 'Email-forwarding service' },
+    // Transactional / sending-only (uncommon as primary MX, often a flag)
+    { re: /mailgun\.org$/, name: 'Mailgun (transactional)' },
+    { re: /sendgrid\.net$/, name: 'SendGrid (transactional)' },
+    { re: /amazonaws\.com$|amazonses/, name: 'Amazon SES' },
+  ];
+  for (const c of checks) if (c.re.test(all)) return c.name;
+  return null;
+}
+
+async function getDmarc(domain: string): Promise<DomainCheck['dmarc']> {
+  try {
+    const records = await dns.resolveTxt(`_dmarc.${domain}`);
+    for (const chunks of records) {
+      const joined = chunks.join('').toLowerCase();
+      if (!joined.startsWith('v=dmarc1')) continue;
+      // p= directive: 'none' | 'quarantine' | 'reject' (per RFC 7489)
+      const m = joined.match(/[;\s]p=(none|quarantine|reject)/);
+      return { hasDmarc: true, policy: m ? (m[1] as any) : undefined };
+    }
+    return { hasDmarc: false };
+  } catch {
+    return { hasDmarc: false };
   }
 }
 
@@ -126,7 +197,7 @@ async function getSafeBrowsing(domain: string): Promise<DomainCheck['safeBrowsin
   }
 }
 
-function buildFlags(c: Pick<DomainCheck, 'whois' | 'mx' | 'spf' | 'safeBrowsing' | 'disposable'>): DomainFlag[] {
+function buildFlags(c: Pick<DomainCheck, 'whois' | 'mx' | 'spf' | 'dmarc' | 'safeBrowsing' | 'disposable'>): DomainFlag[] {
   const flags: DomainFlag[] = [];
   if (c.disposable) {
     flags.push({
@@ -177,6 +248,21 @@ function buildFlags(c: Pick<DomainCheck, 'whois' | 'mx' | 'spf' | 'safeBrowsing'
       pts: 5,
     });
   }
+  if (c.mx.hasMx && !c.dmarc.hasDmarc) {
+    flags.push({
+      sev: 'info',
+      title: 'No DMARC policy',
+      desc: 'Domain doesn\'t publish a DMARC policy — receivers can\'t verify whether spoofed mail from this domain should be rejected. Not conclusive (many small businesses skip DMARC), but real enterprise email setups publish one.',
+      pts: 5,
+    });
+  } else if (c.dmarc.hasDmarc && c.dmarc.policy === 'none') {
+    flags.push({
+      sev: 'info',
+      title: 'DMARC policy set to "none"',
+      desc: 'DMARC is published but configured in monitor-only mode. Provides visibility but doesn\'t block spoofed mail.',
+      pts: 0,
+    });
+  }
   if (c.safeBrowsing?.flagged) {
     flags.push({
       sev: 'critical',
@@ -195,8 +281,9 @@ export async function checkDomain(input: string): Promise<DomainCheck> {
       input,
       domain: input,
       whois: { error: 'Invalid domain' },
-      mx: { hasMx: false, error: 'Invalid domain' },
+      mx: { hasMx: false, provider: null, error: 'Invalid domain' },
       spf: { hasSpf: false },
+      dmarc: { hasDmarc: false },
       disposable: false,
       score: 0,
       verdict: 'unknown',
@@ -204,9 +291,11 @@ export async function checkDomain(input: string): Promise<DomainCheck> {
     };
   }
   const disposable = disposableSet.has(domain.toLowerCase());
-  const [whois, mx, spf, safeBrowsing] = await Promise.all([getWhois(domain), getMx(domain), getSpf(domain), getSafeBrowsing(domain)]);
-  const flags = buildFlags({ whois, mx, spf, safeBrowsing, disposable });
+  const [whois, mx, spf, dmarc, safeBrowsing] = await Promise.all([
+    getWhois(domain), getMx(domain), getSpf(domain), getDmarc(domain), getSafeBrowsing(domain),
+  ]);
+  const flags = buildFlags({ whois, mx, spf, dmarc, safeBrowsing, disposable });
   const score = Math.min(100, flags.reduce((s, f) => s + f.pts, 0));
   const verdict: DomainCheck['verdict'] = score >= 61 ? 'high' : score >= 31 ? 'medium' : 'low';
-  return { input, domain, whois, mx, spf, disposable, safeBrowsing, score, verdict, flags };
+  return { input, domain, whois, mx, spf, dmarc, disposable, safeBrowsing, score, verdict, flags };
 }

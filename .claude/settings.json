@@ -29,7 +29,20 @@
       "Bash(curl -sL \"https://api.us.socrata.com/api/catalog/v1?q=Carrier%20All%20With%20History&domains=data.transportation.gov&limit=10\")",
       "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=15\")",
       "Bash(curl -sL \"https://data.transportation.gov/api/search/views.json?search_context=data.transportation.gov&q=carrier+all+with+history&limit=20\")",
-      "Bash(awk 'NR>=2699 && /^}/ {print NR; exit}' components/Haulock.tsx)"
+      "Bash(awk 'NR>=2699 && /^}/ {print NR; exit}' components/Haulock.tsx)",
+      "Bash(curl -s -m 15 'https://data.transportation.gov/resource/6eyk-hxee.json?$limit=1')",
+      "Bash(curl -s -m 15 -o /dev/null -w \"HTTP %{http_code}\\\\n\" 'http://localhost:3001/api/enforcement-actions?days=30&limit=10')",
+      "Bash(curl -s -m 15 'http://localhost:3001/api/enforcement-actions?days=30&limit=3')",
+      "Bash(curl -s -m 20 'http://localhost:3001/api/enforcement-actions?limit=5')",
+      "Bash(curl -s -m 25 'http://localhost:3001/api/enforcement-actions?limit=300')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); from collections import Counter; print\\('total:', d.get\\('count'\\)\\); print\\(Counter\\(a['severity'] for a in d.get\\('actions',[]\\)\\)\\); from collections import Counter; flat=[f for a in d.get\\('actions',[]\\) for f in a['flags']]; print\\('flag types:', Counter\\(flat\\)\\)\")",
+      "Bash(curl -s -m 30 'http://localhost:3001/api/enforcement-actions?limit=300&v=2')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); from collections import Counter; print\\('total:', d.get\\('count'\\)\\); print\\('severity:', Counter\\(a['severity'] for a in d.get\\('actions',[]\\)\\)\\); flat=[f for a in d.get\\('actions',[]\\) for f in a['flags']]; print\\('flag types:', Counter\\(flat\\).most_common\\(\\)\\); print\\(\\); print\\('sample top-5:'\\); [print\\(' -', a['severity'].upper\\(\\), '|', a['name'], '|', a.get\\('mc'\\) or a.get\\('dot'\\), '|', '·'.join\\(a['flags']\\)\\) for a in d.get\\('actions', []\\)[:5]]\")",
+      "Bash(curl -s -m 25 'http://localhost:3001/api/landing-stats')",
+      "Bash(python3 -m json.tool)",
+      "Bash(grep -n \"fetch\\(\\\\`/api/verify\" /Users/viceseo/Documents/GitHub/Haulock2/components/Haulock.tsx)",
+      "Bash(grep -n \"findChameleonLinks\\(carrier\\).catch\\\\|isWebReputationConfigured\\(\\)\\\\|return { configured: false, ok: false, hits: \\\\[\\\\]\" /Users/viceseo/Documents/GitHub/Haulock2/app/api/verify/route.ts)",
+      "Bash(grep -n \"Treat this as a high-risk carrier even if\\\\|Linked to a flagged carrier \\(\\\\${link\" /Users/viceseo/Documents/GitHub/Haulock2/app/api/verify/route.ts)"
     ]
   }
 }

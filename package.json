@@ -13,7 +13,8 @@
     "ingest:fmcsa": "tsx scripts/ingest-fmcsa.ts",
     "ingest:fmcsa-api": "tsx scripts/ingest-fmcsa-api.ts",
     "ingest:fmcsa-carrier-flat": "tsx scripts/ingest-fmcsa-carrier-flat.ts",
-    "ingest:fmcsa-brokers": "tsx scripts/ingest-fmcsa-brokers.ts"
+    "ingest:fmcsa-brokers": "tsx scripts/ingest-fmcsa-brokers.ts",
+    "ingest:legacy": "tsx scripts/ingest-legacy-broker-data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

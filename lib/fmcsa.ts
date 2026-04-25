@@ -73,6 +73,104 @@ export type CarrierReport = {
   // Per-source scan summary — populated by the verify route after enrichment.
   // Lets the UI show "we checked these sources" with a green/red dot for each.
   sources?: { name: string; ok: boolean; note: string }[];
+  // Chameleon-carrier links: other carriers sharing this carrier's phone or
+  // physical address that have an active enforcement flag or fraud history.
+  // Populated by the verify route via lib/chameleon-detection.
+  chameleonLinks?: {
+    source: 'fmcsa-flag' | 'our-lookup' | 'fraud-report';
+    matchedOn: 'phone' | 'address' | 'phone+address';
+    name: string;
+    mc?: string;
+    dot?: string;
+    reason: string;
+    badStatus: boolean;
+  }[];
+  // Sender-domain lookalike check populated by lib/lookalike-detection when
+  // the verify request supplied an `email=` query param.
+  queriedEmail?: string;
+  lookalikeMatch?: {
+    suspect: string;
+    legit: string;
+    kind: 'levenshtein' | 'homograph' | 'tld_swap' | 'subdomain_swap';
+    distance: number;
+  };
+  // Web-reputation result from lib/web-reputation: Brave Search hits on
+  // "{name} fraud / scam / lawsuit / etc.". `hits` is the trusted-source
+  // subset (drives the fraud-mention flag). `extractionHits` is the wider
+  // set (used by lib/linked-entity-extractor to mine aliases/MCs from any
+  // article that matches the seed, regardless of domain trust level).
+  webReputation?: {
+    configured: boolean;
+    ok: boolean;
+    hits: { title: string; url: string; domain: string; snippet: string; query: string }[];
+    extractionHits?: { title: string; url: string; domain: string; snippet: string; query: string }[];
+    queriesRun: number;
+    error?: string;
+  };
+  // Linked entities extracted from web coverage: aliases, sister-entities,
+  // and co-cited MC/DOT numbers mentioned alongside this carrier in
+  // trusted-source articles. Catches multi-MC fraud networks.
+  linkedEntities?: {
+    kind: 'company' | 'mc' | 'dot';
+    value: string;
+    citations: number;
+    sources: string[];
+    evidence: string;
+  }[];
+  // Cross-references from a third-party 2021 reference dataset (loaded
+  // from Supabase). Two pieces: this carrier's own 2021 rating, and other
+  // FMCSA records that shared the carrier's email in 2021. Surfaced as
+  // neutral reference data — never as Haulock's verdict.
+  legacyReference?: {
+    rating: {
+      riskOverall: string | null;
+      trucksTotal: number | null;
+      capturedAt: string;
+      source: string;
+    } | null;
+    emailMatches: {
+      email: string;
+      otherCarrier: { name: string | null; mc: string | null; dot: string | null };
+      capturedAt: string;
+    }[];
+  };
+  // FMCSA Safety Measurement System data — BASIC scores, inspection
+  // breakdown, crash detail. Populated from lib/fmcsa-sms.
+  sms?: {
+    configured: boolean;
+    fetched: boolean;
+    dot: string;
+    carrier: {
+      legalName?: string;
+      totalTrucks?: number;
+      totalDrivers?: number;
+      hazmatCarrier?: boolean;
+      carrierOperation?: string;
+      cargoHauled?: string;
+      mcs150Date?: string;
+      mcs150MileageYear?: string;
+      mcs150Mileage?: number;
+    };
+    basics: Partial<Record<
+      'unsafeDriving' | 'hoursOfService' | 'driverFitness' | 'controlledSubstances' | 'vehicleMaintenance' | 'hazmat' | 'crashIndicator',
+      { measure: number; inspections: number; alert: boolean }
+    >>;
+    inspections: {
+      vehicleInspections: number;
+      driverInspections: number;
+      vehicleOosCount: number;
+      driverOosCount: number;
+      vehicleOosPct: number | null;
+      driverOosPct: number | null;
+      vehicleNationalAvgPct: number | null;
+      driverNationalAvgPct: number | null;
+    } | null;
+    crashes: { total: number; fatal: number; injury: number; towaway: number } | null;
+    lastUpdate?: string;
+    lastSafetyMeasurementDate?: string;
+    fetchedAt: string;
+    error?: string;
+  };
   source: 'fmcsa' | 'mock';
   fetchedAt: string;
   score: number;
@@ -119,10 +217,11 @@ async function logFmcsaEvent(ev: { path: string; status: 'ok' | 'error'; httpSta
 async function fmcsaFetch(path: string, webKey: string): Promise<any> {
   const url = `${FMCSA_BASE}${path}${path.includes('?') ? '&' : '?'}webKey=${encodeURIComponent(webKey)}`;
 
-  // FMCSA's public API is flaky — many hiccups are transient (single digit seconds).
-  // Be aggressive on retries: 5 attempts with jittered exponential backoff, 8s per
-  // attempt cap. Worst-case total budget ≈ 30s, leaves room for other checks.
-  const maxAttempts = 5;
+  // FMCSA's public API is flaky. Cap retries at 2 attempts and 5s per call —
+  // worst case ~10s, then we fall through to Socrata fallback. Aggressive
+  // retries here (we used to do 5) made interactive lookups feel broken
+  // when FMCSA was having a bad minute.
+  const maxAttempts = 2;
   let lastError: Error | null = null;
   let lastHttpStatus: number | null = null;
 
@@ -131,7 +230,7 @@ async function fmcsaFetch(path: string, webKey: string): Promise<any> {
     let httpStatus: number | null = null;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8_000); // 8s per attempt
+      const timeoutId = setTimeout(() => controller.abort(), 5_000); // 5s per attempt
       const res = await fetch(url, {
         headers: { Accept: 'application/json' },
         cache: 'no-store',
@@ -381,6 +480,57 @@ async function writeCachedFmcsa(key: string, response: any): Promise<void> {
   }
 }
 
+// Build a partial CarrierReport from the most recent row in
+// carrier_snapshots. Used as the *very* last fallback when FMCSA primary,
+// Socrata, and every cache layer have failed but we have ANY historical
+// or imported snapshot for this MC/DOT.
+async function snapshotFallback(query: ParsedQuery): Promise<CarrierReport | null> {
+  if (query.kind === 'name') return null;
+  try {
+    const { findCarrierFromSnapshot } = await import('./carrier-snapshots');
+    const args: { dot?: string; mc?: string } = {};
+    if (query.kind === 'dot') args.dot = query.value;
+    if (query.kind === 'mc') args.mc = query.value;
+    const snap = await findCarrierFromSnapshot(args);
+    if (!snap) return null;
+    const d: any = snap.data || {};
+    return {
+      name: snap.name || d.name || 'Unknown carrier',
+      dba: d.dba ?? undefined,
+      mc: snap.mc ?? undefined,
+      dot: snap.dot ?? undefined,
+      address: d.address ?? undefined,
+      phone: d.phone ?? undefined,
+      emailDomain: d.emailDomain ?? undefined,
+      authorityStatus: d.authorityStatus ?? undefined,
+      commonAuthority: d.commonAuthority ?? undefined,
+      brokerAuthority: d.brokerAuthority ?? undefined,
+      contractAuthority: d.contractAuthority ?? undefined,
+      authorityGrantDate: d.authorityGrantDate ?? undefined,
+      safetyRating: d.safetyRating ?? undefined,
+      outOfService: d.outOfService ?? undefined,
+      bipdOnFile: d.bipdOnFile ?? undefined,
+      bondOnFile: d.bondOnFile ?? undefined,
+      cargoOnFile: d.cargoOnFile ?? undefined,
+      cargoRequired: d.cargoRequired ?? undefined,
+      mcs150Date: d.mcs150Date ?? undefined,
+      mcs150Outdated: d.mcs150Outdated ?? undefined,
+      drivers: d.drivers ?? undefined,
+      powerUnits: d.powerUnits ?? undefined,
+      crashTotal: d.crashTotal ?? undefined,
+      fatalCrash: d.fatalCrash ?? undefined,
+      source: 'fmcsa',
+      fetchedAt: new Date().toISOString(),
+      score: 0,
+      verdict: 'low',
+      flags: [],
+    };
+  } catch (err) {
+    console.warn('[fmcsa] snapshot fallback failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 function pathFor(query: ParsedQuery): string {
   if (query.kind === 'dot') return `/${encodeURIComponent(query.value)}`;
   if (query.kind === 'mc') return `/docket-number/${encodeURIComponent(query.value)}`;
@@ -392,7 +542,25 @@ export type LookupOpts = {
   addressHint?: string;
 };
 
+// Public entry point: runs the lookup chain, then fires a snapshot record
+// in the background so we accumulate identity history with zero added
+// latency on the user's request. The snapshot helper diffs against the
+// last known state and only writes a row when something actually changed.
 export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): Promise<CarrierReport> {
+  const carrier = await lookupCarrierImpl(query, opts);
+  // Fire-and-forget — never block the user lookup on a snapshot write.
+  void (async () => {
+    try {
+      const { recordSnapshot } = await import('./carrier-snapshots');
+      await recordSnapshot(carrier);
+    } catch (err) {
+      console.warn('[fmcsa] snapshot recording failed:', err instanceof Error ? err.message : err);
+    }
+  })();
+  return carrier;
+}
+
+async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Promise<CarrierReport> {
   const webKey = process.env.FMCSA_WEB_KEY;
   if (!webKey) return mockCarrier(query);
 
@@ -422,8 +590,10 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
       const raw = await promise;
       const normalized = normalize(raw, query);
       if (!normalized) throw new Error('Carrier not found in FMCSA response');
+      console.log('[fmcsa] source=FMCSA-primary id-lookup', { kind: query.kind, value: query.value, full: isFullFmcsaResponse(raw) });
       return normalized;
     } catch (err) {
+      console.warn('[fmcsa] FMCSA primary id-lookup failed:', err instanceof Error ? err.message : err);
       // 2. FMCSA primary failed — try Socrata. Socrata's payload is partial
       //    (no fatalCrash, no OOS rates), so we cache it under a SEPARATE
       //    `socrata:` keyspace and never let it masquerade as full FMCSA
@@ -439,6 +609,7 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
             const normalized2 = normalize(raw2, query);
             if (normalized2) {
               await writeCachedFmcsa(`socrata:${key}`, raw2);
+              console.log('[fmcsa] source=Socrata id-lookup', { kind: query.kind, value: query.value });
               return normalized2;
             }
           }
@@ -466,6 +637,16 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
         if (normalized3) return normalized3;
       }
 
+      // 5. Truly final fallback: serve from carrier_snapshots. We have
+      //    5,748 archive snapshots imported plus whatever live searches
+      //    have written. Serving partial reconstructed data beats 503'ing
+      //    paid users who deserve *something* on every search.
+      const snapshot = await snapshotFallback(query);
+      if (snapshot) {
+        console.warn('[fmcsa] FMCSA+Socrata+caches all down — reconstructing from carrier_snapshots:', key);
+        return snapshot;
+      }
+
       throw new Error(
         `FMCSA is temporarily unavailable and we have no cached record for this identifier. ${err instanceof Error ? err.message : 'Unknown error'}`,
       );
@@ -488,6 +669,7 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
       if (normalized.mc) await writeCachedFmcsa(`mc:${normalized.mc}`, raw);
       if (normalized.dot) await writeCachedFmcsa(`dot:${normalized.dot}`, raw);
       await writeCachedFmcsa(nameKey, raw);
+      console.log('[fmcsa] source=FMCSA-primary name-lookup', { name: query.value, full: isFullFmcsaResponse(raw) });
       return normalized;
     }
   } catch (err) {
@@ -523,6 +705,7 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
                 if (fullNormalized.mc) await writeCachedFmcsa(`mc:${fullNormalized.mc}`, fullRaw);
                 if (fullNormalized.dot) await writeCachedFmcsa(`dot:${fullNormalized.dot}`, fullRaw);
                 await writeCachedFmcsa(nameKey, fullRaw);
+                console.log('[fmcsa] source=Socrata-name+FMCSA-by-id', { name: query.value, resolvedMc: fullNormalized.mc, resolvedDot: fullNormalized.dot });
                 return fullNormalized;
               }
             } catch (idErr) {
@@ -543,7 +726,79 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
     console.warn('[fmcsa] Socrata name fallback failed:', err instanceof Error ? err.message : err);
   }
 
-  // 3. Last resort: DB cache by name+opts. Returns whatever was last
+  // 3. Brave-Search alias resolver — when a user searches by a TRADE name
+  //    that doesn't match the FMCSA legal_name / dba_name (e.g.,
+  //    "Super Ego Logistics" → registered as "GRAY FALCON UNITED LLC"),
+  //    Brave can usually find the MC/DOT in news articles, FMCSA registry
+  //    pages, and broker directories. Once we have an id we re-enter the
+  //    lookup pipeline by MC/DOT to get the full payload.
+  try {
+    const { isNameResolverConfigured, resolveNameToMc } = await import('./name-to-mc-resolver');
+    if (isNameResolverConfigured()) {
+      const resolved = await resolveNameToMc(query.value);
+      if (resolved.found && (resolved.mc || resolved.dot)) {
+        console.log('[fmcsa] source=Brave-name-resolver', { name: query.value, resolvedMc: resolved.mc, resolvedDot: resolved.dot, evidence: resolved.evidence.length });
+        const idQuery: ParsedQuery = resolved.mc
+          ? { kind: 'mc', value: resolved.mc }
+          : { kind: 'dot', value: resolved.dot! };
+        try {
+          const idRaw = await fmcsaFetch(pathFor(idQuery), webKey);
+          const idNormalized = normalize(idRaw, idQuery);
+          if (idNormalized) {
+            if (idNormalized.mc) await writeCachedFmcsa(`mc:${idNormalized.mc}`, idRaw);
+            if (idNormalized.dot) await writeCachedFmcsa(`dot:${idNormalized.dot}`, idRaw);
+            await writeCachedFmcsa(nameKey, idRaw);
+            return idNormalized;
+          }
+        } catch (idErr) {
+          // FMCSA primary still down? Try Socrata by the resolved id.
+          try {
+            const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
+            if (isSocrataConfigured()) {
+              const socRaw = await lookupOnSocrata(idQuery, opts);
+              if (socRaw) {
+                const socNormalized = normalize(socRaw, idQuery);
+                if (socNormalized) {
+                  if (socNormalized.mc) await writeCachedFmcsa(`socrata:mc:${socNormalized.mc}`, socRaw);
+                  if (socNormalized.dot) await writeCachedFmcsa(`socrata:dot:${socNormalized.dot}`, socRaw);
+                  await writeCachedFmcsa(nameKey, socRaw);
+                  return socNormalized;
+                }
+              }
+            }
+          } catch { /* fall through to cache */ }
+
+          // Both live sources for the resolved id failed. We almost
+          // certainly have a prior FMCSA response cached under `mc:` or
+          // `dot:` from an earlier scan — serve that rather than 503'ing.
+          // Paid users hate seeing "FMCSA temporarily unavailable" when
+          // we have perfectly good data on hand.
+          const cachedById = await readCachedFmcsa(cacheKeyFor(idQuery));
+          if (cachedById) {
+            const cachedNorm = normalize(cachedById.response, idQuery);
+            if (cachedNorm) {
+              console.warn('[fmcsa] FMCSA + Socrata down for resolved id — serving cached', cacheKeyFor(idQuery));
+              return cachedNorm;
+            }
+          }
+          // Final shot: Socrata-quality cache.
+          const cachedSoc = await readCachedFmcsa(`socrata:${cacheKeyFor(idQuery)}`);
+          if (cachedSoc) {
+            const cachedNorm = normalize(cachedSoc.response, idQuery);
+            if (cachedNorm) {
+              console.warn('[fmcsa] All live down — serving Socrata-cached', `socrata:${cacheKeyFor(idQuery)}`);
+              return cachedNorm;
+            }
+          }
+          console.warn('[fmcsa] Brave-resolved id lookup failed:', idErr instanceof Error ? idErr.message : idErr);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[fmcsa] name-to-mc resolver failed:', err instanceof Error ? err.message : err);
+  }
+
+  // 4. Last resort: DB cache by name+opts. Returns whatever was last
   //    successfully resolved for this exact lookup context.
   const cachedByName = await readCachedFmcsa(nameKey);
   if (cachedByName) {
@@ -554,9 +809,22 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
     }
   }
 
-  throw new Error(
-    'Carrier lookup failed: FMCSA, Socrata, and our cache all returned no match for this name.',
-  );
+  // Distinguish "not found" from "upstream is down" — the verify route uses
+  // the error code to choose between a 404-style "no such carrier" message
+  // and a 503 "try again" message. We've already exhausted FMCSA primary,
+  // Socrata, the Brave name-resolver, AND our cache; a name that survives
+  // all four likely doesn't exist in FMCSA under that exact spelling.
+  throw new NotFoundByNameError(query.value);
+}
+
+export class NotFoundByNameError extends Error {
+  readonly code = 'name_not_found';
+  readonly searched: string;
+  constructor(searched: string) {
+    super(`No carrier registered under "${searched}" was found in FMCSA, Socrata, or via web search.`);
+    this.name = 'NotFoundByNameError';
+    this.searched = searched;
+  }
 }
 
 export function mockCarrier(query: ParsedQuery): CarrierReport {
