@@ -71,7 +71,8 @@ export async function POST(req: Request) {
 
   // Send email (best-effort)
   if (isResendConfigured()) {
-    const site = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+    const { getEmailSiteUrl } = await import('@/lib/email');
+    const site = getEmailSiteUrl();
     const acceptUrl = `${site}/auth/accept-invite?token=${encodeURIComponent(token)}`;
     const inviterName = me.user_metadata?.full_name || me.user_metadata?.name || me.email || 'A teammate';
     const { subject, html } = teamInviteTemplate({

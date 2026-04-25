@@ -26,7 +26,8 @@ async function run(req: Request) {
   const skipQuiet = url.searchParams.get('skipQuiet') !== '0'; // default true: don't email users with zero activity
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+  const { getEmailSiteUrl } = await import('@/lib/email');
+  const siteUrl = getEmailSiteUrl();
 
   const { data: usersPage, error: usersErr } = await svc.auth.admin.listUsers({ perPage: 1000 });
   if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });

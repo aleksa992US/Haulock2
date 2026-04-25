@@ -19,7 +19,8 @@ export async function POST() {
   if (!user?.email) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const name = (user.user_metadata?.full_name || user.user_metadata?.name || '') as string;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+  const { getEmailSiteUrl } = await import('@/lib/email');
+  const siteUrl = getEmailSiteUrl();
   const { subject, html } = welcomeTemplate({ name, siteUrl, recipientEmail: user.email });
 
   // Add to the Resend Audience as part of signup so the user can receive

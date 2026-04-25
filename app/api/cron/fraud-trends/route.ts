@@ -51,7 +51,8 @@ async function run(req: Request) {
     return NextResponse.json({ ok: true, dryRun: true, topic, article });
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+  const { getEmailSiteUrl } = await import('@/lib/email');
+  const siteUrl = getEmailSiteUrl();
 
   // Recipient set: either a single test address (for QA) or every subscribed
   // contact in Resend.

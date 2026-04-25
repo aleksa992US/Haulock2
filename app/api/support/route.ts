@@ -7,8 +7,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function ticketUrl(): string {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com').replace(/\/+$/, '');
-  return `${site}/support`;
+  // Lazy require so this file doesn't pull in lib/email's resend client
+  // when the user is just GET-ing tickets.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getEmailSiteUrl } = require('@/lib/email');
+  return `${getEmailSiteUrl()}/support`;
 }
 
 // List the authenticated user's support tickets, with the message count and

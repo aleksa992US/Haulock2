@@ -52,7 +52,8 @@ async function run(req: Request) {
   let sent = 0;
   let skipped = 0;
   const results: any[] = [];
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+  const { getEmailSiteUrl } = await import('@/lib/email');
+  const siteUrl = getEmailSiteUrl();
   const checkedAt = new Date().toISOString();
 
   for (const row of rows) {

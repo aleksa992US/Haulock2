@@ -15,6 +15,24 @@ export function isResendConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
 }
 
+// Email links should ALWAYS point at production, even when the dev server
+// fires off a real send (high-risk-alert, support reply, etc.). Without this
+// override, dev sends end up with `http://localhost:3001` baked into every
+// "Open report" button. Resolution order:
+//   1. EMAIL_PUBLIC_URL  — explicit override (set this on dev/staging if
+//                          you want emails to point at prod)
+//   2. NEXT_PUBLIC_SITE_URL — only used if it's a real https:// URL
+//   3. 'https://haulock.com' — fallback so we never serve a localhost link
+export function getEmailSiteUrl(): string {
+  const override = (process.env.EMAIL_PUBLIC_URL || '').trim();
+  if (override && /^https?:\/\//i.test(override)) return override.replace(/\/+$/, '');
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || '').trim();
+  if (site && /^https:\/\//i.test(site) && !/localhost|127\.0\.0\.1/.test(site)) {
+    return site.replace(/\/+$/, '');
+  }
+  return 'https://haulock.com';
+}
+
 // HMAC-signed unsubscribe URL. We don't store per-recipient tokens — the
 // signature alone proves "this URL came from us" so Gmail/Outlook clicks
 // and human clicks both verify the same way. Falls back to RESEND_API_KEY
@@ -41,10 +59,9 @@ export function verifyUnsubscribeToken(email: string, token: string): boolean {
 }
 
 export function unsubscribeUrl(email: string): string {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com').replace(/\/+$/, '');
   const e = encodeURIComponent(email.trim().toLowerCase());
   const t = buildUnsubscribeToken(email);
-  return `${site}/api/newsletter/unsubscribe?email=${e}&t=${t}`;
+  return `${getEmailSiteUrl()}/api/newsletter/unsubscribe?email=${e}&t=${t}`;
 }
 
 export type SendAttachment = { filename: string; content: Buffer | Uint8Array; contentType?: string };

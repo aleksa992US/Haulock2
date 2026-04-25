@@ -70,7 +70,8 @@ async function notifyCommunityWatchers(report: { id: string; reporter_user_id: s
       });
     }
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+    const { getEmailSiteUrl } = await import('@/lib/email');
+    const siteUrl = getEmailSiteUrl();
     for (const hit of hits.values()) {
       const u = idToUser.get(hit.user_id);
       if (!u?.email || !u.notifyOn) continue;

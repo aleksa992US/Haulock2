@@ -49,7 +49,8 @@ export async function POST(req: Request) {
     senderName = data?.user?.user_metadata?.full_name || data?.user?.user_metadata?.name || undefined;
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+  const { getEmailSiteUrl } = await import('@/lib/email');
+  const siteUrl = getEmailSiteUrl();
 
   let pdfBytes: Uint8Array;
   try {

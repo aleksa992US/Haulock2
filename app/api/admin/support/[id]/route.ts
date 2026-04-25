@@ -10,8 +10,9 @@ export const dynamic = 'force-dynamic';
 const STATUSES = new Set(['open', 'working', 'solved']);
 
 function ticketUrl(): string {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com').replace(/\/+$/, '');
-  return `${site}/support`;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getEmailSiteUrl } = require('@/lib/email');
+  return `${getEmailSiteUrl()}/support`;
 }
 
 // Look up the ticket owner's preferred email + name. Pulled from the auth
