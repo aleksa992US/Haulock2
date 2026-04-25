@@ -13,18 +13,28 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
 import { PLANS, getPlan, formatLimit } from '@/lib/plans';
 import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
+import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 
 const APP_ROUTES = ['dashboard', 'verify', 'history', 'reports', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
-const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, 'landing'];
+const PUBLIC_ROUTES = ['terms', 'privacy', 'blog'];
+const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
 
 function pathToRoute(pathname: string): string {
   const seg = (pathname || '/').split('/').filter(Boolean)[0] || 'landing';
   return ALL_ROUTES.includes(seg) ? seg : 'landing';
 }
 
-function routeToPath(route: string): string {
-  return route === 'landing' ? '/' : `/${route}`;
+// Pull the second path segment for nested routes (only `/blog/<slug>` for now).
+function pathToSlug(pathname: string): string | null {
+  const parts = (pathname || '/').split('/').filter(Boolean);
+  return parts.length >= 2 ? parts[1] : null;
+}
+
+function routeToPath(route: string, slug?: string | null): string {
+  if (route === 'landing') return '/';
+  if (route === 'blog' && slug) return `/blog/${slug}`;
+  return `/${route}`;
 }
 
 // Lazy-mount each page once and toggle visibility with display:none on subsequent navigations.
@@ -53,9 +63,11 @@ function userFromSession(u: any): any {
     fleet_size: meta.fleet_size || 1,
     createdAt: u.created_at || null,
     notificationEmail: meta.notification_email || '',
+    notifyHighRisk: meta.notify_high_risk !== false,
     notifyWatchlist: meta.notify_watchlist !== false,
     notifyWeeklyDigest: meta.notify_weekly_digest !== false,
     notifyCommunity: meta.notify_community !== false,
+    notifyFraudTrends: meta.notify_fraud_trends !== false,
   };
 }
 
@@ -64,9 +76,18 @@ export default function Haulock() {
   // After the first render we drive `route` purely from local state via history.pushState.
   const initialPath = usePathname();
   const [route, setRoute] = useState<string>(() => pathToRoute(initialPath || '/'));
-  // Sync state when the user uses browser back/forward.
+  // For nested routes (currently only /blog/[slug]) we keep the slug in
+  // separate state. It is set by `navigate()` on internal nav and re-derived
+  // from window.location on browser back/forward + first paint.
+  const [blogSlug, setBlogSlug] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return pathToSlug(initialPath || '/');
+    return pathToSlug(window.location.pathname);
+  });
   useEffect(() => {
-    const onPop = () => setRoute(pathToRoute(window.location.pathname));
+    const onPop = () => {
+      setRoute(pathToRoute(window.location.pathname));
+      setBlogSlug(pathToSlug(window.location.pathname));
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -144,7 +165,11 @@ export default function Haulock() {
   const navigate = (to: string, data?: any) => {
     if (to === 'report' && data) persistReport(data);
     if (to === 'settings' && data?.tab) setSettingsTab(data.tab);
-    const path = routeToPath(to);
+    // `data.slug` is used for blog post navigation. Pass null/undefined to
+    // navigate to the blog index.
+    const slug = to === 'blog' ? (data?.slug ?? null) : null;
+    if (to === 'blog') setBlogSlug(slug);
+    const path = routeToPath(to, slug);
     if (typeof window !== 'undefined' && window.location.pathname !== path) {
       window.history.pushState({}, '', path);
     }
@@ -154,10 +179,13 @@ export default function Haulock() {
 
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
-      {route === 'landing' && <Landing navigate={navigate} />}
+      {route === 'landing' && <Landing navigate={navigate} user={user} />}
       {route === 'login' && <Login navigate={navigate} loginAs={loginAs} />}
       {route === 'signup' && <Signup navigate={navigate} loginAs={loginAs} />}
-      {route === 'pricing' && <Pricing navigate={navigate} />}
+      {route === 'pricing' && <Pricing navigate={navigate} user={user} />}
+      {route === 'terms' && <LegalPage page="terms" navigate={navigate} user={user} />}
+      {route === 'privacy' && <LegalPage page="privacy" navigate={navigate} user={user} />}
+      {route === 'blog' && <BlogPage slug={blogSlug} navigate={navigate} user={user} />}
       {user && ['dashboard', 'verify', 'report', 'reports', 'watchlist', 'alerts', 'settings', 'plan', 'history', 'admin'].includes(route) && (
         <AppShell user={user} route={route} navigate={navigate} logout={logout}>
           <PageSlot routeId="dashboard" current={route}><Dashboard navigate={navigate} user={user} /></PageSlot>
@@ -238,11 +266,11 @@ function formatCount(n: number): string {
   return String(n);
 }
 
-function Landing({ navigate }: any) {
+function Landing({ navigate, user }: any) {
   const live = useLandingStats();
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
-      <Nav navigate={navigate} />
+      <Nav navigate={navigate} user={user} />
 
       <section className="relative overflow-hidden pt-12 pb-24 text-[#0B1E3F]">
         <div className="absolute inset-0 radial-glow pointer-events-none" />
@@ -612,11 +640,17 @@ function Landing({ navigate }: any) {
           </div>
           <div className="space-y-3">
             {[
-              { q: 'Where does Haulock get its data?', a: 'FMCSA for authority, insurance, and safety history. WHOIS and DNS for domain age and email infrastructure. Google Places for address verification. Public social networks for company footprint. Plus a proprietary community-reported fraud network with 4,200+ verified carriers and brokers.' },
-              { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools only vet in one direction — brokers checking carriers. Haulock works both ways: carriers verifying brokers, brokers verifying carriers, and either side verifying shippers. Fraud flows both directions.' },
-              { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings.' },
-              { q: 'Does it work for freight brokers?', a: 'Yes — Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, and to vet other brokers before entering co-brokering relationships. Same website, social, and Google Business checks apply in both directions.' },
-              { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS.' },
+              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And a community-reported fraud network with 4,200+ verified carriers and brokers.' },
+              { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools vet in one direction: brokers checking carriers. Haulock works both ways. Carriers verify brokers, brokers verify carriers, and either side can verify shippers. We also catch things those tools do not, like lookalike domains, chameleon-network shared phone numbers, AI-driven rate confirmation analysis, and identity-history snapshots that show when a carrier quietly changed their address or phone.' },
+              { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scored in about 3 seconds.' },
+              { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
+              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, our community fraud reports, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
+              { q: 'Does it work for freight brokers?', a: 'Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.' },
+              { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
+              { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
+              { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, community fraud reports, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
+              { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
+              { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
             ].map((faq, i) => <FaqItem key={i} {...faq} />)}
           </div>
         </div>
@@ -638,7 +672,9 @@ function Landing({ navigate }: any) {
         </div>
       </section>
 
-      <Footer />
+      <NewsletterSignup />
+
+      <Footer navigate={navigate} />
     </div>
   );
 }
@@ -1585,7 +1621,7 @@ function FaqItem({ q, a }: any) {
   );
 }
 
-function Nav({ navigate }: any) {
+function Nav({ navigate, user }: any) {
   const scrollTo = (id: string) => {
     const el = typeof document !== 'undefined' ? document.getElementById(id) : null;
     if (el) {
@@ -1595,6 +1631,9 @@ function Nav({ navigate }: any) {
       setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     }
   };
+  // Initial in the avatar circle. Falls back to first letter of email
+  // when no name is set so we never render an empty bubble.
+  const initial = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase();
   return (
     <nav className="sticky top-0 z-50 bg-[#F5F3EE] border-b border-[#0B1E3F]/10 text-[#0B1E3F]">
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -1603,11 +1642,30 @@ function Nav({ navigate }: any) {
           <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} className="hover:text-[#0B1E3F]">Home</button>
           <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">What we check</button>
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
-          <button onClick={() => scrollTo('resources')} className="hover:text-[#0B1E3F]">Resources</button>
+          <button onClick={() => navigate('blog')} className="hover:text-[#0B1E3F]">Blog</button>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => navigate('login')} className="px-4 py-2 text-sm text-[#0B1E3F]/70 hover:text-[#0B1E3F]">Log in</button>
-          <button onClick={() => navigate('signup')} className="px-4 py-2 bg-[#0B1E3F] text-white text-sm rounded-full hover:bg-[#0B1E3F]/90 transition">Get started</button>
+          {user ? (
+            <button
+              onClick={() => navigate('dashboard')}
+              className="flex items-center gap-2 pl-1.5 pr-3 py-1 bg-white border border-[#0B1E3F]/15 hover:border-[#0B1E3F]/30 rounded-full transition card-shadow"
+              title={`Open dashboard (${user.email})`}
+            >
+              <div className="w-7 h-7 rounded-full bg-[#0B1E3F] text-white flex items-center justify-center mono text-xs font-semibold">
+                {initial}
+              </div>
+              <div className="text-left leading-tight hidden sm:block">
+                <div className="text-[11px] mono text-[#0B1E3F]/55 uppercase tracking-wider">Signed in</div>
+                <div className="text-xs font-semibold text-[#0B1E3F] max-w-[160px] truncate">{user.name || user.email}</div>
+              </div>
+              <ArrowRight className="w-3.5 h-3.5 text-[#0B1E3F]/45 hidden sm:inline" />
+            </button>
+          ) : (
+            <>
+              <button onClick={() => navigate('login')} className="px-4 py-2 text-sm text-[#0B1E3F]/70 hover:text-[#0B1E3F]">Log in</button>
+              <button onClick={() => navigate('signup')} className="px-4 py-2 bg-[#0B1E3F] text-white text-sm rounded-full hover:bg-[#0B1E3F]/90 transition">Get started</button>
+            </>
+          )}
         </div>
       </div>
     </nav>
@@ -1625,7 +1683,115 @@ function Logo({ white }: any) {
   );
 }
 
-function Footer() {
+function NewsletterSignup() {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'ok' | 'already' | 'error'>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (status === 'sending') return;
+    const trimmed = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setStatus('error');
+      setMessage('Enter a valid email address.');
+      return;
+    }
+    setStatus('sending'); setMessage(null);
+    try {
+      const r = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || 'Could not subscribe. Try again in a minute.');
+      if (j?.alreadyExisted) {
+        setStatus('already');
+        setMessage('You are already on the list. The next briefing arrives Thursday.');
+      } else {
+        setStatus('ok');
+        setMessage('You are on the list. Watch your inbox every Thursday.');
+      }
+      setEmail('');
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err?.message || 'Could not subscribe. Try again in a minute.');
+    }
+  };
+
+  return (
+    <section className="px-6 py-20 bg-[#0B1E3F] border-t border-[#0B1E3F]/10 text-white">
+      <div className="max-w-3xl mx-auto text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-xs mono uppercase tracking-wider text-white/80 mb-6">
+          <Mail className="w-3.5 h-3.5" /> Free weekly newsletter
+        </div>
+        <h2 className="text-4xl md:text-6xl serif italic leading-[1.05] mb-5">
+          Know what scams are hitting the industry this week.
+        </h2>
+        <p className="text-lg text-white/70 max-w-2xl mx-auto mb-10">
+          Every Thursday we send a short briefing on the freight fraud we are seeing across Haulock and the wider industry: new identity tricks, double-brokering patterns, rate con scams, and what to watch out for before you book a load. No fluff, no spam. One email a week.
+        </p>
+        <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3 max-w-xl mx-auto">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); if (status !== 'idle') { setStatus('idle'); setMessage(null); } }}
+            placeholder="you@yourcarrier.com"
+            disabled={status === 'sending'}
+            className="flex-1 px-5 py-3.5 rounded-full bg-white text-[#0B1E3F] placeholder:text-[#0B1E3F]/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6B35] disabled:opacity-60"
+            aria-label="Email address"
+          />
+          <button
+            type="submit"
+            disabled={status === 'sending'}
+            className="px-7 py-3.5 rounded-full bg-[#FF6B35] text-white text-sm font-semibold hover:bg-[#FF6B35]/90 transition flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {status === 'sending' ? (
+              <><div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Subscribing…</>
+            ) : (
+              <>Get the briefing <ArrowRight className="w-4 h-4" /></>
+            )}
+          </button>
+        </form>
+        {message && (
+          <div className={`mt-4 text-sm ${status === 'ok' ? 'text-[#16A34A]' : status === 'already' ? 'text-white/85' : 'text-[#FF6B35]'}`}>{message}</div>
+        )}
+        <div className="mt-6 text-xs text-white/50">
+          One short email every Thursday. Unsubscribe with one click, anytime.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Footer({ navigate }: any) {
+  // Each item is { label, route?, href? }. `route` triggers in-app
+  // navigation (no full page reload), `href` is for plain mailtos / external
+  // links, plain text-only entries are placeholders for now.
+  type Col = { t: string; items: { label: string; route?: string; href?: string }[] };
+  const cols: Col[] = [
+    { t: 'Product', items: [
+      { label: 'Broker verify' },
+      { label: 'Rate con analyzer' },
+      { label: 'Community network' },
+      { label: 'API' },
+    ] },
+    { t: 'Company', items: [
+      { label: 'About' },
+      { label: 'Blog', route: 'blog' },
+      { label: 'Careers' },
+      { label: 'Contact', href: 'mailto:hello@haulock.com' },
+    ] },
+    { t: 'Legal', items: [
+      { label: 'Terms of Use', route: 'terms' },
+      { label: 'Privacy Policy', route: 'privacy' },
+    ] },
+  ];
+  const go = (route: string) => {
+    if (typeof navigate === 'function') navigate(route);
+    else if (typeof window !== 'undefined') window.location.href = `/${route}`;
+  };
   return (
     <footer className="bg-[#0B1E3F] text-white px-6 pt-20 pb-10">
       <div className="max-w-7xl mx-auto">
@@ -1634,15 +1800,36 @@ function Footer() {
             <Logo white />
             <div className="text-sm text-white/70 mt-4 max-w-xs">Know who&apos;s on the other end of every rate con. Trusted by 4,200+ carriers.</div>
           </div>
-          {[
-            { t: 'Product', items: ['Broker verify', 'Rate con analyzer', 'Community network', 'API'] },
-            { t: 'Company', items: ['About', 'Blog', 'Careers', 'Contact'] },
-            { t: 'Legal', items: ['Privacy', 'Terms', 'Security', 'Status'] },
-          ].map((col, i) => (
+          {cols.map((col, i) => (
             <div key={i}>
               <div className="text-xs mono uppercase tracking-wider text-white/50 mb-4">{col.t}</div>
               <div className="space-y-2.5 text-sm text-white/90">
-                {col.items.map((item, j) => <div key={j} className="hover:text-white cursor-pointer">{item}</div>)}
+                {col.items.map((item, j) => {
+                  if (item.route) {
+                    return (
+                      <button
+                        key={j}
+                        type="button"
+                        onClick={() => go(item.route!)}
+                        className="block text-left hover:text-white text-white/90"
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  }
+                  if (item.href) {
+                    return (
+                      <a
+                        key={j}
+                        href={item.href}
+                        className="block hover:text-white text-white/90"
+                      >
+                        {item.label}
+                      </a>
+                    );
+                  }
+                  return <div key={j} className="hover:text-white cursor-default text-white/60" title="Coming soon">{item.label}</div>;
+                })}
               </div>
             </div>
           ))}
@@ -1900,10 +2087,10 @@ function GoogleIcon() {
   );
 }
 
-function Pricing({ navigate }: any) {
+function Pricing({ navigate, user }: any) {
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
-      <Nav navigate={navigate} />
+      <Nav navigate={navigate} user={user} />
       <section className="py-24 px-6 relative bg-[#F5F3EE] text-[#0B1E3F]">
         <div className="absolute inset-0 radial-glow" />
         <div className="relative max-w-7xl mx-auto">
@@ -1935,9 +2122,562 @@ function Pricing({ navigate }: any) {
           <div className="text-center mt-6 text-[#0B1E3F]/60 text-xs mono">All paid plans: monthly or annual (save 2 months). Cancel anytime. No card required for Free.</div>
         </div>
       </section>
-      <Footer />
+      <Footer navigate={navigate} />
     </div>
   );
+}
+
+function LegalPage({ page, navigate, user }: { page: 'terms' | 'privacy'; navigate: any; user?: any }) {
+  const isTerms = page === 'terms';
+  const lastUpdated = 'April 25, 2026';
+  return (
+    <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
+      <Nav navigate={navigate} user={user} />
+      <section className="py-20 px-6 relative bg-[#F5F3EE]">
+        <div className="absolute inset-0 radial-glow pointer-events-none" />
+        <div className="relative max-w-3xl mx-auto">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">{isTerms ? 'Legal' : 'Privacy'}</div>
+          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] mb-3 leading-[1.05]">
+            {isTerms ? 'Terms of Use' : 'Privacy Policy'}
+          </h1>
+          <p className="text-sm text-[#0B1E3F]/55 mono">Last updated: {lastUpdated}</p>
+        </div>
+      </section>
+      <section className="px-6 pb-24">
+        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
+          {isTerms ? <TermsContent /> : <PrivacyContent />}
+          <div className="mt-10 pt-8 border-t border-[#0B1E3F]/10 flex flex-col sm:flex-row gap-3 justify-between text-sm text-[#0B1E3F]/55">
+            <button onClick={() => navigate(isTerms ? 'privacy' : 'terms')} className="text-[#0B1E3F] hover:underline text-left">
+              {isTerms ? 'Read the Privacy Policy' : 'Read the Terms of Use'}
+            </button>
+            <a href="mailto:legal@haulock.com" className="text-[#0B1E3F] hover:underline">Questions? legal@haulock.com</a>
+          </div>
+        </div>
+      </section>
+      <Footer navigate={navigate} />
+    </div>
+  );
+}
+
+function LegalH2({ children }: { children: React.ReactNode }) {
+  return <h2 className="text-2xl serif italic text-[#0B1E3F] mt-10 mb-4 first:mt-0">{children}</h2>;
+}
+function LegalH3({ children }: { children: React.ReactNode }) {
+  return <h3 className="text-base font-semibold text-[#0B1E3F] mt-6 mb-2">{children}</h3>;
+}
+function LegalP({ children }: { children: React.ReactNode }) {
+  return <p className="text-[15px] leading-relaxed text-[#0B1E3F]/80 mb-4">{children}</p>;
+}
+function LegalUl({ children }: { children: React.ReactNode }) {
+  return <ul className="list-disc pl-5 space-y-1.5 text-[15px] leading-relaxed text-[#0B1E3F]/80 mb-4">{children}</ul>;
+}
+
+function TermsContent() {
+  return (
+    <div>
+      <LegalP>
+        Welcome to Haulock. These Terms of Use (&ldquo;Terms&rdquo;) govern your access to and use of the Haulock website, dashboard, API, emails, and any related services (together, the &ldquo;Service&rdquo;). By creating an account, running a lookup, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.
+      </LegalP>
+
+      <LegalH2>1. What Haulock is</LegalH2>
+      <LegalP>
+        Haulock is a research tool for freight carriers, brokers, dispatchers, and other industry users. We aggregate and display public records and third-party data so you can review the operating history, authority status, and risk signals of motor carriers and freight brokers before you do business with them. <strong>Haulock is an information tool, not a recommendation, endorsement, accusation, or rating service.</strong>
+      </LegalP>
+
+      <LegalH2>2. Source of the data we display</LegalH2>
+      <LegalP>
+        The information shown in a Haulock report comes from public and third-party sources. The primary source is the Federal Motor Carrier Safety Administration (FMCSA), specifically the SAFER, L&amp;I, and SMS systems operated by the U.S. Department of Transportation. Other sources include public WHOIS records, public DNS records, public web search results, public business listings, and information voluntarily submitted by other Haulock users.
+      </LegalP>
+      <LegalP>
+        <strong>We do not own, control, generate, or modify the data published by FMCSA or by any other third-party source.</strong> We display what those sources publish, sometimes with formatting, scoring, or aggregation applied. If FMCSA, a search engine, or any other source publishes information that is incomplete, outdated, or incorrect, that information may appear in our reports until the upstream source corrects it. Any dispute about the accuracy of FMCSA data must be raised directly with FMCSA.
+      </LegalP>
+
+      <LegalH2>3. No verification of identity, no guarantee of accuracy</LegalH2>
+      <LegalP>
+        Haulock does not independently verify the identity of any motor carrier, broker, individual, company, address, phone number, email, or website. We do not certify that the entity behind a given MC number, DOT number, or business name is the same entity you are communicating with. We do not guarantee that any data point shown in a report is current, complete, or accurate.
+      </LegalP>
+      <LegalP>
+        The Service is provided strictly on an &ldquo;AS IS&rdquo; and &ldquo;AS AVAILABLE&rdquo; basis. To the maximum extent permitted by law, we disclaim all warranties of any kind, whether express, implied, or statutory, including warranties of merchantability, fitness for a particular purpose, accuracy, completeness, non-infringement, and uninterrupted availability.
+      </LegalP>
+
+      <LegalH2>4. Risk scores and verdicts are signals, not accusations</LegalH2>
+      <LegalP>
+        Haulock may display a numeric risk score, a verdict label (such as LOW, CAUTION, or HIGH), red flags, and similar visual indicators. <strong>These outputs are computed signals based on the upstream data we received at the time of the lookup.</strong> They are not accusations of fraud, criminal activity, or wrongdoing, and they should not be interpreted that way.
+      </LegalP>
+      <LegalUl>
+        <li>A high score does not mean a carrier or broker is fraudulent, dishonest, or unfit to do business with.</li>
+        <li>A low score does not mean a carrier or broker is safe, legitimate, or recommended.</li>
+        <li>Scores can change as upstream data changes. A score that was correct yesterday may be different today.</li>
+      </LegalUl>
+      <LegalP>
+        You agree that you will not represent Haulock&rsquo;s output as a finding of fraud, illegality, or wrongdoing about any specific company or person. You are responsible for any decision you make based on the report.
+      </LegalP>
+
+      <LegalH2>5. Your responsibility for business decisions</LegalH2>
+      <LegalP>
+        You are solely responsible for any decision you make about whether to book a load, accept a tender, dispatch a truck, sign a rate confirmation, extend credit, or enter into any other transaction or relationship with any party you research using Haulock. You should perform additional due diligence appropriate to the size and risk of the transaction, including verifying contact information through independent channels, requiring proper insurance certificates, and following industry best practices. <strong>Haulock is not your broker, not your carrier, not your factor, not your lawyer, and not your insurer.</strong>
+      </LegalP>
+
+      <LegalH2>6. Limitation of liability</LegalH2>
+      <LegalP>
+        To the maximum extent permitted by law, Haulock and its officers, employees, contractors, and affiliates will not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, or for any loss of revenue, profits, business, goodwill, freight, cargo, opportunities, or data, arising out of or relating to your use of the Service, even if we have been advised of the possibility of such damages. Our aggregate liability for any claim arising out of or relating to the Service will not exceed the greater of (a) the amount you paid Haulock in the 12 months before the event giving rise to the claim, or (b) one hundred U.S. dollars (USD 100).
+      </LegalP>
+
+      <LegalH2>7. Indemnification</LegalH2>
+      <LegalP>
+        You agree to indemnify and hold Haulock harmless from any claim, demand, loss, liability, or expense (including reasonable attorneys&rsquo; fees) brought by a third party arising out of or relating to (a) your use of the Service, (b) any decision you made based on a Haulock report, (c) any content you submitted to the Service, including community fraud reports, or (d) your violation of these Terms or any applicable law.
+      </LegalP>
+
+      <LegalH2>8. Acceptable use</LegalH2>
+      <LegalP>You agree not to:</LegalP>
+      <LegalUl>
+        <li>Use the Service to harass, defame, or unlawfully harm any person or company.</li>
+        <li>Republish, resell, scrape, or redistribute Haulock reports as your own product or as a substitute for FMCSA data.</li>
+        <li>Use the Service to make automated decisions that affect a person or company without human review.</li>
+        <li>Attempt to interfere with, reverse engineer, disable, or overload the Service.</li>
+        <li>Submit false or misleading community fraud reports. Submissions must reflect your actual experience and are made under your own name and account.</li>
+      </LegalUl>
+
+      <LegalH2>9. Community fraud reports</LegalH2>
+      <LegalP>
+        Haulock allows users to submit fraud reports about brokers and carriers based on their own experience. These reports are user-generated content. Haulock does not investigate, verify, endorse, or guarantee the accuracy of any community report. By submitting a report, you confirm that the report reflects your own first-hand experience, you take full responsibility for its content, and you grant Haulock a worldwide license to display the report inside the Service. We may remove any report at our discretion.
+      </LegalP>
+
+      <LegalH2>10. Account, plan, and billing</LegalH2>
+      <LegalP>
+        Some Haulock features require a paid plan. Pricing, lookup limits, and feature inclusions are described on the pricing page and may change. Subscriptions renew automatically at the published price until canceled. Refunds are handled at our discretion. You are responsible for keeping your billing details up to date and for the actions taken under your account.
+      </LegalP>
+
+      <LegalH2>11. Intellectual property</LegalH2>
+      <LegalP>
+        The Haulock name, logo, design, software, scoring methodology, report layout, and accompanying materials are owned by Haulock and protected by U.S. and international intellectual property laws. The underlying public data we display (such as FMCSA records) is not owned by us and remains the property of its respective publisher. We grant you a limited, non-exclusive, non-transferable license to use the Service for your own legitimate business purposes, subject to these Terms.
+      </LegalP>
+
+      <LegalH2>12. Suspension and termination</LegalH2>
+      <LegalP>
+        We may suspend or terminate your access to the Service at any time, with or without notice, if we reasonably believe you have violated these Terms, abused the Service, or created risk for Haulock or other users. You may close your account at any time from Settings.
+      </LegalP>
+
+      <LegalH2>13. Changes to these Terms</LegalH2>
+      <LegalP>
+        We may update these Terms from time to time. When we make material changes, we will update the &ldquo;Last updated&rdquo; date at the top of this page and, where appropriate, notify account holders by email. Your continued use of the Service after the change takes effect constitutes acceptance of the updated Terms.
+      </LegalP>
+
+      <LegalH2>14. Governing law and disputes</LegalH2>
+      <LegalP>
+        These Terms are governed by the laws of the State of Delaware, United States, without regard to its conflict of laws rules. Any dispute arising out of or relating to the Service or these Terms will be resolved in the state or federal courts located in Delaware, and you consent to personal jurisdiction in those courts. Where applicable law allows, you and Haulock waive any right to a jury trial and to participate in any class action arising out of or relating to the Service.
+      </LegalP>
+
+      <LegalH2>15. Contact</LegalH2>
+      <LegalP>
+        Legal notices and questions about these Terms can be sent to <a href="mailto:legal@haulock.com" className="text-[#0B1E3F] underline">legal@haulock.com</a>.
+      </LegalP>
+    </div>
+  );
+}
+
+function PrivacyContent() {
+  return (
+    <div>
+      <LegalP>
+        This Privacy Policy explains what information Haulock collects, how we use it, who we share it with, and what choices you have. By using Haulock, you agree to the practices described here.
+      </LegalP>
+
+      <LegalH2>1. Information we collect</LegalH2>
+      <LegalH3>Account information</LegalH3>
+      <LegalP>
+        When you sign up, we collect your email address, name, password (stored hashed by our authentication provider), and optionally your company name, MC number, and DOT number. If you sign in with Google, we receive the email address and basic profile information you authorize.
+      </LegalP>
+      <LegalH3>Usage information</LegalH3>
+      <LegalP>
+        When you use Haulock, we record which lookups you ran, what was returned, your billing plan, IP address, browser type, referrer, and rough timestamps. This is used to operate the Service, prevent abuse, enforce plan limits, and improve features.
+      </LegalP>
+      <LegalH3>Communications</LegalH3>
+      <LegalP>
+        When we send you an email, we record the recipient, subject, type of email (welcome, alert, newsletter, etc.), and the timestamp. This is used to power your account dashboard, the admin newsletter view, and to comply with anti-spam law.
+      </LegalP>
+      <LegalH3>Cookies and similar technologies</LegalH3>
+      <LegalP>
+        We use a small number of cookies and similar technologies to keep you signed in, remember preferences, and protect against abuse. We do not sell or share cookie data for cross-site advertising.
+      </LegalP>
+
+      <LegalH2>2. Where the report data comes from</LegalH2>
+      <LegalP>
+        The information displayed inside a Haulock report (carrier name, address, MC, DOT, authority, insurance, safety rating, crash and inspection history, web presence, social profiles, and similar data points) is collected from public and third-party sources, including FMCSA, public WHOIS, public DNS, public business listings, and search engines. We process and present this data; we do not generate or own it.
+      </LegalP>
+
+      <LegalH2>3. How we use your information</LegalH2>
+      <LegalUl>
+        <li>To run, secure, and improve the Service.</li>
+        <li>To send transactional emails such as welcome messages, login alerts, billing receipts, and high-risk lookup notifications.</li>
+        <li>To send the Haulock fraud briefing newsletter and related industry updates if you opt in.</li>
+        <li>To prevent fraud, abuse, and unauthorized access.</li>
+        <li>To comply with legal obligations.</li>
+      </LegalUl>
+
+      <LegalH2>4. Service providers we share data with</LegalH2>
+      <LegalP>
+        We rely on a small number of trusted vendors to operate the Service. They process information on our behalf:
+      </LegalP>
+      <LegalUl>
+        <li><strong>Supabase</strong> — account, authentication, and database hosting.</li>
+        <li><strong>Resend</strong> — transactional email and newsletter delivery, plus email tracking metadata.</li>
+        <li><strong>Stripe</strong> — billing and subscription management. Card details are handled by Stripe and never stored on Haulock servers.</li>
+        <li><strong>Vercel</strong> — application hosting and edge networking.</li>
+        <li><strong>Google Cloud (Places API, Safe Browsing)</strong> — address verification and basic domain reputation.</li>
+        <li><strong>Brave Search</strong> — public web search for company name and reputation lookups.</li>
+        <li><strong>FMCSA</strong> — official carrier and broker data sourced from public U.S. government systems.</li>
+      </LegalUl>
+      <LegalP>
+        We do not sell your personal information. We do not share it for cross-context behavioral advertising.
+      </LegalP>
+
+      <LegalH2>5. Your choices</LegalH2>
+      <LegalUl>
+        <li><strong>Email preferences.</strong> Manage which emails you receive from Settings &rarr; Notifications, or click the unsubscribe link in any newsletter.</li>
+        <li><strong>Account deletion.</strong> You can delete your Haulock account from Settings. This removes your account, lookups, watchlist, fraud reports, and team membership, and removes you from our newsletter list. Backups may persist for up to 30 days before being purged.</li>
+        <li><strong>Access and correction.</strong> You can update your profile data from Settings. For other requests, email us.</li>
+      </LegalUl>
+
+      <LegalH2>6. Data retention</LegalH2>
+      <LegalP>
+        We retain account and usage data while your account is active and for a reasonable period afterwards to satisfy legal, accounting, and abuse-prevention requirements. Public report data (FMCSA snapshots, etc.) may be retained as part of the Haulock historical archive even after individual accounts are deleted, since it does not include your personal information.
+      </LegalP>
+
+      <LegalH2>7. Security</LegalH2>
+      <LegalP>
+        We use industry-standard practices to protect your information, including encrypted connections, hashed passwords, role-based database access, and access logging. No system is perfectly secure. You are responsible for keeping your password and access credentials confidential.
+      </LegalP>
+
+      <LegalH2>8. International users</LegalH2>
+      <LegalP>
+        Haulock is operated from the United States. If you use the Service from outside the United States, you understand that your information will be processed in the United States, where data protection laws may differ from those in your country.
+      </LegalP>
+
+      <LegalH2>9. Children</LegalH2>
+      <LegalP>
+        Haulock is not directed at children under 16, and we do not knowingly collect personal information from them.
+      </LegalP>
+
+      <LegalH2>10. Changes to this Policy</LegalH2>
+      <LegalP>
+        We may update this Privacy Policy from time to time. When we make material changes, we will update the &ldquo;Last updated&rdquo; date at the top and, where appropriate, notify account holders by email.
+      </LegalP>
+
+      <LegalH2>11. Contact</LegalH2>
+      <LegalP>
+        Privacy questions can be sent to <a href="mailto:privacy@haulock.com" className="text-[#0B1E3F] underline">privacy@haulock.com</a>.
+      </LegalP>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Blog
+// ---------------------------------------------------------------------------
+
+function BlogPage({ slug, navigate, user }: { slug: string | null; navigate: any; user?: any }) {
+  // Lazy-import the catalog so the bundle doesn't pay for it on /landing.
+  // Module-level top-of-file imports are fine since the catalog is small,
+  // but we keep the boundary tidy here.
+  const post = slug ? BLOG_POSTS.find((p) => p.slug === slug) || null : null;
+  const showSinglePost = Boolean(slug && post);
+  const showNotFound = Boolean(slug && !post);
+
+  // SEO: update document title client-side. The Next.js App Router
+  // metadata API is server-only and the whole site lives inside a single
+  // catchall ([[...slug]]/page.tsx) "use client" component, so this is the
+  // pragmatic way to push title updates to the browser tab. Crawlers
+  // already see the page through SSR with a generic title; the real SEO
+  // lift comes from the structured h1/h2 + content under it.
+  useEffect(() => {
+    const original = typeof document !== 'undefined' ? document.title : '';
+    if (typeof document === 'undefined') return;
+    if (showSinglePost && post) {
+      document.title = `${post.title} · Haulock Blog`;
+      setMeta('description', post.description);
+    } else {
+      document.title = 'Freight Fraud Blog · Haulock';
+      setMeta('description', 'Weekly freight fraud breakdowns: identity theft, double brokering, rate confirmation scams, and how carriers and brokers can protect themselves.');
+    }
+    return () => { if (typeof document !== 'undefined') document.title = original; };
+  }, [showSinglePost, post?.slug]);
+
+  return (
+    <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
+      <Nav navigate={navigate} user={user} />
+      {showSinglePost && post ? <BlogPostView post={post} navigate={navigate} /> : showNotFound ? <BlogNotFound navigate={navigate} /> : <BlogIndex navigate={navigate} />}
+      <Footer navigate={navigate} />
+    </div>
+  );
+}
+
+function setMeta(name: string, content: string) {
+  if (typeof document === 'undefined') return;
+  let el = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
+  if (!el) {
+    el = document.createElement('meta');
+    el.name = name;
+    document.head.appendChild(el);
+  }
+  el.content = content;
+}
+
+function BlogIndex({ navigate }: any) {
+  const [latest, ...rest] = BLOG_POSTS;
+  return (
+    <>
+      <section className="py-20 px-6 relative bg-[#F5F3EE]">
+        <div className="absolute inset-0 radial-glow pointer-events-none" />
+        <div className="relative max-w-6xl mx-auto">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">The Haulock Blog</div>
+          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] max-w-3xl">
+            Freight fraud explained, one tactic at a time.
+          </h1>
+          <p className="text-lg text-[#0B1E3F]/65 mt-4 max-w-2xl">
+            Real scenarios, plain English, concrete steps. Written for carriers and brokers who lose real money to this stuff.
+          </p>
+        </div>
+      </section>
+
+      {latest && (
+        <section className="px-6 mb-16">
+          <div className="max-w-6xl mx-auto">
+            <button
+              type="button"
+              onClick={() => navigate('blog', { slug: latest.slug })}
+              className="block w-full text-left bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow hover:border-[#0B1E3F]/30 transition group"
+            >
+              <div className="grid md:grid-cols-2 gap-0">
+                <div className="relative aspect-[4/3] md:aspect-auto bg-[#0B1E3F]/5">
+                  <img src={latest.hero.src} alt={latest.hero.alt} className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.02] transition" loading="eager" />
+                </div>
+                <div className="p-8 md:p-10 flex flex-col justify-center">
+                  <div className="flex items-center gap-2 mb-4 flex-wrap">
+                    <span className="text-[10px] mono uppercase tracking-[0.18em] px-2 py-0.5 rounded-full bg-[#FF6B35]/10 text-[#FF6B35] font-bold">Latest</span>
+                    <span className="text-xs mono text-[#0B1E3F]/55">{formatBlogDate(latest.publishedAt)} · {latest.readingMinutes} min read</span>
+                  </div>
+                  <h2 className="text-2xl md:text-3xl serif italic text-[#0B1E3F] leading-tight mb-3">{latest.title}</h2>
+                  <p className="text-[#0B1E3F]/65 leading-relaxed mb-5">{latest.description}</p>
+                  <span className="text-sm font-semibold text-[#0B1E3F] inline-flex items-center gap-2">
+                    Read the article <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+                  </span>
+                </div>
+              </div>
+            </button>
+          </div>
+        </section>
+      )}
+
+      {rest.length > 0 && (
+        <section className="px-6 pb-24">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-xs mono uppercase tracking-[0.18em] text-[#0B1E3F]/55 mb-6">More from the blog</div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {rest.map((p) => (
+                <button
+                  key={p.slug}
+                  type="button"
+                  onClick={() => navigate('blog', { slug: p.slug })}
+                  className="text-left bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow hover:border-[#0B1E3F]/30 transition group"
+                >
+                  <div className="aspect-[16/10] bg-[#0B1E3F]/5 overflow-hidden">
+                    <img src={p.hero.src} alt={p.hero.alt} className="w-full h-full object-cover group-hover:scale-[1.04] transition" loading="lazy" />
+                  </div>
+                  <div className="p-6">
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      <span className="text-[10px] mono uppercase tracking-[0.18em] px-2 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/65">{p.topic}</span>
+                      <span className="text-[11px] mono text-[#0B1E3F]/45">{formatBlogDate(p.publishedAt)}</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-[#0B1E3F] mb-2 leading-snug">{p.title}</h3>
+                    <p className="text-sm text-[#0B1E3F]/65 leading-relaxed line-clamp-3">{p.description}</p>
+                    <div className="mt-4 text-xs mono text-[#0B1E3F]/55">{p.readingMinutes} min read</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <BlogNewsletterCTA />
+    </>
+  );
+}
+
+function BlogPostView({ post, navigate }: { post: BlogPost; navigate: any }) {
+  const related = BLOG_POSTS.filter((p) => p.slug !== post.slug).slice(0, 3);
+  return (
+    <>
+      <article className="px-6 pt-10 pb-16">
+        <div className="max-w-3xl mx-auto">
+          <button onClick={() => navigate('blog')} className="text-sm text-[#0B1E3F]/60 hover:text-[#0B1E3F] mb-6 inline-flex items-center gap-1">
+            <ChevronRight className="w-3.5 h-3.5 rotate-180" /> Back to blog
+          </button>
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <span className="text-[10px] mono uppercase tracking-[0.18em] px-2 py-0.5 rounded-full bg-[#FF6B35]/10 text-[#FF6B35] font-bold">{post.topic}</span>
+            <span className="text-xs mono text-[#0B1E3F]/55">{formatBlogDate(post.publishedAt)} · {post.readingMinutes} min read</span>
+          </div>
+          <h1 className="text-3xl md:text-5xl serif italic text-[#0B1E3F] leading-[1.05] mb-5">{post.title}</h1>
+          <p className="text-lg text-[#0B1E3F]/65 leading-relaxed mb-8">{post.description}</p>
+          <div className="aspect-[16/9] bg-[#0B1E3F]/5 rounded-2xl overflow-hidden mb-3">
+            <img src={post.hero.src} alt={post.hero.alt} className="w-full h-full object-cover" loading="eager" />
+          </div>
+          <div className="text-[11px] mono text-[#0B1E3F]/45 mb-10">
+            Photo: <a href={post.hero.creditUrl} target="_blank" rel="noopener" className="hover:text-[#0B1E3F]/70 underline">{post.hero.credit}</a> on Unsplash
+          </div>
+
+          <div className="prose-haulock" dangerouslySetInnerHTML={{ __html: post.bodyHtml }} />
+
+          {post.haulockHelps && post.haulockHelpsCopy && (
+            <div className="mt-10 p-6 rounded-2xl border border-[#FF6B35]/25 bg-[#FF6B35]/[0.04]">
+              <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#FF6B35] font-bold mb-2">How Haulock helps</div>
+              <p className="text-[15px] leading-relaxed text-[#0B1E3F]/85 mb-4">{post.haulockHelpsCopy}</p>
+              <button onClick={() => navigate('signup')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-semibold hover:bg-[#0B1E3F]/90 inline-flex items-center gap-2">
+                Try Haulock free <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {!post.haulockHelps && (
+            <div className="mt-10 p-6 rounded-2xl border border-[#0B1E3F]/10 bg-white">
+              <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/55 mb-2">A note from us</div>
+              <p className="text-[15px] leading-relaxed text-[#0B1E3F]/80">
+                We will not pretend Haulock can solve every type of fraud. Some of it (like cargo theft after pickup) lives at the dock and on the road. But Haulock does catch the booking-step impersonation that lets these thefts happen in the first place.
+              </p>
+            </div>
+          )}
+        </div>
+      </article>
+
+      <BlogNewsletterCTA />
+
+      {related.length > 0 && (
+        <section className="px-6 pb-24 pt-4">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-xs mono uppercase tracking-[0.18em] text-[#0B1E3F]/55 mb-6">Keep reading</div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {related.map((p) => (
+                <button
+                  key={p.slug}
+                  type="button"
+                  onClick={() => navigate('blog', { slug: p.slug })}
+                  className="text-left bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow hover:border-[#0B1E3F]/30 transition group"
+                >
+                  <div className="aspect-[16/10] bg-[#0B1E3F]/5 overflow-hidden">
+                    <img src={p.hero.src} alt={p.hero.alt} className="w-full h-full object-cover group-hover:scale-[1.04] transition" loading="lazy" />
+                  </div>
+                  <div className="p-6">
+                    <div className="text-[10px] mono uppercase tracking-[0.18em] px-2 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/65 inline-block mb-3">{p.topic}</div>
+                    <h3 className="text-lg font-semibold text-[#0B1E3F] leading-snug">{p.title}</h3>
+                    <div className="mt-4 text-xs mono text-[#0B1E3F]/55">{p.readingMinutes} min read</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
+function BlogNotFound({ navigate }: any) {
+  return (
+    <section className="px-6 py-24">
+      <div className="max-w-2xl mx-auto text-center bg-white rounded-2xl border border-[#0B1E3F]/10 p-12 card-shadow">
+        <h1 className="text-3xl serif italic text-[#0B1E3F] mb-3">We couldn&apos;t find that post.</h1>
+        <p className="text-[#0B1E3F]/65 mb-6">It may have been renamed or moved. The blog index has the latest articles.</p>
+        <button onClick={() => navigate('blog')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-semibold hover:bg-[#0B1E3F]/90">Back to blog</button>
+      </div>
+    </section>
+  );
+}
+
+function BlogNewsletterCTA() {
+  // Inline subscribe form. Same /api/newsletter/subscribe endpoint the
+  // landing-page form uses, so a successful submit here also fires the
+  // welcome email + adds the contact to Resend.
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'ok' | 'already' | 'error'>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (status === 'sending') return;
+    const trimmed = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setStatus('error');
+      setMessage('Enter a valid email address.');
+      return;
+    }
+    setStatus('sending'); setMessage(null);
+    try {
+      const r = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || 'Could not subscribe. Try again in a minute.');
+      if (j?.alreadyExisted) {
+        setStatus('already');
+        setMessage('You are already on the list. The next briefing arrives Thursday.');
+      } else {
+        setStatus('ok');
+        setMessage('You are on the list. Watch your inbox every Thursday.');
+      }
+      setEmail('');
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err?.message || 'Could not subscribe. Try again in a minute.');
+    }
+  };
+
+  return (
+    <section className="px-6 py-12 mb-16">
+      <div className="max-w-3xl mx-auto bg-[#0B1E3F] text-white rounded-2xl p-8 md:p-10 text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-[10px] mono uppercase tracking-[0.18em] text-white/80 mb-4">
+          <Mail className="w-3.5 h-3.5" /> Free weekly briefing
+        </div>
+        <h2 className="text-2xl md:text-3xl serif italic mb-3">Get the next one in your inbox.</h2>
+        <p className="text-white/70 mb-6 max-w-xl mx-auto">One short article every Thursday on what fraud is hitting freight right now and how to spot it. No fluff. Unsubscribe in one click.</p>
+        <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3 max-w-lg mx-auto">
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); if (status !== 'idle') { setStatus('idle'); setMessage(null); } }}
+            placeholder="you@yourcarrier.com"
+            disabled={status === 'sending'}
+            className="flex-1 px-4 py-3 rounded-full bg-white text-[#0B1E3F] placeholder:text-[#0B1E3F]/40 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6B35] disabled:opacity-60"
+            aria-label="Email address"
+          />
+          <button
+            type="submit"
+            disabled={status === 'sending'}
+            className="px-6 py-3 rounded-full bg-[#FF6B35] text-white text-sm font-semibold hover:bg-[#FF6B35]/90 transition flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {status === 'sending' ? (
+              <><div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Subscribing…</>
+            ) : (
+              <>Subscribe <ArrowRight className="w-4 h-4" /></>
+            )}
+          </button>
+        </form>
+        {message && (
+          <div className={`mt-4 text-sm ${status === 'ok' ? 'text-[#16A34A]' : status === 'already' ? 'text-white/85' : 'text-[#FF6B35]'}`}>{message}</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function formatBlogDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  } catch {
+    return iso;
+  }
 }
 
 function Plan({ user, setPlan }: any) {
@@ -2859,6 +3599,173 @@ function SupabaseStorageCard() {
   );
 }
 
+function NewsletterAdminPanel() {
+  type NlContact = {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    unsubscribed: boolean;
+    createdAt: string | null;
+    inResend: boolean;
+    emailsSent: number;
+    sentByKind: Record<string, number>;
+    lastSentAt: string | null;
+  };
+  type NlData = {
+    configured: boolean;
+    contacts: NlContact[];
+    totalSent: number;
+    sentByKind: Record<string, number>;
+    message?: string;
+  };
+  const [data, setData] = useState<NlData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+
+  const load = async () => {
+    setError(null);
+    try {
+      const r = await fetch('/api/admin/newsletter');
+      const j = await r.json();
+      if (!r.ok) { setError(j?.error || `Failed (${r.status})`); return; }
+      setData(j);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  if (!data && !error) return <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>;
+  if (error) return <div className="bg-white rounded-2xl border border-[#DC2626]/20 p-6 text-sm text-[#DC2626]">{error}</div>;
+  if (!data!.configured) {
+    return (
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-center text-[#0B1E3F]">
+        <Mail className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/30" />
+        <div className="text-lg font-medium mb-2">Newsletter is not configured</div>
+        <div className="text-sm text-[#0B1E3F]/60 mb-2">{data!.message || 'Set RESEND_API_KEY in .env to start tracking newsletter contacts.'}</div>
+      </div>
+    );
+  }
+
+  const f = filter.trim().toLowerCase();
+  const shown = (data!.contacts || []).filter((c) => !f
+    || c.email.toLowerCase().includes(f)
+    || (c.firstName || '').toLowerCase().includes(f)
+    || (c.lastName || '').toLowerCase().includes(f));
+
+  const subscribers = data!.contacts.filter((c) => c.inResend && !c.unsubscribed).length;
+  const unsubscribed = data!.contacts.filter((c) => c.inResend && c.unsubscribed).length;
+  const transactionalOnly = data!.contacts.filter((c) => !c.inResend).length;
+
+  const kindLabel = (k: string) => k === 'high_risk_alert' ? 'High-risk alert'
+    : k === 'welcome' ? 'Welcome'
+    : k === 'report_share' ? 'Report share'
+    : k === 'newsletter' ? 'Newsletter'
+    : k === 'team_invite' ? 'Team invite'
+    : k;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Subscribers</div>
+          <div className="text-2xl font-semibold mt-1 text-[#16A34A]">{subscribers}</div>
+        </div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Unsubscribed</div>
+          <div className="text-2xl font-semibold mt-1 text-[#0B1E3F]/55">{unsubscribed}</div>
+        </div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Transactional only</div>
+          <div className="text-2xl font-semibold mt-1 text-[#0B1E3F]">{transactionalOnly}</div>
+          <div className="text-[10px] text-[#0B1E3F]/45 mt-0.5">Got an email but not on the list</div>
+        </div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Emails sent (12 mo)</div>
+          <div className="text-2xl font-semibold mt-1 text-[#0B1E3F]">{data!.totalSent}</div>
+        </div>
+      </div>
+
+      {Object.keys(data!.sentByKind).length > 0 && (
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Sends by type</div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(data!.sentByKind).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
+              <span key={k} className="px-3 py-1.5 bg-[#0B1E3F]/5 rounded-full text-xs text-[#0B1E3F]">
+                {kindLabel(k)} <span className="mono font-semibold ml-1">{v}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter by email or name…"
+          className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40"
+        />
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-12 text-center text-[#0B1E3F]/55 card-shadow">
+          <Mail className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/25" />
+          <div className="text-base text-[#0B1E3F] mb-1">{data!.contacts.length === 0 ? 'No contacts yet' : 'No matches'}</div>
+          <div className="text-sm">{data!.contacts.length === 0 ? 'New signups will appear here automatically.' : 'Try a different search.'}</div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow">
+          <div className="grid grid-cols-12 gap-3 px-5 py-3 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 bg-[#0B1E3F]/[0.03] border-b border-[#0B1E3F]/5">
+            <div className="col-span-5">Contact</div>
+            <div className="col-span-2">Status</div>
+            <div className="col-span-2">Emails sent</div>
+            <div className="col-span-3">Last activity</div>
+          </div>
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {shown.map((c) => {
+              const fullName = [c.firstName, c.lastName].filter(Boolean).join(' ');
+              const breakdown = Object.entries(c.sentByKind).sort((a, b) => b[1] - a[1]);
+              return (
+                <div key={c.email} className="grid grid-cols-12 gap-3 px-5 py-4 items-center text-[#0B1E3F]">
+                  <div className="col-span-5 min-w-0">
+                    <div className="font-semibold truncate">{c.email}</div>
+                    {fullName && <div className="text-xs text-[#0B1E3F]/55 truncate">{fullName}</div>}
+                  </div>
+                  <div className="col-span-2">
+                    {!c.inResend ? (
+                      <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/55">Transactional</span>
+                    ) : c.unsubscribed ? (
+                      <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/55">Unsubscribed</span>
+                    ) : (
+                      <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#16A34A]/10 text-[#16A34A] font-bold">Subscribed</span>
+                    )}
+                  </div>
+                  <div className="col-span-2">
+                    <div className="font-semibold mono">{c.emailsSent}</div>
+                    {breakdown.length > 0 && (
+                      <div className="text-[10px] text-[#0B1E3F]/55 mt-0.5 truncate" title={breakdown.map(([k, v]) => `${kindLabel(k)}: ${v}`).join(' · ')}>
+                        {breakdown.slice(0, 2).map(([k, v]) => `${kindLabel(k)} ${v}`).join(' · ')}
+                        {breakdown.length > 2 && ` · +${breakdown.length - 2}`}
+                      </div>
+                    )}
+                  </div>
+                  <div className="col-span-3 text-xs">
+                    {c.lastSentAt ? <>Last email <span className="mono text-[#0B1E3F]/70">{timeAgo(c.lastSentAt)}</span></>
+                      : c.createdAt ? <>Joined <span className="mono text-[#0B1E3F]/70">{timeAgo(c.createdAt)}</span></>
+                      : <span className="text-[#0B1E3F]/45">—</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FmcsaPrewarmCard() {
   const [stats, setStats] = useState<{ total: number; staleOver30Days: number; oldest: string | null; newest: string | null } | null>(null);
   const [input, setInput] = useState('');
@@ -2966,7 +3873,7 @@ function Stat({ label, value, sub }: { label: string; value: any; sub?: string |
   );
 }
 
-type AdminTab = 'overview' | 'users' | 'fmcsa' | 'data';
+type AdminTab = 'overview' | 'users' | 'fmcsa' | 'data' | 'newsletter';
 
 function AdminPage({ navigate }: any) {
   const [users, setUsers] = useState<any[] | null>(null);
@@ -3062,10 +3969,11 @@ function AdminPage({ navigate }: any) {
   // Tab definitions. `id` is the state value, `label` shows in the bar,
   // `count` (optional) renders a small badge — handy for the user count.
   const TABS: { id: AdminTab; label: string; count?: number }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'users',    label: 'Users',     count: users?.length ?? undefined },
-    { id: 'fmcsa',    label: 'FMCSA' },
-    { id: 'data',     label: 'Data & storage' },
+    { id: 'overview',   label: 'Overview' },
+    { id: 'users',      label: 'Users',         count: users?.length ?? undefined },
+    { id: 'fmcsa',      label: 'FMCSA' },
+    { id: 'data',       label: 'Data & storage' },
+    { id: 'newsletter', label: 'Newsletter' },
   ];
 
   return (
@@ -3128,6 +4036,9 @@ function AdminPage({ navigate }: any) {
           <SupabaseStorageCard />
         </div>
       )}
+
+      {/* NEWSLETTER: Resend contacts + email_log per-contact send count */}
+      {tab === 'newsletter' && <NewsletterAdminPanel />}
 
       {/* USERS: filter + user list */}
       {tab === 'users' && (<>
@@ -3351,10 +4262,19 @@ function MiniRing({ score, color }: { score: number; color: string }) {
   );
 }
 
+// localStorage key per (mc|dot) — different IDs ack independently, and
+// switching your MC in Settings shouldn't carry an ack from the old one.
+const ownScoreAckKey = (mc: string | null | undefined, dot: string | null | undefined) =>
+  `haulock:ownScoreAck:${mc || ''}|${dot || ''}`;
+
 function OwnScoreChip({ navigate }: { navigate: any }) {
   const res = useCachedFetch<any>('own-score', '/api/profile/own-score');
   const [open, setOpen] = useState(false);
+  // Re-read ack timestamp when the modal opens/closes so the pulse turns off
+  // immediately on close without needing a full re-fetch.
+  const [ackBump, setAckBump] = useState(0);
   const data = res.data;
+
   if (!data || (!data.ownMc && !data.ownDot)) {
     return (
       <button onClick={() => navigate('settings', { tab: 'profile' })} className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-xs text-[#0B1E3F]/60 transition" title="Set your MC or DOT in Settings → Profile to see your own broker score here">
@@ -3369,31 +4289,85 @@ function OwnScoreChip({ navigate }: { navigate: any }) {
   const bgClass = verdict === 'high' ? 'bg-[#DC2626]/10 hover:bg-[#DC2626]/15' : verdict === 'medium' ? 'bg-[#F59E0B]/10 hover:bg-[#F59E0B]/15' : 'bg-[#16A34A]/10 hover:bg-[#16A34A]/15';
   const verdictLabel = verdict === 'high' ? 'HIGH RISK' : verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   const idLabel = data.ownMc ? `MC-${data.ownMc}` : `DOT-${data.ownDot}`;
+
+  // Has the latest auto-refresh produced a change the user hasn't seen yet?
+  // The server sets `report.autoChange.at` (ISO timestamp) when the new
+  // snapshot differs from the previous one. We compare against the local
+  // ack key — once the user opens the modal, we record `at` and the pulse
+  // stops without needing a server round-trip.
+  const change = r.autoChange as { at: string; direction: 'worse' | 'better' | 'neutral'; summary: string } | undefined;
+  const ackedAt = (() => {
+    if (typeof window === 'undefined') return null;
+    void ackBump;
+    try { return localStorage.getItem(ownScoreAckKey(data.ownMc, data.ownDot)); } catch { return null; }
+  })();
+  const hasUnseenChange = !!(change?.at && (!ackedAt || new Date(change.at).getTime() > new Date(ackedAt).getTime()));
+  const pulseColor = change?.direction === 'better' ? '#16A34A' : '#F59E0B'; // amber for "worse" / neutral, green for "better"
+
+  const acknowledge = () => {
+    if (!change?.at || typeof window === 'undefined') return;
+    try { localStorage.setItem(ownScoreAckKey(data.ownMc, data.ownDot), change.at); } catch {}
+    setAckBump((n) => n + 1);
+  };
+
+  const onOpen = () => {
+    setOpen(true);
+    acknowledge();
+  };
+
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className={`flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full transition ${bgClass}`}
-        title={`Your ${idLabel} broker score · click for details`}
-      >
-        <MiniRing score={r.score} color={colorHex} />
-        <div className="text-left leading-tight">
-          <div className="text-[11px] mono text-[#0B1E3F] font-semibold">{idLabel}</div>
-          <div className="text-[10px] mono uppercase tracking-wider font-bold" style={{ color: colorHex }}>{verdictLabel}</div>
-        </div>
-      </button>
-      {open && <OwnScoreModal report={r} cached={r.cached} cachedAt={r.cachedAt} onClose={() => setOpen(false)} onOpenFull={() => { setOpen(false); navigate('report', r); }} />}
+      <div className="relative inline-flex">
+        {hasUnseenChange && (
+          <>
+            {/* Outer ping — radar-style expanding ring, pure CSS via animate-ping. */}
+            <span
+              className="absolute inset-0 rounded-full animate-ping pointer-events-none"
+              style={{ backgroundColor: pulseColor, opacity: 0.35 }}
+              aria-hidden="true"
+            />
+            {/* Always-visible solid ring so the chip stays clearly highlighted
+                between ping cycles. */}
+            <span
+              className="absolute -inset-0.5 rounded-full pointer-events-none"
+              style={{ boxShadow: `0 0 0 2px ${pulseColor}` }}
+              aria-hidden="true"
+            />
+          </>
+        )}
+        <button
+          onClick={onOpen}
+          className={`relative flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full transition ${bgClass}`}
+          title={hasUnseenChange ? `New change on your ${idLabel}: ${change?.summary}` : `Your ${idLabel} broker score · click for details`}
+        >
+          <MiniRing score={r.score} color={colorHex} />
+          <div className="text-left leading-tight">
+            <div className="text-[11px] mono text-[#0B1E3F] font-semibold flex items-center gap-1.5">
+              {idLabel}
+              {hasUnseenChange && (
+                <span className="inline-flex items-center gap-0.5 px-1 py-0 rounded-full text-[9px] font-bold" style={{ backgroundColor: pulseColor, color: '#fff' }}>NEW</span>
+              )}
+            </div>
+            <div className="text-[10px] mono uppercase tracking-wider font-bold" style={{ color: colorHex }}>{verdictLabel}</div>
+          </div>
+        </button>
+      </div>
+      {open && <OwnScoreModal report={r} cached={r.cached} cachedAt={r.cachedAt} change={change} onClose={() => setOpen(false)} onOpenFull={() => { setOpen(false); navigate('report', r); }} />}
     </>
   );
 }
 
-function OwnScoreModal({ report, cached, cachedAt, onClose, onOpenFull }: any) {
+function OwnScoreModal({ report, cached, cachedAt, change, onClose, onOpenFull }: any) {
   const r = report;
   const verdict = r.verdict || (r.score >= 61 ? 'high' : r.score >= 31 ? 'medium' : 'low');
   const verdictColor = verdict === 'high' ? 'text-[#DC2626]' : verdict === 'medium' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
   const verdictBg = verdict === 'high' ? 'bg-[#DC2626]/10' : verdict === 'medium' ? 'bg-[#F59E0B]/10' : 'bg-[#16A34A]/10';
   const verdictLabel = verdict === 'high' ? 'HIGH RISK' : verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   const flags = r.flags || [];
+  const ch: any = change;
+  const changeDirection: 'worse' | 'better' | 'neutral' = ch?.direction || 'neutral';
+  const changeAccent = changeDirection === 'better' ? '#16A34A' : changeDirection === 'worse' ? '#F59E0B' : '#0B1E3F';
+  const changeBg = changeDirection === 'better' ? 'bg-[#16A34A]/10' : changeDirection === 'worse' ? 'bg-[#F59E0B]/10' : 'bg-[#0B1E3F]/5';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/50" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-xl w-full p-6 md:p-8 card-shadow-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -3413,6 +4387,53 @@ function OwnScoreModal({ report, cached, cachedAt, onClose, onOpenFull }: any) {
             <div className="text-xs text-[#0B1E3F]/55 mt-1">Score {r.score} / 100</div>
           </div>
         </div>
+        {ch && (
+          <div className={`mb-4 p-4 rounded-xl ${changeBg} border`} style={{ borderColor: `${changeAccent}33` }}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] mono uppercase tracking-wider font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: changeAccent, color: '#fff' }}>NEW</span>
+              <span className="text-xs mono uppercase tracking-wider" style={{ color: changeAccent }}>
+                {changeDirection === 'better' ? 'Things improved' : changeDirection === 'worse' ? 'Heads up — something changed' : 'Record updated'}
+              </span>
+              <span className="text-[11px] text-[#0B1E3F]/50 ml-auto">{ch.at ? timeAgo(ch.at) : ''}</span>
+            </div>
+            <div className="text-sm text-[#0B1E3F] mb-2">{ch.summary}</div>
+            <ul className="space-y-1 text-xs text-[#0B1E3F]/75">
+              {ch.scoreDelta !== 0 && (
+                <li>
+                  Score <span className="mono font-semibold">{ch.scoreFrom}</span> → <span className="mono font-semibold">{ch.scoreTo}</span>
+                  <span className={ch.scoreDelta > 0 ? 'text-[#DC2626] ml-1.5' : 'text-[#16A34A] ml-1.5'}>({ch.scoreDelta > 0 ? '+' : ''}{ch.scoreDelta})</span>
+                </li>
+              )}
+              {ch.verdictChanged && (
+                <li>Verdict <span className="mono font-semibold uppercase">{ch.verdictFrom || '—'}</span> → <span className="mono font-semibold uppercase">{ch.verdictTo || '—'}</span></li>
+              )}
+              {Array.isArray(ch.newFlags) && ch.newFlags.length > 0 && (
+                <li>
+                  <span className="font-semibold">{ch.newFlags.length} new flag{ch.newFlags.length === 1 ? '' : 's'}:</span>{' '}
+                  <span className="text-[#0B1E3F]/70">{ch.newFlags.slice(0, 3).join(' · ')}{ch.newFlags.length > 3 ? ` · +${ch.newFlags.length - 3} more` : ''}</span>
+                </li>
+              )}
+              {Array.isArray(ch.removedFlags) && ch.removedFlags.length > 0 && (
+                <li>
+                  <span className="font-semibold">{ch.removedFlags.length} flag{ch.removedFlags.length === 1 ? '' : 's'} resolved:</span>{' '}
+                  <span className="text-[#0B1E3F]/70">{ch.removedFlags.slice(0, 3).join(' · ')}{ch.removedFlags.length > 3 ? ` · +${ch.removedFlags.length - 3} more` : ''}</span>
+                </li>
+              )}
+              {ch.authorityChanged && (
+                <li>Authority <span className="mono font-semibold">{ch.authorityFrom || '—'}</span> → <span className="mono font-semibold">{ch.authorityTo || '—'}</span></li>
+              )}
+              {ch.addressChanged && (
+                <li>
+                  <span className="font-semibold">Address changed:</span>{' '}
+                  <span className="text-[#0B1E3F]/70">{ch.addressFrom || '—'} → {ch.addressTo || '—'}</span>
+                </li>
+              )}
+              {ch.outOfServiceChanged && (
+                <li className="font-semibold" style={{ color: changeAccent }}>{r.outOfService ? 'Now flagged out of service' : 'No longer flagged out of service'}</li>
+              )}
+            </ul>
+          </div>
+        )}
         {cached && (
           <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F]/5 rounded-full text-xs text-[#0B1E3F]/60">
             <Clock className="w-3.5 h-3.5" /> Auto-refreshed {cachedAt ? timeAgo(cachedAt) : 'recently'} · refreshes every 24h, free
@@ -4773,7 +5794,7 @@ function Report({ report, navigate }: any) {
           )}
         </div>
       )}
-      {r.sms?.fetched && <FmcsaSmsPanel sms={r.sms} dot={r.dot} />}
+      {r.sms?.fetched && <FmcsaSmsPanel sms={r.sms} dot={r.dot} carrier={r} />}
       {r.legacyReference && (r.legacyReference.rating || (r.legacyReference.emailMatches?.length ?? 0) > 0) && (
         <FmcsaArchivePanel data={r.legacyReference} navigate={navigate} />
       )}
@@ -4912,7 +5933,7 @@ function Report({ report, navigate }: any) {
 // inspection breakdown, and crash detail we pulled from FMCSA SMS. The
 // data is FMCSA's own; we cite the source clearly and link the canonical
 // SMS Overview page so the user can verify directly.
-function FmcsaSmsPanel({ sms, dot }: { sms: any; dot?: string }) {
+function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?: any }) {
   const BASIC_LABELS: Record<string, string> = {
     unsafeDriving: 'Unsafe Driving',
     hoursOfService: 'Hours-of-Service Compliance',
@@ -4990,32 +6011,74 @@ function FmcsaSmsPanel({ sms, dot }: { sms: any; dot?: string }) {
         )}
       </div>
 
-      {/* Carrier overview block — fleet, classification, MCS-150 mileage */}
-      {(overview.totalTrucks != null || overview.totalDrivers != null || overview.cargoHauled || overview.carrierOperation || overview.mcs150Mileage != null) && (
-        <>
-          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Carrier overview (FMCSA)</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
-            {overview.totalTrucks != null && <SmsStatCard label="Total trucks" value={String(overview.totalTrucks)} />}
-            {overview.totalDrivers != null && <SmsStatCard label="Total drivers" value={String(overview.totalDrivers)} />}
-            {overview.carrierOperation && <SmsStatCard label="Operation" value={overview.carrierOperation} />}
-            {overview.cargoHauled && <SmsStatCard label="Cargo hauled" value={overview.cargoHauled} />}
-            {overview.mcs150Mileage != null && (
-              <SmsStatCard
-                label="MCS-150 mileage"
-                value={overview.mcs150Mileage.toLocaleString()}
-                footnote={overview.mcs150MileageYear ? `${overview.mcs150MileageYear} reporting year` : undefined}
-              />
+      {/* Carrier overview block — fleet, classification, MCS-150 mileage.
+          When SMS values differ from the live FMCSA primary values, we
+          render the live value as a footnote so the user understands the
+          gap (SMS data updates monthly; primary updates daily). */}
+      {(overview.totalTrucks != null || overview.totalDrivers != null || overview.cargoHauled || overview.carrierOperation || overview.mcs150Mileage != null) && (() => {
+        const trucksDiffer = overview.totalTrucks != null && carrier?.powerUnits != null && overview.totalTrucks !== carrier.powerUnits;
+        const driversDiffer = overview.totalDrivers != null && carrier?.drivers != null && overview.totalDrivers !== carrier.drivers;
+        const opDiffer = overview.carrierOperation && carrier?.operation && overview.carrierOperation.toLowerCase() !== carrier.operation.toLowerCase();
+        const anyDiffer = trucksDiffer || driversDiffer || opDiffer;
+        return (
+          <>
+            <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Carrier overview (FMCSA SMS)</div>
+              {anyDiffer && (
+                <div className="text-[10px] mono uppercase tracking-wider text-[#F59E0B]">
+                  ⚠ SMS lags primary
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2">
+              {overview.totalTrucks != null && (
+                <SmsStatCard
+                  label="Total trucks"
+                  value={String(overview.totalTrucks)}
+                  alert={trucksDiffer}
+                  footnote={trucksDiffer ? `live: ${carrier.powerUnits}` : undefined}
+                />
+              )}
+              {overview.totalDrivers != null && (
+                <SmsStatCard
+                  label="Total drivers"
+                  value={String(overview.totalDrivers)}
+                  alert={driversDiffer}
+                  footnote={driversDiffer ? `live: ${carrier.drivers}` : undefined}
+                />
+              )}
+              {overview.carrierOperation && (
+                <SmsStatCard
+                  label="Operation"
+                  value={overview.carrierOperation}
+                  footnote={opDiffer ? `live: ${carrier.operation}` : undefined}
+                />
+              )}
+              {overview.cargoHauled && <SmsStatCard label="Cargo hauled" value={overview.cargoHauled} />}
+              {overview.mcs150Mileage != null && (
+                <SmsStatCard
+                  label="MCS-150 mileage"
+                  value={overview.mcs150Mileage.toLocaleString()}
+                  footnote={overview.mcs150MileageYear ? `${overview.mcs150MileageYear} reporting year` : undefined}
+                />
+              )}
+              {overview.hazmatCarrier != null && (
+                <SmsStatCard
+                  label="Hazmat carrier"
+                  value={overview.hazmatCarrier ? 'Yes' : 'No'}
+                  alert={overview.hazmatCarrier}
+                />
+              )}
+            </div>
+            {anyDiffer && (
+              <div className="mb-6 p-3 bg-[#F59E0B]/5 border border-[#F59E0B]/25 rounded-lg text-[11px] text-[#0B1E3F]/75 leading-relaxed">
+                <strong className="text-[#0B1E3F]">Why these numbers differ from the Operations panel above:</strong> FMCSA SMS recomputes its dataset monthly, so it lags real changes by a few weeks. The Operations panel shows the carrier&rsquo;s <strong>current</strong> FMCSA registry values; this section shows what SMS captured during its last monthly refresh. A growing carrier will show a higher live number than SMS does.
+              </div>
             )}
-            {overview.hazmatCarrier != null && (
-              <SmsStatCard
-                label="Hazmat carrier"
-                value={overview.hazmatCarrier ? 'Yes' : 'No'}
-                alert={overview.hazmatCarrier}
-              />
-            )}
-          </div>
-        </>
-      )}
+            {!anyDiffer && <div className="mb-6" />}
+          </>
+        );
+      })()}
 
       {/* BASIC scores grid */}
       <div className="flex items-end justify-between gap-3 mb-2 flex-wrap">
@@ -5919,28 +6982,176 @@ function Watchlist({ navigate }: any) {
   );
 }
 
+// Branded confirm dialog. Replaces window.confirm() so destructive actions
+// share the same look as the rest of the app and can carry richer context
+// (multi-paragraph body, custom labels, danger styling).
+type ConfirmOpts = {
+  title: string;
+  body: React.ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+};
+function ConfirmModal({
+  open, opts, busy, onCancel, onConfirm,
+}: { open: boolean; opts: ConfirmOpts | null; busy?: boolean; onCancel: () => void; onConfirm: () => void }) {
+  if (!open || !opts) return null;
+  const danger = opts.danger !== false;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/50"
+      onClick={() => { if (!busy) onCancel(); }}
+    >
+      <div
+        className="bg-white rounded-2xl max-w-md w-full p-6 md:p-7 card-shadow-lg text-[#0B1E3F]"
+        onClick={(e) => e.stopPropagation()}
+        role="alertdialog"
+        aria-modal="true"
+      >
+        <div className="flex items-start gap-4 mb-4">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${danger ? 'bg-[#DC2626]/10 text-[#DC2626]' : 'bg-[#0B1E3F]/10 text-[#0B1E3F]'}`}>
+            <Trash2 className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-semibold text-[#0B1E3F]">{opts.title}</h3>
+            <div className="text-sm text-[#0B1E3F]/70 mt-2 leading-relaxed whitespace-pre-line">{opts.body}</div>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 disabled:opacity-50"
+          >
+            {opts.cancelLabel || 'Cancel'}
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className={`flex-1 py-2.5 rounded-full text-sm font-medium text-white flex items-center justify-center gap-2 disabled:opacity-60 ${danger ? 'bg-[#DC2626] hover:bg-[#DC2626]/90' : 'bg-[#0B1E3F] hover:bg-[#0B1E3F]/90'}`}
+          >
+            {busy && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+            {busy ? 'Working…' : (opts.confirmLabel || 'Confirm')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SearchHistory({ navigate }: any) {
   const res = useCachedFetch<{ lookups: any[] }>('lookups:200', '/api/lookups?limit=200');
   const items = res.data?.lookups ?? null;
   const [filter, setFilter] = useState('');
   const [rescanId, setRescanId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onDelete = async (id: string) => {
-    if (!window.confirm('Remove this lookup from your history? This does not restore your monthly quota.')) return;
+  // Single pending-confirm state drives the ConfirmModal. The `run` callback
+  // is what gets executed when the user clicks the confirm button — keeping
+  // this here means the modal stays generic and each delete action carries
+  // its own logic with it.
+  const [confirm, setConfirm] = useState<{ opts: ConfirmOpts; run: () => Promise<void>; busy?: boolean } | null>(null);
+
+  const runDeleteOne = async (id: string) => {
     setDeletingId(id); setError(null);
     try {
       const r = await fetch(`/api/lookups?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
       const j = await r.json().catch(() => null);
       if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
-      invalidateCache('lookups:200');
+      invalidateCache('lookups:200', 'alerts');
       res.refetch();
     } catch (err: any) {
       setError(err?.message || 'Delete failed');
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const onDelete = (id: string) => {
+    setConfirm({
+      opts: {
+        title: 'Remove this lookup?',
+        body: 'This hides the scan from your history. Your monthly quota is not refunded — this lookup still counts toward your plan limit.',
+        confirmLabel: 'Remove',
+        danger: true,
+      },
+      run: () => runDeleteOne(id),
+    });
+  };
+
+  // Group delete: nukes EVERY row for this carrier (all repeat scans of the
+  // same MC/DOT/name) in one request. The group row in the UI represents the
+  // carrier, not a single scan, so the delete button must match.
+  const onDeleteGroup = (group: { key: string; latest: any; rows: any[] }) => {
+    const ids = group.rows.map((r: any) => r.id).filter(Boolean);
+    if (ids.length === 0) return;
+    const label = group.latest?.name || 'this carrier';
+    const opts: ConfirmOpts = ids.length === 1
+      ? {
+          title: 'Remove this lookup?',
+          body: `This hides "${label}" from your history. Your monthly quota is not refunded.`,
+          confirmLabel: 'Remove',
+          danger: true,
+        }
+      : {
+          title: `Remove all ${ids.length} lookups for ${label}?`,
+          body: 'Every saved scan for this carrier will be hidden from your history. Your monthly quota is not refunded — these scans still count toward your plan limit.',
+          confirmLabel: `Remove ${ids.length} scans`,
+          danger: true,
+        };
+    setConfirm({
+      opts,
+      run: async () => {
+        setDeletingId(group.key); setError(null);
+        try {
+          const r = await fetch(`/api/lookups?ids=${encodeURIComponent(ids.join(','))}`, { method: 'DELETE' });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+          invalidateCache('lookups:200', 'alerts');
+          res.refetch();
+        } catch (err: any) {
+          setError(err?.message || 'Delete failed');
+        } finally {
+          setDeletingId(null);
+        }
+      },
+    });
+  };
+
+  const onDeleteAll = () => {
+    const count = items?.length ?? 0;
+    if (count === 0) return;
+    setConfirm({
+      opts: {
+        title: `Clear all ${count} lookup${count === 1 ? '' : 's'}?`,
+        body: 'This hides every scan in your history. Your monthly quota is not refunded — these scans still count toward your plan limit. Watchlist entries, fraud reports, and alerts are unaffected.',
+        confirmLabel: 'Clear history',
+        danger: true,
+      },
+      run: async () => {
+        setDeletingAll(true); setError(null);
+        try {
+          const r = await fetch('/api/lookups?all=1', { method: 'DELETE' });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+          invalidateCache('lookups:200', 'usage', 'alerts');
+          res.refetch();
+        } catch (err: any) {
+          setError(err?.message || 'Delete failed');
+        } finally {
+          setDeletingAll(false);
+        }
+      },
+    });
+  };
+
+  const handleConfirm = async () => {
+    if (!confirm) return;
+    setConfirm({ ...confirm, busy: true });
+    try { await confirm.run(); }
+    finally { setConfirm(null); }
   };
 
   const onRescan = async (l: any) => {
@@ -6000,7 +7211,23 @@ function SearchHistory({ navigate }: any) {
           <h1 className="text-4xl serif italic text-[#0B1E3F]">Every lookup you&apos;ve run.</h1>
           <p className="text-[#0B1E3F]/60 mt-2 text-sm">{items == null ? '—' : `${items.length} saved`}</p>
         </div>
-        <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 flex items-center gap-2 card-shadow"><Search className="w-4 h-4" /> New lookup</button>
+        <div className="flex items-center gap-2">
+          {items != null && items.length > 0 && (
+            <button
+              onClick={onDeleteAll}
+              disabled={deletingAll}
+              className="px-4 py-2 border border-[#DC2626]/25 bg-white rounded-full text-sm font-medium text-[#DC2626] hover:bg-[#DC2626]/5 transition flex items-center gap-2 disabled:opacity-50"
+              title="Permanently hide every entry from your history. Quota is not refunded."
+            >
+              {deletingAll ? (
+                <><div className="w-3.5 h-3.5 border-2 border-[#DC2626]/30 border-t-[#DC2626] rounded-full animate-spin" /> Clearing…</>
+              ) : (
+                <><Trash2 className="w-4 h-4" /> Clear all</>
+              )}
+            </button>
+          )}
+          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 flex items-center gap-2 card-shadow"><Search className="w-4 h-4" /> New lookup</button>
+        </div>
       </div>
       <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
         <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search by name, MC, DOT, or query…" className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40" />
@@ -6018,19 +7245,27 @@ function SearchHistory({ navigate }: any) {
       ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow text-[#0B1E3F]">
           <div className="divide-y divide-[#0B1E3F]/5">
-            {groups.map((g) => <HistoryGroup key={g.key} group={g} navigate={navigate} onRescan={onRescan} rescanId={rescanId} onDelete={onDelete} deletingId={deletingId} />)}
+            {groups.map((g) => <HistoryGroup key={g.key} group={g} navigate={navigate} onRescan={onRescan} rescanId={rescanId} onDelete={onDelete} onDeleteGroup={onDeleteGroup} deletingId={deletingId} />)}
           </div>
         </div>
       )}
+      <ConfirmModal
+        open={confirm != null}
+        opts={confirm?.opts ?? null}
+        busy={confirm?.busy}
+        onCancel={() => setConfirm(null)}
+        onConfirm={handleConfirm}
+      />
     </div>
   );
 }
 
-function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, deletingId }: any) {
+function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteGroup, deletingId }: any) {
   const [open, setOpen] = useState(false);
   const l = group.latest;
   const verdict = l.verdict || (l.score >= 61 ? 'high' : l.score >= 31 ? 'medium' : 'low');
   const count = group.rows.length;
+  const groupBusy = deletingId === group.key;
   return (
     <div className="text-[#0B1E3F]">
       <div className="flex items-center gap-4 p-4 md:p-5 hover:bg-[#0B1E3F]/5 transition">
@@ -6052,8 +7287,8 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, deletingI
           <button onClick={() => onRescan(l)} disabled={rescanId === l.id} className="px-3 py-1.5 text-xs bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 rounded-full transition flex items-center gap-1 disabled:opacity-60" title="Runs a fresh FMCSA lookup — uses 1 credit">
             {rescanId === l.id ? (<><div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" /> Scanning…</>) : (<>Scan again</>)}
           </button>
-          <button onClick={() => onDelete(l.id)} disabled={deletingId === l.id} className="w-8 h-8 flex items-center justify-center rounded-full text-[#0B1E3F]/50 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-60" title="Remove from history (does not restore monthly quota)">
-            {deletingId === l.id ? <div className="w-3 h-3 border border-[#DC2626]/40 border-t-[#DC2626] rounded-full animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          <button onClick={() => onDeleteGroup(group)} disabled={groupBusy} className="w-8 h-8 flex items-center justify-center rounded-full text-[#0B1E3F]/50 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-60" title={count > 1 ? `Remove all ${count} lookups for this carrier (does not restore monthly quota)` : 'Remove from history (does not restore monthly quota)'}>
+            {groupBusy ? <div className="w-3 h-3 border border-[#DC2626]/40 border-t-[#DC2626] rounded-full animate-spin" /> : <Trash2 className="w-4 h-4" />}
           </button>
         </div>
       </div>
@@ -6095,14 +7330,61 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, deletingI
 function Alerts({ navigate }: any) {
   const res = useCachedFetch<{ alerts: any[] }>('alerts', '/api/alerts');
   const alerts = res.data?.alerts ?? null;
+  const [dismissingAll, setDismissingAll] = useState(false);
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Dismiss = soft-delete every underlying lookup row in the deduped carrier
+  // group (the row in the UI is one carrier, not one scan). The alert
+  // disappears from this page AND from /history. Quota is not refunded.
+  const dismissGroup = async (key: string, ids: string[]) => {
+    if (ids.length === 0) return;
+    setDismissingId(key); setError(null);
+    try {
+      const r = await fetch(`/api/lookups?ids=${encodeURIComponent(ids.join(','))}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || `Dismiss failed (${r.status})`);
+      invalidateCache('alerts', 'lookups:200');
+      res.refetch();
+    } catch (err: any) {
+      setError(err?.message || 'Dismiss failed');
+    } finally {
+      setDismissingId(null);
+    }
+  };
+  const dismissAll = async () => {
+    const count = alerts?.length ?? 0;
+    if (count === 0) return;
+    if (!window.confirm(
+      `Dismiss all ${count} alert${count === 1 ? '' : 's'}?\n\n` +
+      `This soft-deletes the underlying scans from your history too. Quota is NOT refunded — the scans still count toward your plan limits.\n\n` +
+      `Watchlist entries and fraud reports are unaffected.`
+    )) return;
+    setDismissingAll(true); setError(null);
+    try {
+      // Filter to JUST the alerts slice (high+medium, last 7 days) so
+      // clearing alerts doesn't nuke the user's whole history.
+      const r = await fetch('/api/lookups?all=1&verdicts=high,medium&sinceDays=7', { method: 'DELETE' });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || `Dismiss failed (${r.status})`);
+      invalidateCache('alerts', 'lookups:200');
+      res.refetch();
+    } catch (err: any) {
+      setError(err?.message || 'Dismiss failed');
+    } finally {
+      setDismissingAll(false);
+    }
+  };
 
   // Dedupe: one row per carrier (keyed by MC, DOT, or name in that order).
   // Keep the MOST RECENT scan as the primary row, but track previous scan
   // count + score history so the user sees the trend instead of an
   // identical record repeated 4 times.
   type DedupedAlert = {
+    key: string;
     primary: any;
     scanCount: number;
+    ids: string[];
     history: { score: number; verdict: string; createdAt: string }[];
     newFlagsSinceLastScan: any[];
   };
@@ -6115,36 +7397,52 @@ function Alerts({ navigate }: any) {
       buckets.get(key)!.push(a);
     }
     const out: DedupedAlert[] = [];
-    for (const group of buckets.values()) {
-      // Sort newest first inside each bucket.
+    for (const [key, group] of buckets.entries()) {
       group.sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime());
       const primary = group[0];
       const previous = group[1];
-      // Compute "new flags since last scan" for the latest row.
       let newFlags: any[] = [];
       if (previous?.data?.flags && primary?.data?.flags) {
         const prevTitles = new Set((previous.data.flags as any[]).map((f) => f?.title));
         newFlags = (primary.data.flags as any[]).filter((f) => f?.title && !prevTitles.has(f.title));
       }
       out.push({
+        key,
         primary,
         scanCount: group.length,
+        ids: group.map((g: any) => g.id).filter(Boolean),
         history: group.slice(0, 5).map((g) => ({ score: g.score, verdict: g.verdict, createdAt: g.created_at })),
         newFlagsSinceLastScan: newFlags,
       });
     }
-    // Sort the deduped buckets by their latest scan, newest first.
     out.sort((a, b) => new Date(b.primary.created_at).getTime() - new Date(a.primary.created_at).getTime());
     return out;
   })();
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
-      <div>
-        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Alerts</div>
-        <h1 className="text-4xl serif italic text-[#0B1E3F]">Recent risk signals from your lookups.</h1>
-        <p className="text-[#0B1E3F]/60 mt-2 text-sm">One entry per broker/carrier — newest scan, with what changed since the previous one.</p>
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Alerts</div>
+          <h1 className="text-4xl serif italic text-[#0B1E3F]">Recent risk signals from your lookups.</h1>
+          <p className="text-[#0B1E3F]/60 mt-2 text-sm">One entry per broker/carrier — newest scan, with what changed since the previous one.</p>
+        </div>
+        {alerts != null && alerts.length > 0 && (
+          <button
+            onClick={dismissAll}
+            disabled={dismissingAll}
+            className="px-4 py-2 border border-[#DC2626]/25 bg-white rounded-full text-sm font-medium text-[#DC2626] hover:bg-[#DC2626]/5 transition flex items-center gap-2 disabled:opacity-50 w-fit"
+            title="Soft-delete every alert. Watchlist + fraud reports unaffected. Quota not refunded."
+          >
+            {dismissingAll ? (
+              <><div className="w-3.5 h-3.5 border-2 border-[#DC2626]/30 border-t-[#DC2626] rounded-full animate-spin" /> Dismissing…</>
+            ) : (
+              <><Trash2 className="w-4 h-4" /> Dismiss all</>
+            )}
+          </button>
+        )}
       </div>
+      {error && <div className="text-sm text-[#DC2626]">{error}</div>}
       {alerts == null ? (
         <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
       ) : deduped.length === 0 ? (
@@ -6165,7 +7463,11 @@ function Alerts({ navigate }: any) {
               ? a.score > prev.score ? 'up' : a.score < prev.score ? 'down' : 'flat'
               : null;
             return (
-              <button key={a.id} onClick={() => navigate('report', a.data)} className="w-full text-left flex items-start gap-4 p-5 bg-white rounded-2xl border border-[#0B1E3F]/10 hover:border-[#0B1E3F]/20 card-shadow transition text-[#0B1E3F]">
+              <div
+                key={a.id}
+                onClick={() => navigate('report', a.data)}
+                className="w-full text-left flex items-start gap-4 p-5 bg-white rounded-2xl border border-[#0B1E3F]/10 hover:border-[#0B1E3F]/20 card-shadow transition text-[#0B1E3F] cursor-pointer relative"
+              >
                 <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${sev === 'critical' ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -6211,7 +7513,21 @@ function Alerts({ navigate }: any) {
                     </div>
                   )}
                 </div>
-              </button>
+                {/* Per-row dismiss soft-deletes EVERY scan in the deduped
+                    carrier group (the row represents the carrier, not a
+                    single scan). Stops propagation so the parent
+                    navigate-to-report click doesn't fire. */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); dismissGroup(d.key, d.ids); }}
+                  disabled={dismissingId === d.key}
+                  title={d.scanCount > 1 ? `Dismiss all ${d.scanCount} alerts for this carrier` : 'Dismiss this alert'}
+                  className="absolute top-3 right-3 w-7 h-7 rounded-full text-[#0B1E3F]/35 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-50 flex items-center justify-center"
+                >
+                  {dismissingId === d.key
+                    ? <div className="w-3 h-3 border-2 border-[#DC2626]/30 border-t-[#DC2626] rounded-full animate-spin" />
+                    : <XCircle className="w-4 h-4" />}
+                </button>
+              </div>
             );
           })}
         </div>
@@ -6416,11 +7732,28 @@ function ApiKeysTab({ user, navigate }: any) {
   );
 }
 
+function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-[#0B1E3F]/20 focus:ring-offset-2 disabled:opacity-50 ${checked ? 'bg-[#0B1E3F]' : 'bg-[#0B1E3F]/15'}`}
+    >
+      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
+    </button>
+  );
+}
+
 function NotificationsTab({ user }: any) {
   const [notifEmail, setNotifEmail] = useState<string>(user?.notificationEmail || '');
+  const [highRisk, setHighRisk] = useState<boolean>(user?.notifyHighRisk !== false);
   const [watchlist, setWatchlist] = useState<boolean>(user?.notifyWatchlist !== false);
   const [digest, setDigest] = useState<boolean>(user?.notifyWeeklyDigest !== false);
   const [community, setCommunity] = useState<boolean>(user?.notifyCommunity !== false);
+  const [fraudTrends, setFraudTrends] = useState<boolean>(user?.notifyFraudTrends !== false);
   const [saving, setSaving] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -6436,24 +7769,86 @@ function NotificationsTab({ user }: any) {
     const { error: err } = await sb.auth.updateUser({
       data: {
         notification_email: trimmed || null,
+        notify_high_risk: highRisk,
         notify_watchlist: watchlist,
         notify_weekly_digest: digest,
         notify_community: community,
+        notify_fraud_trends: fraudTrends,
       },
     });
+    if (err) {
+      setSaving(false);
+      setError(err.message);
+      return;
+    }
+    // Resend audience needs to know whether the user wants the fraud-trends
+    // newsletter. Best-effort: log but don't fail the save if Resend is down.
+    fetch('/api/newsletter/sync', { method: 'POST' }).catch(() => { /* non-fatal */ });
     setSaving(false);
-    if (err) setError(err.message);
-    else setInfo('Notification preferences saved.');
+    setInfo('Notification preferences saved.');
   };
 
   const deliveryEmail = notifEmail.trim() || user?.email || '';
 
+  // `live: true` means we are actually sending these emails today.
+  // `live: false` means the toggle is a placeholder — your preference is
+  // saved, but the sender is not yet wired (no cron / no template). Be
+  // honest about it so users don't expect an inbox they won't get.
+  const toggles: { key: string; label: string; description: string; cadence: string; live: boolean; value: boolean; setter: (v: boolean) => void }[] = [
+    {
+      key: 'high-risk',
+      label: 'High-risk broker alerts',
+      description: 'Get an email every time one of your scans returns a HIGH verdict (score 61 or above), sent right after the scan completes.',
+      cadence: 'Per scan, real time',
+      live: true,
+      value: highRisk,
+      setter: setHighRisk,
+    },
+    {
+      key: 'watchlist',
+      label: 'Watchlist updates',
+      description: 'Get an email when a broker on your watchlist gets a new flag, score change, or authority status change. We re-check your watchlist daily and only email you when something meaningful actually changes.',
+      cadence: 'Daily, ~9 AM Eastern',
+      live: true,
+      value: watchlist,
+      setter: setWatchlist,
+    },
+    {
+      key: 'digest',
+      label: 'Weekly fraud digest',
+      description: 'Once a week, a personal summary of your activity: the highest-risk brokers you scanned, what changed on your watchlist, and any new flags Haulock detected. Skipped on quiet weeks.',
+      cadence: 'Mondays, ~10 AM Eastern',
+      live: true,
+      value: digest,
+      setter: setDigest,
+    },
+    {
+      key: 'fraud-trends',
+      label: 'Fraud trends newsletter',
+      description: 'A short weekly briefing on a new freight fraud tactic. Each issue covers one tactic with a real scenario, how to spot it, and concrete steps to protect yourself. Generated from real news sources every week.',
+      cadence: 'Thursdays, ~10 AM Eastern',
+      live: true,
+      value: fraudTrends,
+      setter: setFraudTrends,
+    },
+    {
+      key: 'community',
+      label: 'New community fraud reports',
+      description: 'Get an email when another Haulock user reports a broker you have looked up in the past 30 days or have on your watchlist. Sent in real time when the report is submitted.',
+      cadence: 'Real time',
+      live: true,
+      value: community,
+      setter: setCommunity,
+    },
+  ];
+
   return (
     <div>
-      <h2 className="text-xl font-semibold text-[#0B1E3F] mb-6">Notifications</h2>
+      <h2 className="text-xl font-semibold text-[#0B1E3F] mb-2">Notifications</h2>
+      <p className="text-sm text-[#0B1E3F]/60 mb-6">Choose which Haulock emails you want and where to send them. Toggle anything off and we&apos;ll stop the moment you save.</p>
 
-      <div className="mb-6">
-        <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Notification email <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional)</span></label>
+      <div className="mb-8">
+        <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Delivery email <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional)</span></label>
         <input
           type="email"
           value={notifEmail}
@@ -6464,25 +7859,33 @@ function NotificationsTab({ user }: any) {
         <div className="text-xs text-[#0B1E3F]/55 mt-2 flex items-center gap-1.5">
           <Mail className="w-3.5 h-3.5" />
           {notifEmail.trim()
-            ? <>Alerts will go to <span className="mono text-[#0B1E3F]">{deliveryEmail}</span></>
+            ? <>All emails go to <span className="mono text-[#0B1E3F]">{deliveryEmail}</span></>
             : <>Leave empty to use your profile email: <span className="mono text-[#0B1E3F]">{user?.email}</span></>}
         </div>
       </div>
 
-      <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">What to notify me about</div>
+      <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-3">Email notifications</div>
       <div className="space-y-2 mb-6">
-        <label className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
-          <input type="checkbox" checked={watchlist} onChange={(e) => setWatchlist(e.target.checked)} className="w-4 h-4 rounded" />
-          <span className="text-sm">Email alerts for watchlist changes</span>
-        </label>
-        <label className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
-          <input type="checkbox" checked={digest} onChange={(e) => setDigest(e.target.checked)} className="w-4 h-4 rounded" />
-          <span className="text-sm">Weekly fraud report digest</span>
-        </label>
-        <label className="flex items-center gap-3 p-4 bg-[#0B1E3F]/5 rounded-xl cursor-pointer hover:bg-[#0B1E3F]/10 transition text-[#0B1E3F]">
-          <input type="checkbox" checked={community} onChange={(e) => setCommunity(e.target.checked)} className="w-4 h-4 rounded" />
-          <span className="text-sm">New community report notifications</span>
-        </label>
+        {toggles.map((t) => (
+          <div key={t.key} className={`flex items-start gap-4 p-4 rounded-xl border transition ${t.value ? 'bg-white border-[#0B1E3F]/15' : 'bg-[#0B1E3F]/[0.03] border-[#0B1E3F]/10'}`}>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-[#0B1E3F]">{t.label}</span>
+                {t.live ? (
+                  <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#16A34A]/10 text-[#16A34A] font-bold">SENDING NOW</span>
+                ) : (
+                  <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#F59E0B]/10 text-[#F59E0B] font-bold">COMING SOON</span>
+                )}
+                <span className="text-[11px] mono text-[#0B1E3F]/45">· {t.cadence}</span>
+              </div>
+              <div className="text-xs text-[#0B1E3F]/60 mt-1 leading-relaxed">{t.description}</div>
+              {!t.live && t.value && (
+                <div className="text-[11px] text-[#0B1E3F]/45 mt-1.5">Your preference is saved. We will turn this on as soon as the sender is live.</div>
+              )}
+            </div>
+            <ToggleSwitch checked={t.value} onChange={t.setter} />
+          </div>
+        ))}
       </div>
 
       {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}

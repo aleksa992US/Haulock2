@@ -74,16 +74,62 @@ export async function DELETE(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
-  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+  const idsParam = searchParams.get('ids');
+  const all = searchParams.get('all') === '1';
 
-  // Soft-delete: hide from history UI but keep the row so monthly usage
-  // stays accurate. Quota is not refunded.
+  // Soft-delete only — hide from history UI but keep the row so monthly
+  // usage stays accurate. Quota is not refunded either way.
+  if (all) {
+    const verdicts = (searchParams.get('verdicts') || '').split(',').map((v) => v.trim()).filter(Boolean);
+    const sinceDays = Number(searchParams.get('sinceDays')) || 0;
+
+    let q = supabase
+      .from('lookups')
+      .update({ hidden_at: new Date().toISOString() }, { count: 'exact' })
+      .eq('user_id', user.id)
+      .is('hidden_at', null);
+    if (verdicts.length > 0) q = q.in('verdict', verdicts);
+    if (sinceDays > 0) {
+      const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+      q = q.gte('created_at', since);
+    }
+
+    const { count, error } = await q;
+    if (error) {
+      console.error('[api/lookups DELETE all] Supabase update failed:', { code: error.code, message: error.message, details: error.details, hint: error.hint });
+      return NextResponse.json({ error: error.message, code: error.code, hint: error.hint }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, deleted: count ?? 0 });
+  }
+
+  // Bulk delete by explicit IDs — used when the History UI wants to remove
+  // every row in a grouped carrier (multiple lookups, one carrier).
+  if (idsParam) {
+    const ids = idsParam.split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return NextResponse.json({ error: 'Missing ids' }, { status: 400 });
+    const { count, error } = await supabase
+      .from('lookups')
+      .update({ hidden_at: new Date().toISOString() }, { count: 'exact' })
+      .in('id', ids)
+      .eq('user_id', user.id);
+    if (error) {
+      console.error('[api/lookups DELETE ids] Supabase update failed:', { code: error.code, message: error.message, details: error.details, hint: error.hint, ids });
+      return NextResponse.json({ error: error.message, code: error.code, hint: error.hint }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, deleted: count ?? 0 });
+  }
+
+  if (!id) return NextResponse.json({ error: 'Missing id (or pass ?ids=… / ?all=1)' }, { status: 400 });
+
   const { error } = await supabase
     .from('lookups')
     .update({ hidden_at: new Date().toISOString() })
     .eq('id', id)
     .eq('user_id', user.id);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[api/lookups DELETE id] Supabase update failed:', { code: error.code, message: error.message, details: error.details, hint: error.hint, id });
+    return NextResponse.json({ error: error.message, code: error.code, hint: error.hint }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

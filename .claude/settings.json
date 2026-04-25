@@ -42,7 +42,20 @@
       "Bash(python3 -m json.tool)",
       "Bash(grep -n \"fetch\\(\\\\`/api/verify\" /Users/viceseo/Documents/GitHub/Haulock2/components/Haulock.tsx)",
       "Bash(grep -n \"findChameleonLinks\\(carrier\\).catch\\\\|isWebReputationConfigured\\(\\)\\\\|return { configured: false, ok: false, hits: \\\\[\\\\]\" /Users/viceseo/Documents/GitHub/Haulock2/app/api/verify/route.ts)",
-      "Bash(grep -n \"Treat this as a high-risk carrier even if\\\\|Linked to a flagged carrier \\(\\\\${link\" /Users/viceseo/Documents/GitHub/Haulock2/app/api/verify/route.ts)"
+      "Bash(grep -n \"Treat this as a high-risk carrier even if\\\\|Linked to a flagged carrier \\(\\\\${link\" /Users/viceseo/Documents/GitHub/Haulock2/app/api/verify/route.ts)",
+      "Bash(grep -n \"<div\\\\s*$\\\\|<button\\\\s*$\\\\|className=\\\\\"absolute top-3 right-3\" /Users/viceseo/Documents/GitHub/Haulock2/components/Haulock.tsx)",
+      "Bash(awk 'NR==2802,/^}/{print NR\": \"$0; if\\(NR>2802 && /^}/\\){exit}}' /Users/viceseo/Documents/GitHub/Haulock2/components/Haulock.tsx)",
+      "Bash(openssl rand *)",
+      "Bash(echo \"CRON_SECRET=$\\(openssl rand -hex 32\\)\")",
+      "Bash(echo \"EMAIL_UNSUB_SECRET=$\\(openssl rand -hex 32\\)\")",
+      "Bash(curl -s --max-time 10 \"https://unsplash.com/s/photos/semi-truck\" -A \"Mozilla/5.0\")",
+      "Bash(grep -oE 'photo-1[0-9]{12,13}-[a-f0-9]{12}')",
+      "Bash(curl -s --max-time 10 \"https://unsplash.com/s/photos/semi-truck\" -A \"Mozilla/5.0\" -L)",
+      "Bash(curl -s --max-time 10 \"https://unsplash.com/napi/search/photos?query=semi+truck&per_page=20\" -H \"Accept: application/json\" -A \"Mozilla/5.0\")",
+      "Bash(python3 -c \"import sys, json; d = json.load\\(sys.stdin\\); [print\\(p['id'], '|', p['alt_description'][:60] if p.get\\('alt_description'\\) else '-', '|', p['urls']['regular'].split\\('?'\\)[0]\\) for p in d.get\\('results', []\\)[:20]]\")",
+      "Bash(curl -s --max-time 15 \"https://www.pexels.com/search/semi%20truck/\" -A \"Mozilla/5.0\" -L)",
+      "Bash(curl -s --max-time 15 \"https://www.pexels.com/search/semi%20truck/\" -A \"Mozilla/5.0\" -L -o /tmp/pexels.html)",
+      "Read(//tmp/**)"
     ]
   }
 }

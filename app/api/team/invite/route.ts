@@ -80,7 +80,7 @@ export async function POST(req: Request) {
       planLabel: plan.label,
       acceptUrl,
     });
-    try { await sendEmail({ to: email, subject, html, replyTo: me.email || undefined }); }
+    try { await sendEmail({ to: email, subject, html, replyTo: me.email || undefined, kind: 'team_invite' }); }
     catch (e: any) { console.error('[team/invite] email send failed:', e?.message); }
   }
 

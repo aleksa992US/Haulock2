@@ -28,6 +28,12 @@ export async function POST(req: Request) {
 
   // Delivery preference: notification_email overrides profile email if set.
   const meta = user.user_metadata || {};
+  // Respect the per-user toggle from /settings → Notifications. Default ON
+  // (only `false` opts out) so existing users keep getting alerts unless they
+  // explicitly disable them.
+  if (meta.notify_high_risk === false) {
+    return NextResponse.json({ skipped: 'High-risk alerts disabled by user' }, { status: 200 });
+  }
   const override = typeof meta.notification_email === 'string' ? meta.notification_email.trim() : '';
   const toAddress = override || user.email;
 
@@ -35,7 +41,7 @@ export async function POST(req: Request) {
   const { subject, html } = highRiskAlertTemplate({ report, siteUrl });
 
   try {
-    const sent = await sendEmail({ to: toAddress, subject, html });
+    const sent = await sendEmail({ to: toAddress, subject, html, kind: 'high_risk_alert' });
     return NextResponse.json({ ok: true, id: sent?.id ?? null, sentTo: toAddress });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Send failed' }, { status: 500 });

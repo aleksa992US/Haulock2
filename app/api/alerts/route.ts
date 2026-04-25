@@ -19,6 +19,7 @@ export async function GET() {
     .from('lookups')
     .select('*')
     .eq('user_id', user.id)
+    .is('hidden_at', null)
     .in('verdict', ['high', 'medium'])
     .gte('created_at', since7d)
     .order('created_at', { ascending: false })

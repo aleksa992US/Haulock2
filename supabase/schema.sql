@@ -295,3 +295,18 @@ create policy "team_invites_select_in_team" on public.team_invites for select us
   team_id in (select team_id from public.team_members where user_id = auth.uid())
 );
 -- Inserts/updates/deletes for all three tables go through service role (server only).
+
+-- Append-only log of every transactional/newsletter email sent. Powers
+-- the admin Newsletter tab: per-contact send count + send history. Service
+-- role only (RLS enabled with no user policies).
+create table if not exists public.email_log (
+  id bigserial primary key,
+  to_email text not null,
+  subject text,
+  kind text,
+  resend_id text,
+  sent_at timestamptz not null default now()
+);
+create index if not exists email_log_to_email_idx on public.email_log(lower(to_email));
+create index if not exists email_log_sent_at_idx on public.email_log(sent_at desc);
+alter table public.email_log enable row level security;

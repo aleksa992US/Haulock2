@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
+import { removeContact, isAudienceConfigured } from '@/lib/resend-audience';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,13 @@ export async function DELETE() {
     await svc.from('teams').delete().eq('owner_id', me.id);
   } catch (err) {
     console.warn('[api/profile/delete] cleanup warnings:', err);
+  }
+
+  // Hard-remove from the Resend Audience so the deleted user stops
+  // receiving any future newsletter sends. Best-effort.
+  if (isAudienceConfigured() && me.email) {
+    try { await removeContact(me.email); }
+    catch (err) { console.warn('[api/profile/delete] resend remove failed:', err); }
   }
 
   const { error } = await svc.auth.admin.deleteUser(me.id);

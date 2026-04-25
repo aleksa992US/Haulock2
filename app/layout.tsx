@@ -3,10 +3,10 @@ import './globals.css';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 
-const TITLE = 'Haulock — Verify any broker or carrier. Stop freight fraud.';
+const TITLE = 'Haulock: Verify any broker or carrier. Stop freight fraud.';
 const DESCRIPTION =
-  'Haulock verifies freight brokers and carriers in seconds using official data from the Federal Motor Carrier Safety Administration (FMCSA). Cross-checks FMCSA SAFER, company website, social profiles, Google Business address, and domain records to catch double-brokers, ghost MCs, and spoofed identities — before you hook the trailer or hand off the load.';
-const SHORT_DESC = 'Official FMCSA data + website, social, and domain checks. Verify any broker or carrier in 2.1 seconds.';
+  'Haulock verifies freight brokers and carriers in seconds using official data from the Federal Motor Carrier Safety Administration (FMCSA). Cross-checks FMCSA SAFER, company website, social profiles, Google Business address, and domain records to catch double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.';
+const SHORT_DESC = 'Official FMCSA data plus website, social, and domain checks. Verify any broker or carrier in 2.1 seconds.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -204,7 +204,7 @@ const jsonLd = {
           acceptedAnswer: {
             '@type': 'Answer',
             text:
-              'Yes. Haulock is bidirectional — carriers use it to verify brokers before booking, and brokers use it to verify carriers before dispatching a load or entering co-brokering relationships.',
+              'Yes. Haulock is bidirectional. Carriers use it to verify brokers before booking, and brokers use it to verify carriers before dispatching a load or entering co-brokering relationships.',
           },
         },
         {

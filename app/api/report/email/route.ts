@@ -85,6 +85,7 @@ export async function POST(req: Request) {
       subject: tpl.subject,
       html: tpl.html,
       replyTo: senderEmail,
+      kind: 'report_share',
       attachments: [
         {
           filename: reportPdfFilename(report),

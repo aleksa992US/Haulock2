@@ -98,3 +98,55 @@ body {
     0 4px 12px rgba(11, 30, 63, 0.06),
     0 24px 48px -12px rgba(11, 30, 63, 0.15);
 }
+
+/* Blog post body styles. Applied to .prose-haulock containers that hold
+   AI/markdown-style HTML so headings, lists, and links render cleanly
+   without per-element inline styles. */
+.prose-haulock {
+  color: rgba(11, 30, 63, 0.85);
+  font-size: 17px;
+  line-height: 1.7;
+}
+.prose-haulock h2 {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-style: italic;
+  font-size: 28px;
+  line-height: 1.15;
+  color: #0B1E3F;
+  margin: 40px 0 16px;
+}
+.prose-haulock h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0B1E3F;
+  margin: 28px 0 10px;
+}
+.prose-haulock p {
+  margin: 0 0 18px;
+}
+.prose-haulock ol,
+.prose-haulock ul {
+  margin: 0 0 22px;
+  padding-left: 22px;
+}
+.prose-haulock li {
+  margin-bottom: 8px;
+}
+.prose-haulock a {
+  color: #0B1E3F;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.prose-haulock a:hover {
+  color: #FF6B35;
+}
+.prose-haulock code {
+  background: rgba(11, 30, 63, 0.06);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: 'JetBrains Mono', Menlo, monospace;
+  font-size: 0.92em;
+}
+.prose-haulock strong {
+  color: #0B1E3F;
+}

@@ -1,10 +1,97 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
+import { sendEmail, communityReportTemplate, isResendConfigured } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ALLOWED_TYPES = ['non_payment', 'double_broker', 'identity_fraud', 'fake_load', 'other'];
+
+// Notify every Haulock user who has interacted with this broker (looked
+// up in the last 30 days OR has it on their watchlist) and has community
+// alerts turned on. Best-effort: failures are logged, never thrown.
+async function notifyCommunityWatchers(report: { id: string; reporter_user_id: string; mc?: string | null; dot?: string | null; name: string; type: string; amount: number | null; description: string | null }): Promise<void> {
+  if (!isResendConfigured()) return;
+  if (!report.mc && !report.dot) return;
+  const svc = getServiceSupabase();
+  if (!svc) return;
+
+  try {
+    const sinceLookup = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    type Hit = { user_id: string; reason: 'looked-up' | 'watching' };
+    const hits = new Map<string, Hit>();
+
+    // Watchlist matches.
+    {
+      const orParts: string[] = [];
+      if (report.mc) orParts.push(`mc.eq.${report.mc}`);
+      if (report.dot) orParts.push(`dot.eq.${report.dot}`);
+      if (orParts.length > 0) {
+        const { data } = await svc.from('watchlist').select('user_id').or(orParts.join(','));
+        for (const row of data || []) {
+          if (row.user_id === report.reporter_user_id) continue;
+          hits.set(row.user_id, { user_id: row.user_id, reason: 'watching' });
+        }
+      }
+    }
+    // Lookup matches in the past 30 days.
+    {
+      const orParts: string[] = [];
+      if (report.mc) orParts.push(`mc.eq.${report.mc}`);
+      if (report.dot) orParts.push(`dot.eq.${report.dot}`);
+      if (orParts.length > 0) {
+        const { data } = await svc.from('lookups')
+          .select('user_id')
+          .or(orParts.join(','))
+          .is('hidden_at', null)
+          .gte('created_at', sinceLookup);
+        for (const row of data || []) {
+          if (row.user_id === report.reporter_user_id) continue;
+          if (!hits.has(row.user_id)) hits.set(row.user_id, { user_id: row.user_id, reason: 'looked-up' });
+        }
+      }
+    }
+
+    if (hits.size === 0) return;
+
+    // Resolve user emails + the notify_community preference for the recipient set.
+    const ids = Array.from(hits.keys());
+    const { data: usersPage } = await svc.auth.admin.listUsers({ perPage: 1000 });
+    const idToUser = new Map<string, { email: string; notifyOn: boolean; notificationEmail: string | null }>();
+    for (const u of usersPage?.users || []) {
+      if (!ids.includes(u.id)) continue;
+      const meta = (u.user_metadata || {}) as any;
+      idToUser.set(u.id, {
+        email: u.email || '',
+        notifyOn: meta.notify_community !== false,
+        notificationEmail: typeof meta.notification_email === 'string' && meta.notification_email.trim() ? meta.notification_email.trim() : null,
+      });
+    }
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
+    for (const hit of hits.values()) {
+      const u = idToUser.get(hit.user_id);
+      if (!u?.email || !u.notifyOn) continue;
+      const toAddress = u.notificationEmail || u.email;
+      try {
+        const { subject, html } = communityReportTemplate({
+          report: { name: report.name, mc: report.mc, dot: report.dot, type: report.type, description: report.description, amount: report.amount },
+          reason: hit.reason,
+          recipientEmail: toAddress,
+          siteUrl,
+        });
+        await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
+        // Polite spacing for Resend's free-tier rate limit.
+        await new Promise((r) => setTimeout(r, 400));
+      } catch (err: any) {
+        console.warn('[fraud-reports] community notify send failed', { to: toAddress, message: err?.message });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[fraud-reports] community notify failed', { message: err?.message });
+  }
+}
 
 export async function GET(req: Request) {
   const supabase = getServerSupabase();
@@ -70,6 +157,20 @@ export async function POST(req: Request) {
 
   const { data, error } = await supabase.from('fraud_reports').insert(row).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Fire-and-forget community notify. We never await — the user's "report
+  // submitted" UX shouldn't wait for outbound emails.
+  notifyCommunityWatchers({
+    id: data.id,
+    reporter_user_id: user.id,
+    mc: row.mc,
+    dot: row.dot,
+    name: row.name,
+    type: row.type,
+    amount: row.amount,
+    description: row.description,
+  }).catch(() => {});
+
   return NextResponse.json({ report: data });
 }
 
