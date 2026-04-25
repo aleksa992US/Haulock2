@@ -5999,6 +5999,7 @@ function Report({ report, navigate }: any) {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error || `Send failed (${res.status})`);
+      track('report_shared_email', { recipients: recipients.length, mc: r.mc || undefined, dot: r.dot || undefined });
       setEmailSent(true);
       setTimeout(() => { setEmailOpen(false); setEmailSent(false); setEmailTo(''); setEmailMessage(''); }, 1500);
     } catch (e: any) {
@@ -6031,6 +6032,7 @@ function Report({ report, navigate }: any) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      track('report_exported_pdf', { mc: r.mc || undefined, dot: r.dot || undefined });
     } catch (e: any) {
       setExportError(e?.message || 'PDF export failed');
       setTimeout(() => setExportError(null), 4000);
