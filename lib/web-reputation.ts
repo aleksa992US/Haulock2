@@ -28,14 +28,25 @@ export type WebReputationResult = {
   error?: string;
 };
 
+// Pure registries / lookup pages. EVERY active carrier appears on these,
+// so a hit here is worthless as a fraud signal — the company name is on
+// the page just because the company is in the registry. Excluded BEFORE
+// the trusted-domain check so they never count toward the fraud flag.
+const REGISTRY_DOMAINS_NEVER_FRAUD: Array<RegExp> = [
+  /(?:^|\.)safer\.fmcsa\.dot\.gov$/i,
+  /(?:^|\.)mobile\.fmcsa\.dot\.gov$/i,
+  /(?:^|\.)ai\.fmcsa\.dot\.gov$/i,           // SMS — public registry, not fraud coverage
+  /(?:^|\.)li-public\.fmcsa\.dot\.gov$/i,    // L&I licensing public lookup
+  /(?:^|\.)nccdb\.fmcsa\.dot\.gov$/i,        // NCCDB — complaint forms exist for every carrier; the form itself is not a fraud signal
+];
+
 // Domains where a hit on "{name} fraud / scam" is meaningful. Random blogs
 // and SEO spam get filtered out. Government, journalism, and specific
 // trucking forums are the trustworthy signals.
 const TRUSTED_REPUTATION_DOMAINS: Array<RegExp> = [
-  // Government / regulatory
-  /(?:^|\.)fmcsa\.dot\.gov$/i,
-  /(?:^|\.)nccdb\.fmcsa\.dot\.gov$/i,
-  /(?:^|\.)safer\.fmcsa\.dot\.gov$/i,
+  // Government / regulatory (excluding the pure registries above, which
+  // are filtered separately).
+  /(?:^|\.)fmcsa\.dot\.gov$/i,                // root fmcsa.dot.gov — enforcement / advisories
   /(?:^|\.)ftc\.gov$/i,
   /(?:^|\.)fbi\.gov$/i,
   /(?:^|\.)justice\.gov$/i,
@@ -188,6 +199,10 @@ export async function checkWebReputation(name: string, opts: WebReputationOpts =
       if (tokens.length === 0) continue;
       const allTokensMatch = tokens.every((t) => blob.includes(t.toLowerCase()));
       if (!allTokensMatch) continue;
+      // Registry pages (FMCSA SAFER, NCCDB, etc.) get filtered out before
+      // anything else. Every active carrier has a snapshot on these — a
+      // hit there means the company exists, not that it has fraud coverage.
+      if (REGISTRY_DOMAINS_NEVER_FRAUD.some((re) => re.test(hit.domain))) continue;
       const enriched = { ...hit, query: trimmed[i].q };
       allHits.push(enriched);
       if (TRUSTED_REPUTATION_DOMAINS.some((re) => re.test(hit.domain))) {

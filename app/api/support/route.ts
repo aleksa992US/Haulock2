@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { sendEmail, supportReceivedTemplate, isResendConfigured } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+function ticketUrl(): string {
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com').replace(/\/+$/, '');
+  return `${site}/support`;
+}
 
 // List the authenticated user's support tickets, with the message count and
 // the timestamp of the most recent message so the client can show "last
@@ -75,6 +81,22 @@ export async function POST(req: Request) {
   if (mErr) {
     console.warn('[api/support POST] ticket inserted but first message failed:', mErr);
     return NextResponse.json({ error: mErr.message, ticketId: ticket.id }, { status: 500 });
+  }
+
+  // Fire-and-forget "we got your ticket" confirmation. Best-effort; we
+  // never block the response on Resend availability.
+  if (isResendConfigured() && user.email) {
+    const meta = (user.user_metadata || {}) as any;
+    const override = typeof meta.notification_email === 'string' ? meta.notification_email.trim() : '';
+    const toAddress = override || user.email;
+    const tpl = supportReceivedTemplate({
+      subject,
+      preview: message.slice(0, 600),
+      recipientEmail: toAddress,
+      ticketUrl: ticketUrl(),
+    });
+    sendEmail({ to: toAddress, subject: tpl.subject, html: tpl.html, kind: 'support_received' })
+      .catch((err) => console.warn('[api/support POST] receipt email failed:', err?.message));
   }
 
   return NextResponse.json({ ticket });

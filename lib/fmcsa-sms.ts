@@ -22,6 +22,24 @@ export type SmsBasic = {
   // category. The thresholds vary by category; we detect them either from
   // an "Alert" indicator on the page or by comparing measure to threshold.
   alert: boolean;
+  // The fields below come from the per-BASIC subpage (e.g.
+  // /SMS/Carrier/<DOT>/BASIC/UnsafeDriving.aspx). They are richer than
+  // the Overview row, which often hides the percentile and event group
+  // for carriers below FMCSA's display threshold.
+  // ----- subpage-derived (optional) -----
+  // FMCSA percentile rank. Lower = better, > 65–80 (varies by BASIC) =
+  // alert. NOT published for every carrier — FMCSA suppresses it when
+  // the carrier is below their data-sufficiency threshold.
+  percentile?: number;
+  // Number of acute/critical violations FMCSA discovered through
+  // investigations. Always 0 or absent for clean carriers.
+  acuteCriticalViolations?: number;
+  // The carrier's "safety event group" — a cohort range like
+  // "22-57 driver inspections" used to compare against peers.
+  safetyEventGroup?: string;
+  // Whether the subpage was successfully fetched. When false the only
+  // populated fields are the Overview-row ones (measure / inspections / alert).
+  subpageFetched?: boolean;
 };
 
 export type SmsInspections = {
@@ -84,7 +102,13 @@ const SMS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Cache namespace version — bump whenever the parser changes shape so
 // older broken rows are bypassed instead of served. v3 = added carrier
 // overview parsing (fleet size, cargo, MCS-150 mileage) to the payload.
-const SMS_CACHE_VERSION = 'v3';
+// v4: power-units regex now anchors on "<number> Current Power Units" so
+// the SMS overview page's decoy "Power Units 6 Months Ago" doesn't get
+// scraped as a fleet of 6. v5: per-BASIC subpages are now fetched and
+// merged into each SmsBasic with percentile / acuteCriticalViolations /
+// safetyEventGroup, so reports show real values where the Overview page
+// hid them under "data-sufficiency threshold".
+const SMS_CACHE_VERSION = 'v5';
 
 export async function fetchSmsData(dot: string): Promise<SmsData> {
   const empty: SmsData = {
@@ -108,7 +132,14 @@ export async function fetchSmsData(dot: string): Promise<SmsData> {
   try {
     const html = await fetchSmsHtml(dot);
     const parsed = parseSmsHtml(html, dot);
-    if (parsed.fetched) await writeSmsCache(dot, parsed);
+    // Enrich with per-BASIC subpages — when the Overview hides the
+    // measure/percentile due to FMCSA's data-sufficiency rules, the
+    // subpages still publish the raw values. Fetched in parallel so the
+    // total wall time stays close to the slowest single request.
+    if (parsed.fetched) {
+      await enrichWithBasicSubpages(parsed);
+      await writeSmsCache(dot, parsed);
+    }
     return parsed;
   } catch (err: any) {
     console.warn('[fmcsa-sms] fetch failed for DOT', dot, ':', err?.message);
@@ -143,6 +174,130 @@ async function fetchSmsHtml(dot: string): Promise<string> {
     return await res.text();
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+// ----- per-BASIC subpages ----------------------------------------------
+
+// Map of (basics-key) → URL slug FMCSA uses for that BASIC's subpage.
+const BASIC_SUBPAGE_SLUGS: Record<keyof SmsData['basics'], string> = {
+  unsafeDriving:        'UnsafeDriving',
+  hoursOfService:       'HOSCompliance',
+  driverFitness:        'DriverFitness',
+  controlledSubstances: 'Substance',
+  vehicleMaintenance:   'VehicleMaintenance',
+  hazmat:               'HMCompliance',
+  crashIndicator:       'CrashIndicator',
+};
+
+// Fetches one BASIC subpage for the given DOT. Short timeout because the
+// caller fans 7 of these out in parallel.
+async function fetchBasicSubpage(dot: string, slug: string): Promise<string | null> {
+  const url = `${SMS_BASE}/${encodeURIComponent(dot)}/BASIC/${slug}.aspx`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'HaulockBot/1.0 (+https://haulock.com) carrier-fraud-prevention',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Pull the rich fields out of a single BASIC subpage. FMCSA's layout puts
+// "Measure: X.YZ" and (when sufficient) "Percentile: NN" near the top.
+// Acute/Critical Violation counts appear inside an Investigation Results
+// block. Returns a partial that the caller merges into the existing basic.
+function parseBasicSubpage(html: string): Partial<SmsBasic> | null {
+  if (!html) return null;
+  const flat = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+
+  // Page is "page not available / insufficient data" if it's tiny — FMCSA
+  // serves a barebones template. Don't extract anything from those.
+  if (flat.length < 4000) return null;
+
+  const out: Partial<SmsBasic> = { subpageFetched: true };
+
+  // Measure value, e.g. "On-Road Performance Measure: 2.36" or simply
+  // "Measure: 0.16". Decimal optional.
+  const measureRe = /(?:On-Road\s*Performance\s*)?Measure\s*[:\s]\s*([\d]+(?:\.\d+)?)/i;
+  const measureMatch = flat.match(measureRe);
+  if (measureMatch) {
+    const m = parseFloat(measureMatch[1]);
+    if (Number.isFinite(m)) out.measure = m;
+  }
+
+  // Percentile, e.g. "Hazardous Materials Compliance 80% 80% 80%". The
+  // first integer percent we see in the BASIC chart is the carrier's rank
+  // for the relevant Safety Event Group. We capture only the first.
+  const pctRe = /(?:Percentile\s*[:\s]*)?(\d{1,3})\s*%\s*(?:Percentile)?/i;
+  // Restrict to the area before the FMCSA template footer to avoid false
+  // matches in the boilerplate.
+  const head = flat.slice(0, 8000);
+  const pctMatch = head.match(/Percentile\s*[:\s]*(\d{1,3})/i);
+  if (pctMatch) {
+    const p = parseInt(pctMatch[1], 10);
+    if (Number.isFinite(p) && p >= 0 && p <= 100) out.percentile = p;
+  }
+
+  // Acute/Critical Violations count, e.g. "Acute/Critical Violations: 0".
+  const acuteRe = /Acute\s*\/?\s*Critical\s*Violations?\s*[:\s]*(\d+)/i;
+  const acuteMatch = flat.match(acuteRe);
+  if (acuteMatch) {
+    const v = parseInt(acuteMatch[1], 10);
+    if (Number.isFinite(v) && v >= 0) out.acuteCriticalViolations = v;
+  }
+
+  // Safety event group, a cohort string like "22-57 driver inspections
+  // with Unsafe Driving Violations". Capture up to but not including the
+  // next big section header.
+  const groupRe = /Safety\s*Event\s*Group\s*[:\s]\s*([^.]{2,80}?)(?=\s+(?:Investigation|Inspection|Carrier|This|To\s+see|See\s+the|2026))/i;
+  const groupMatch = flat.match(groupRe);
+  if (groupMatch) out.safetyEventGroup = groupMatch[1].trim();
+
+  return out;
+}
+
+async function enrichWithBasicSubpages(data: SmsData): Promise<void> {
+  const dot = data.dot;
+  if (!dot) return;
+  const keys = Object.keys(BASIC_SUBPAGE_SLUGS) as Array<keyof SmsData['basics']>;
+  // Fan out all 7 fetches in parallel. Worst-case ~12s (the timeout).
+  // In practice FMCSA SMS responds in 1-3s per page.
+  const settled = await Promise.allSettled(
+    keys.map(async (key) => {
+      const slug = BASIC_SUBPAGE_SLUGS[key];
+      const html = await fetchBasicSubpage(dot, slug);
+      const parsed = html ? parseBasicSubpage(html) : null;
+      return { key, parsed };
+    }),
+  );
+  for (const r of settled) {
+    if (r.status !== 'fulfilled' || !r.value.parsed) continue;
+    const { key, parsed } = r.value;
+    const existing = data.basics[key];
+    // Subpage data is authoritative when present. Fall back to the
+    // Overview-row values for fields the subpage didn't set.
+    const merged: SmsBasic = {
+      measure: parsed.measure ?? existing?.measure ?? 0,
+      inspections: existing?.inspections ?? 0,
+      alert: existing?.alert ?? false,
+      percentile: parsed.percentile,
+      acuteCriticalViolations: parsed.acuteCriticalViolations,
+      safetyEventGroup: parsed.safetyEventGroup,
+      subpageFetched: true,
+    };
+    data.basics[key] = merged;
   }
 }
 
@@ -224,9 +379,24 @@ function extractCarrierOverview(html: string): SmsCarrierOverview {
   const flat = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   const out: SmsCarrierOverview = {};
 
-  // Total Trucks / Power Units
-  const trucks = flat.match(/(?:Total\s*)?(?:Power\s*Units?|Trucks?)\s*[:\s]\s*([\d,]+)/i);
-  if (trucks) out.totalTrucks = parseInt(trucks[1].replace(/,/g, ''), 10);
+  // Total Trucks / Power Units. FMCSA SMS lays this out with the NUMBER
+  // BEFORE the label ("130 Current Power Units"), and the page also
+  // contains decoy phrases like "Power Units 6 Months Ago" that the old
+  // label-then-number regex was eagerly matching as "6". Anchor on the
+  // canonical phrases in priority order: Current → Average → Total.
+  const truckOrder: Array<RegExp> = [
+    /(\d[\d,]*)\s+Current\s+Power\s*Units?/i,
+    /(\d+(?:\.\d+)?)\s+Average\s+Power\s*Units?/i,
+    /(\d[\d,]*)\s+Total\s+Power\s*Units?/i,
+  ];
+  for (const re of truckOrder) {
+    const m = flat.match(re);
+    if (m) {
+      // Average can be a decimal — round to the nearest int for display.
+      const n = Math.round(parseFloat(m[1].replace(/,/g, '')));
+      if (Number.isFinite(n) && n > 0) { out.totalTrucks = n; break; }
+    }
+  }
 
   // Total Drivers
   const drivers = flat.match(/(?:Total\s*)?Drivers?\s*[:\s]\s*([\d,]+)/i);

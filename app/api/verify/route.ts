@@ -65,9 +65,11 @@ export async function GET(req: Request) {
       const hasFmcsaSms = row.sources?.some((s: any) => s?.name === 'FMCSA SMS');
       // Schema fingerprint — bump whenever the verify route changes how
       // it constructs the carrier payload so older rows fall through to
-      // a fresh scan. Currently V3 (SMS carrier-overview parsing + the
-      // snapshot-before-SMS backfill order, both shipped today).
-      const SCHEMA_VERSION = 3;
+      // a fresh scan. V10: linked-entity extractor rejects 2-word matches
+      // without a hard corporate suffix (LLC/INC/CORP) and risk flag now
+      // requires 2+ citations AND 2+ sources for company-shaped aliases
+      // before contributing to the risk score.
+      const SCHEMA_VERSION = 10;
       const hasMatchingSchemaVersion = row.schemaVersion === SCHEMA_VERSION;
       const isCurrentSchema = hasSources && hasChameleonCheck && hasWebReputation && hasLinkedEntities && hasFmcsaArchive && hasFmcsaSms && hasMatchingSchemaVersion;
       console.log('[verify] user-cache hit', { q, hasSources, hasChameleonCheck, hasWebReputation, hasLinkedEntities, hasFmcsaArchive, hasFmcsaSms, hasMatchingSchemaVersion, savedAt: cached[0].created_at });
@@ -206,7 +208,7 @@ export async function GET(req: Request) {
         : Promise.resolve(null),
     ),
     timed('web',
-      findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot }).catch((e) => {
+      findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address }).catch((e) => {
         console.error('[verify] website find FAILED', e?.message);
         return null;
       }),
@@ -385,15 +387,21 @@ export async function GET(req: Request) {
   // in SMS until SMS recomputes.
   if (carrier.dot || carrier.mc) {
     try {
-      const { findCarrierFromSnapshot } = await import('@/lib/carrier-snapshots');
-      const snap = await findCarrierFromSnapshot({ dot: carrier.dot, mc: carrier.mc });
-      const sd: any = snap?.data || {};
+      // Walk the last 10 snapshots and pick the most recent non-null value
+      // for every field. This is far more resilient than reading just the
+      // single most-recent snapshot — fields like `phone` and `fax` are
+      // routinely dropped by FMCSA between updates, so the latest snapshot
+      // we just inserted will have them empty even though earlier ones had
+      // valid values. The merge preserves "stickiness" so the carrier's
+      // last known phone keeps showing on the report.
+      const { findCarrierFieldsFromSnapshots } = await import('@/lib/carrier-snapshots');
+      const sd: any = (await findCarrierFieldsFromSnapshots({ dot: carrier.dot, mc: carrier.mc }, 10)) || {};
       if (carrier.powerUnits == null && sd.powerUnits != null) carrier.powerUnits = sd.powerUnits;
       if (carrier.drivers == null && sd.drivers != null) carrier.drivers = sd.drivers;
       if (!carrier.operation && sd.operation) carrier.operation = sd.operation;
       if (carrier.crashTotal == null && sd.crashTotal != null) carrier.crashTotal = sd.crashTotal;
       if (carrier.fatalCrash == null && sd.fatalCrash != null) carrier.fatalCrash = sd.fatalCrash;
-      if (carrier.phone == null && sd.phone) carrier.phone = sd.phone;
+      if (!carrier.phone && sd.phone) carrier.phone = sd.phone;
     } catch (err) {
       console.warn('[verify] snapshot backfill failed:', err instanceof Error ? err.message : err);
     }
@@ -491,19 +499,27 @@ export async function GET(req: Request) {
   );
   if (linkedEntities.length > 0) carrier.linkedEntities = linkedEntities;
 
-  // Linked-entity flag — at least one alias / sister-entity / extra MC
-  // mentioned alongside the carrier in trusted-source coverage is a
-  // strong "this is part of a broader network" signal.
-  if (linkedEntities.length > 0) {
-    const top = linkedEntities.slice(0, 3);
-    const sev: 'critical' | 'warning' = linkedEntities.length >= 3 ? 'critical' : 'warning';
-    const pts = linkedEntities.length >= 3 ? 30 : 15;
+  // Linked-entity flag — only fires for entities that look like real
+  // signal, not random extractor noise. We require at least one of:
+  //   - a hard MC / DOT identifier (verifiable, never noise), OR
+  //   - a company name cited 2+ times across 2+ sources (one mention on
+  //     one LinkedIn page is not a chameleon-network signal).
+  // The panel still shows weaker entities for transparency, but they no
+  // longer subtract from the risk score on their own.
+  const scoreableEntities = linkedEntities.filter((e) => {
+    if (e.kind === 'mc' || e.kind === 'dot') return true;
+    return (e.citations >= 2) && (e.sources.length >= 2);
+  });
+  if (scoreableEntities.length > 0) {
+    const top = scoreableEntities.slice(0, 3);
+    const sev: 'critical' | 'warning' = scoreableEntities.length >= 3 ? 'critical' : 'warning';
+    const pts = scoreableEntities.length >= 3 ? 30 : 15;
     carrier.flags = [
       ...(carrier.flags || []),
       {
         sev,
-        title: `Linked entities mentioned in coverage (${linkedEntities.length})`,
-        desc: `Trusted-source articles about ${carrier.name} also reference: ${top.map((e) => e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value).join(', ')}${linkedEntities.length > 3 ? `, +${linkedEntities.length - 3} more` : ''}. Often a sign of a broader fraud / chameleon-MC network — verify each link before booking.`,
+        title: `Linked entities mentioned in coverage (${scoreableEntities.length})`,
+        desc: `Trusted-source articles about ${carrier.name} also reference: ${top.map((e) => e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value).join(', ')}${scoreableEntities.length > 3 ? `, +${scoreableEntities.length - 3} more` : ''}. Often a sign of a broader fraud / chameleon-MC network — verify each link before booking.`,
         pts,
         details: top.map((e) => `• ${e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value} — cited ${e.citations}× across ${e.sources.length} source${e.sources.length === 1 ? '' : 's'}`).join('\n'),
         recommendation: 'Treat these aliases as the same entity. Run a separate Haulock scan on each MC/DOT before booking.',
@@ -737,7 +753,7 @@ export async function GET(req: Request) {
   // Stamp the schema version so the user-cache check can identify rows
   // generated by this version of the verify route. Bump whenever the
   // payload shape changes meaningfully.
-  scored.schemaVersion = 3;
+  scored.schemaVersion = 10;
   const verdictLabel = scored.verdict === 'high' ? 'HIGH RISK' : scored.verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   console.log(`[verify] ─── RESULT · score ${scored.score}/100 · ${verdictLabel} · ${scored.flags?.length ?? 0} red flag${(scored.flags?.length ?? 0) === 1 ? '' : 's'} ───`);
   if (scored.flags && scored.flags.length > 0) {

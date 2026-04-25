@@ -5081,7 +5081,9 @@ function AppShell({ user, route, navigate, logout, children }: any) {
     { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount > 0 ? alertCount : null },
     { id: 'plan', label: 'Plan & billing', icon: Zap },
     { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'support', label: 'Support', icon: LifeBuoy },
+    // Admins manage tickets from the Admin → Support tickets tab, so the
+    // user-facing Support entry is hidden for them.
+    ...(isAdmin ? [] : [{ id: 'support', label: 'Support', icon: LifeBuoy }]),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: ShieldCheck }] : []),
   ];
 
@@ -5748,6 +5750,16 @@ function Report({ report, navigate }: any) {
   const [rescanError, setRescanError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  // Confirmation when the user clicks a linked-entity / alias card. Running
+  // a fresh scan costs a credit on Free plan and replaces the current
+  // report, so we ask before navigating away.
+  const [confirm, setConfirm] = useState<{ opts: ConfirmOpts; run: () => Promise<void>; busy?: boolean } | null>(null);
+  const handleConfirm = async () => {
+    if (!confirm) return;
+    setConfirm({ ...confirm, busy: true });
+    try { await confirm.run(); }
+    finally { setConfirm(null); }
+  };
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
@@ -6002,9 +6014,12 @@ function Report({ report, navigate }: any) {
               <div className="text-sm text-[#0B1E3F]/60 mt-1">Carrier website found via Google + checked for legitimacy.</div>
             </div>
             {r.webPresence.found ? (
-              <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${r.webPresence.nameMatch ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#F59E0B]/10 text-[#F59E0B]'}`}>
-                {r.webPresence.nameMatch ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
-                {r.webPresence.nameMatch ? 'Website found · name matches' : 'Website found · name mismatch'}
+              <span
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${r.webPresence.nameMatch ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/8 text-[#0B1E3F]/70'}`}
+                title={r.webPresence.nameMatch ? 'The domain SLD includes the legal company name.' : 'Marketing-style domain that does not include the legal name. Common for brand sites and not a fraud signal.'}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {r.webPresence.nameMatch ? 'Website found · name matches' : 'Website found'}
               </span>
             ) : (
               <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/70">
@@ -6362,12 +6377,34 @@ function Report({ report, navigate }: any) {
                 {r.linkedEntities.map((entity: any, i: number) => {
                   const display = entity.kind === 'mc' ? `MC-${entity.value}` : entity.kind === 'dot' ? `DOT-${entity.value}` : entity.value;
                   const Icon = entity.kind === 'company' ? Building2 : Shield;
-                  const onClick = () => {
+                  // Open a confirm modal before running the new scan. The
+                  // user is paying with both attention (we're about to
+                  // leave the current report) and quota (Free plan deducts
+                  // 1 of 3 monthly lookups).
+                  const runScan = async () => {
                     const q = entity.kind === 'mc' ? `MC-${entity.value}` : entity.kind === 'dot' ? `DOT-${entity.value}` : entity.value;
-                    fetch(`/api/verify?q=${encodeURIComponent(q)}`).then(async (resp) => {
+                    try {
+                      const resp = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
                       const data = await resp.json();
                       if (resp.ok) navigate('report', data);
-                    }).catch(() => {});
+                    } catch { /* swallow — modal already showed user we tried */ }
+                  };
+                  const onClick = () => {
+                    setConfirm({
+                      opts: {
+                        title: `Run a full Haulock scan on ${display}?`,
+                        body: (
+                          <>
+                            We&rsquo;ll run a fresh FMCSA lookup and replace the current report on your screen with the new one. The current report stays in your <strong>History</strong> so you can come back to it any time.
+                            <br /><br />
+                            <strong>Quota:</strong> uses 1 of your 3 monthly lookups on the Free plan. Carrier / Team / Fleet plans are unlimited.
+                          </>
+                        ),
+                        confirmLabel: 'Run scan',
+                        cancelLabel: 'Stay on this report',
+                      },
+                      run: runScan,
+                    });
                   };
                   return (
                     <button key={i} onClick={onClick} className="flex items-start gap-3 p-3 bg-[#FF6B35]/5 border border-[#FF6B35]/20 rounded-xl hover:bg-[#FF6B35]/10 hover:border-[#FF6B35]/40 transition text-left">
@@ -6561,7 +6598,18 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
   const overview = sms?.carrier || {};
   const smsUrl = dot ? `https://ai.fmcsa.dot.gov/SMS/Carrier/${dot}/Overview.aspx` : null;
   const alertedCount = order.filter((k) => basics[k]?.alert).length;
-  const basicsWithData = order.filter((k) => basics[k] != null).length;
+  // Count BASICs that have anything meaningful to display — measure, percentile,
+  // acute/critical investigation findings, or inspection counts. The subpage
+  // enrichment populates percentile / acute counts even when the Overview
+  // row hid the measure.
+  const basicsWithData = order.filter((k) => {
+    const b = basics[k];
+    if (!b) return false;
+    return (b.measure != null && b.measure > 0)
+      || b.percentile != null
+      || b.acuteCriticalViolations != null
+      || (b.inspections != null && b.inspections > 0);
+  }).length;
   // OOS rate computed from raw counts when the parser didn't capture a
   // percentage — we always know what to display as long as we know the
   // counts.
@@ -6682,10 +6730,14 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
 
       {/* BASIC scores grid */}
       <div className="flex items-end justify-between gap-3 mb-2 flex-wrap">
-        <div>
+        <div className="max-w-3xl">
           <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">BASIC measures</div>
-          <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">
-            FMCSA percentile-ranks each carrier in 7 safety categories. <strong>Lower is better.</strong> Alert fires above the federal intervention threshold.
+          <div className="text-[11px] text-[#0B1E3F]/65 mt-0.5 leading-relaxed">
+            FMCSA scores carriers in 7 safety categories. <strong>Lower is better.</strong> The <strong>percentile</strong> ranks the carrier against peers in their cargo group (0&nbsp;=&nbsp;best, 100&nbsp;=&nbsp;worst). The <strong>measure</strong> is the raw violation rate from inspections.
+            <br />
+            <span className="inline-flex items-center gap-1 mt-1.5"><span className="inline-block w-2 h-2 rounded-sm bg-[#DC2626]" /> <strong>Red &ldquo;FMCSA Alert&rdquo;</strong> = federal intervention flag, <strong>+30 to risk score</strong>.</span>
+            &nbsp;
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-[#F59E0B]" /> <strong>Amber &ldquo;Above threshold&rdquo;</strong> = percentile crossed FMCSA&rsquo;s monitoring line, <strong>informational only</strong>.</span>
           </div>
         </div>
         {basicsWithData === 0 && (
@@ -6695,7 +6747,16 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-6">
         {order.map((k) => {
           const b = basics[k];
-          if (!b) {
+          // A BASIC has "anything" to show if EITHER the Overview parsed
+          // a measure/inspection count, OR the subpage parsed a measure /
+          // percentile / acute-critical-violations count.
+          const hasContent = b && (
+            (b.measure != null && b.measure > 0) ||
+            b.percentile != null ||
+            b.acuteCriticalViolations != null ||
+            (b.inspections != null && b.inspections > 0)
+          );
+          if (!b || !hasContent) {
             return (
               <div key={k} className="p-3 bg-[#F5F3EE]/40 border border-[#0B1E3F]/8 rounded-xl">
                 <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mb-1">{BASIC_LABELS[k]}</div>
@@ -6704,18 +6765,124 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
               </div>
             );
           }
-          const cardCls = b.alert
-            ? 'bg-[#DC2626]/5 border-[#DC2626]/30'
-            : 'bg-[#F5F3EE]/60 border-[#0B1E3F]/8';
-          const measureCls = b.alert ? 'text-[#DC2626]' : 'text-[#0B1E3F]';
+          // Two distinct alert states with different consequences:
+          //
+          //   - `federalAlert` (b.alert === true) — FMCSA put their official
+          //     "Alert" symbol on the Overview page. This is the canonical
+          //     federal intervention flag. The risk engine adds +30 points
+          //     to the carrier's score for every federal alert active.
+          //
+          //   - `pctOverThreshold` (b.percentile crossed threshold but
+          //     Overview did NOT alert) — informational only. Tells the
+          //     reader the percentile is at the federal monitoring line,
+          //     but does NOT subtract from the risk score.
+          //
+          // We render them as different colors so a glance distinguishes
+          // "scored against" from "informational".
+          const federalAlert = b.alert === true;
+          const pctOverThreshold =
+            !federalAlert &&
+            b.percentile != null && (
+              (k === 'hazmat' || k === 'driverFitness' || k === 'controlledSubstances')
+                ? b.percentile >= 80
+                : b.percentile >= 65
+            );
+          const cardCls = federalAlert
+            ? 'bg-[#DC2626]/5 border-[#DC2626]/30'        // red — scored
+            : pctOverThreshold
+              ? 'bg-[#F59E0B]/5 border-[#F59E0B]/30'     // amber — informational
+              : 'bg-[#F5F3EE]/60 border-[#0B1E3F]/8';    // neutral
+          const valueCls = federalAlert
+            ? 'text-[#DC2626]'
+            : pctOverThreshold
+              ? 'text-[#F59E0B]'
+              : 'text-[#0B1E3F]';
+          const isAlert = federalAlert || pctOverThreshold;
+          // FMCSA's intervention thresholds vary by BASIC. Surfacing the
+          // exact threshold lets the user see how close to the line a
+          // percentile is, instead of guessing why we lit something red.
+          const threshold =
+            (k === 'hazmat' || k === 'driverFitness' || k === 'controlledSubstances') ? 80 : 65;
+          // Prefer percentile for the headline value when we have it —
+          // it is the headline metric brokers and DOT auditors care about.
+          // Fall back to the raw measure otherwise.
+          const showPercentile = b.percentile != null;
+          const headlineValue = showPercentile
+            ? `${b.percentile}%`
+            : (b.measure != null && b.measure > 0 ? b.measure.toFixed(2) : '—');
+          const headlineLabel = showPercentile ? 'percentile' : 'measure';
+          // Plain-English tooltip so a hover on the value tells the carrier
+          // what they are looking at without needing to read the panel header.
+          const headlineTitle = showPercentile
+            ? `FMCSA ranks this carrier at the ${b.percentile}th percentile within their cargo group. Lower is better. The federal intervention threshold for ${BASIC_LABELS[k]} is ${threshold}%.`
+            : 'Raw safety measure FMCSA computes from on-road inspections. Lower is better. Percentile rank is hidden because the carrier is below FMCSA\'s data-sufficiency threshold for this BASIC.';
+          // Caption explaining the alert. Wording differs by alert type so
+          // the reader knows whether this BASIC is scored against the
+          // carrier or just a heads-up.
+          const alertReason = federalAlert && b.percentile != null
+            ? `FMCSA marked this BASIC for federal intervention. ${b.percentile}% percentile is ${b.percentile === threshold ? 'at' : 'above'} the ${threshold}% threshold. Adds +30 to the Haulock risk score.`
+            : federalAlert
+              ? `FMCSA marked this BASIC for federal intervention. Adds +30 to the Haulock risk score.`
+              : pctOverThreshold && b.percentile != null
+                ? `${b.percentile}% percentile is ${b.percentile === threshold ? 'at' : 'above'} the ${threshold}% FMCSA monitoring line, but FMCSA has not (yet) escalated this BASIC to a federal alert. Informational only — does not affect the Haulock risk score.`
+                : null;
           return (
             <div key={k} className={`p-3 border rounded-xl ${cardCls}`}>
               <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                 <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{BASIC_LABELS[k]}</div>
-                {b.alert && <span className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[9px] mono uppercase tracking-wider font-semibold">Alert</span>}
+                {federalAlert && (
+                  <span
+                    className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[9px] mono uppercase tracking-wider font-semibold cursor-help"
+                    title={alertReason || 'FMCSA flagged this BASIC for federal intervention. Adds +30 to the Haulock risk score.'}
+                  >
+                    FMCSA Alert · +30
+                  </span>
+                )}
+                {pctOverThreshold && (
+                  <span
+                    className="px-1.5 py-0.5 rounded bg-[#F59E0B] text-white text-[9px] mono uppercase tracking-wider font-semibold cursor-help"
+                    title={alertReason || 'Percentile crossed FMCSA threshold but no federal alert yet. Informational only.'}
+                  >
+                    Above threshold
+                  </span>
+                )}
               </div>
-              <div className={`text-2xl font-semibold ${measureCls}`}>{b.measure.toFixed(2)}</div>
-              <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">{b.inspections} inspection{b.inspections === 1 ? '' : 's'} fed this score</div>
+              <div className="flex items-baseline gap-1.5" title={headlineTitle}>
+                <div className={`text-2xl font-semibold ${valueCls}`}>{headlineValue}</div>
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45">{headlineLabel}</div>
+              </div>
+              {/* Why-it-is-flagged one-liner. Visible (not just a tooltip)
+                  so the reader does not need to hover to understand it.
+                  Color matches the alert kind: red for scored federal
+                  alerts, amber for percentile-over-threshold (informational). */}
+              {alertReason && (
+                <div className={`text-[11px] mt-1 leading-snug ${federalAlert ? 'text-[#DC2626]' : 'text-[#F59E0B]'}`}>
+                  {alertReason}
+                </div>
+              )}
+              {/* Secondary line: when we have a percentile, also show the
+                  raw measure underneath if present. Otherwise show the
+                  inspection count, but ONLY if we actually have one — the
+                  per-BASIC inspection count is not on every subpage so
+                  showing "0 inspections" was misleading. */}
+              {showPercentile && b.measure != null && b.measure > 0 ? (
+                <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">measure {b.measure.toFixed(2)}</div>
+              ) : b.inspections != null && b.inspections > 0 ? (
+                <div className="text-[11px] text-[#0B1E3F]/55 mt-0.5">{b.inspections} inspection{b.inspections === 1 ? '' : 's'} fed this score</div>
+              ) : null}
+              {/* Acute/critical violations are a stronger fraud / safety
+                  signal than the percentile because they come from actual
+                  investigations, not just on-road inspection patterns. */}
+              {b.acuteCriticalViolations != null && (
+                <div
+                  className={`text-[11px] mt-1 inline-flex items-center gap-1 cursor-help ${b.acuteCriticalViolations > 0 ? 'text-[#DC2626] font-semibold' : 'text-[#16A34A]'}`}
+                  title="Acute / critical violations come from FMCSA's on-site compliance investigations (audits of carrier records), not from random roadside inspections. ACUTE = immediate safety threat (e.g., operating without insurance). CRITICAL = pattern of non-compliance (e.g., repeated HOS log falsification). Both require corrective action."
+                >
+                  {b.acuteCriticalViolations === 0
+                    ? <>Clean investigation record · 0 acute/critical findings <span className="text-[#0B1E3F]/30">ⓘ</span></>
+                    : <>{b.acuteCriticalViolations} acute/critical investigation finding{b.acuteCriticalViolations === 1 ? '' : 's'} <span className="text-[#0B1E3F]/30">ⓘ</span></>}
+                </div>
+              )}
               <div className="text-[10px] text-[#0B1E3F]/55 leading-snug mt-1.5">{BASIC_DESC[k]}</div>
             </div>
           );

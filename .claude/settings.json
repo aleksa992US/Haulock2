@@ -55,7 +55,10 @@
       "Bash(python3 -c \"import sys, json; d = json.load\\(sys.stdin\\); [print\\(p['id'], '|', p['alt_description'][:60] if p.get\\('alt_description'\\) else '-', '|', p['urls']['regular'].split\\('?'\\)[0]\\) for p in d.get\\('results', []\\)[:20]]\")",
       "Bash(curl -s --max-time 15 \"https://www.pexels.com/search/semi%20truck/\" -A \"Mozilla/5.0\" -L)",
       "Bash(curl -s --max-time 15 \"https://www.pexels.com/search/semi%20truck/\" -A \"Mozilla/5.0\" -L -o /tmp/pexels.html)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(curl -s --max-time 15 \"https://ai.fmcsa.dot.gov/SMS/Carrier/3170105/Overview.aspx\" -A \"Mozilla/5.0\" -L -o /tmp/apollo_sms.html)",
+      "Read(//private/tmp/**)",
+      "Bash(python3)"
     ]
   }
 }

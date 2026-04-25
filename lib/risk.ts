@@ -247,16 +247,11 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
 
   if (c.webPresence?.configured) {
     if (c.webPresence.found) {
-      if (c.webPresence.nameMatch === false) {
-        flags.push({
-          sev: 'warning',
-          title: 'Website domain doesn\'t match company name',
-          desc: `Found a candidate website (${c.webPresence.domain}) but its domain doesn't include the legal name.`,
-          pts: 10,
-          details: 'A legitimate carrier usually owns a domain that matches their business name (e.g. "Acme Freight" → acmefreight.com). When the search-result domain looks unrelated, the website may be a misattributed result OR (worse) a generic placeholder set up to look legit.',
-          recommendation: 'Verify the domain is actually theirs before trusting any contact info from it.',
-        });
-      }
+      // Name-mismatch is a marketing / SEO signal, not a fraud signal.
+      // Many legit carriers run on a brand-style domain (Apollo Freight
+      // Systems Inc → owneroperatorsapollo.com). We deliberately do NOT
+      // flag it; the report still surfaces the mismatch in a neutral
+      // badge for transparency, but it does not affect the score.
       if (c.webPresence.domainAgeDays != null && c.webPresence.domainAgeDays <= 90) {
         flags.push({
           sev: 'warning',
@@ -357,16 +352,19 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
   // -without-bond pattern. We removed a duplicate copy of that check that
   // was firing alongside it and producing two flags for the same issue.)
 
-  // Active authority (broker or carrier) but FMCSA has no phone number on
-  // file. Real operating businesses keep their contact info current — a
-  // missing phone on an Active record is a small but consistent fraud signal.
+  // FMCSA's QCMobile API inconsistently exposes phone — sometimes it is
+  // there, sometimes it is not, even for the same carrier across consecutive
+  // requests. We backfill from snapshot history when missing, so by the time
+  // we get here a truly empty `phone` is rare. We keep the surface flag as
+  // info-only (zero points) so it does not penalize otherwise legitimate
+  // carriers just because of upstream data-quality variance.
   if ((c.brokerAuthority === 'Active' || isCarrier) && !c.phone) {
     flags.push({
       sev: 'info',
-      title: 'No phone number on FMCSA file',
-      desc: 'The carrier has active authority but no phone number listed in the federal registry.',
-      pts: 5,
-      details: 'Not conclusive — many small carriers update their MCS-150 sporadically. But it makes phone-based verification impossible and makes the operator harder to reach when something goes wrong.',
+      title: 'No phone number available',
+      desc: 'No phone number found in the current FMCSA record or in our snapshot history for this carrier.',
+      pts: 0,
+      details: 'FMCSA carriers file their phone via MCS-150, but the QCMobile API does not always return it. This can also mean the carrier has not updated their public contact info in a while. It is informational — not a fraud signal on its own.',
       recommendation: 'Get a phone number directly from the rate confirmation, then verify it against an independent source (their website, Google Business, or the FMCSA L&I update).',
     });
   }

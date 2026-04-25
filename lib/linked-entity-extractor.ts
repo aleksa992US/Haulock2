@@ -69,11 +69,33 @@ export function extractLinkedEntities(
       companies.set(normalized, cur);
     }
 
+    // If this article is clearly *about the same carrier we are verifying*
+    // (its text contains a significant name token from selfName), then any
+    // MC / DOT it cites is almost certainly the carrier's own identifier
+    // — not a sister entity. Skip ID extraction on those hits. This is a
+    // safety net for the case where the upstream lookup didn't populate
+    // selfMc / selfDot (e.g. user searched by DOT and FMCSA returned the
+    // carrier without its MC).
+    const hitMentionsSelf = selfTokens.size > 0 && (() => {
+      const blob = text.toLowerCase();
+      // Treat the article as "about self" only when it mentions MULTIPLE
+      // significant tokens — a single short token like "freight" appearing
+      // in a generic logistics article is not enough.
+      let matchCount = 0;
+      for (const t of selfTokens) {
+        if (t.length >= 3 && blob.includes(t)) matchCount += 1;
+        if (matchCount >= 2) return true;
+      }
+      // Single-token names (rare) still match on one hit.
+      return selfTokens.size === 1 && matchCount === 1;
+    })();
+
     // MC numbers.
     const mcRe = /\bMC\s*[#:\-]?\s*(\d{4,7})\b/gi;
     while ((m = mcRe.exec(text)) !== null) {
       const id = m[1].replace(/^0+/, '');
       if (selfMc && id === selfMc) continue;
+      if (hitMentionsSelf) continue; // article is about the carrier itself
       const cur = mcs.get(id) || { citations: 0, sources: new Set<string>(), evidence: hit.title };
       cur.citations += 1;
       cur.sources.add(hit.domain);
@@ -85,6 +107,7 @@ export function extractLinkedEntities(
     while ((m = dotRe.exec(text)) !== null) {
       const id = m[1].replace(/^0+/, '');
       if (selfDot && id === selfDot) continue;
+      if (hitMentionsSelf) continue;
       const cur = dots.get(id) || { citations: 0, sources: new Set<string>(), evidence: hit.title };
       cur.citations += 1;
       cur.sources.add(hit.domain);
@@ -141,9 +164,36 @@ const BOILERPLATE_PATTERNS: RegExp[] = [
   /\b(UNITED\s+STATES|US|U\.S\.)\s+(COMPANY|CORPORATION)\b/i,
 ];
 
+// "Hard" corporate suffixes that indicate a real registered entity. A
+// 2-word match like "Acme LLC" is meaningful because LLC is registered
+// somewhere. A 2-word match like "Truck Line" is not — "Line" is just a
+// generic noun. We require 3+ words for any match that ends in a marketing
+// suffix (LOGISTICS, TRANSPORT, FREIGHT, EXPRESS, LINES, etc.) to filter
+// out noise like "Truck Line", "Long Express", "Heavy Logistics".
+const HARD_SUFFIX_RE = /\b(?:LLC|L\.L\.C\.?|INC|INCORPORATED|CORP|CORPORATION|LTD|LIMITED|LP|LLP|PLLC)\.?$/i;
+
+// Common single-word generic prefixes that produce false-positive entity
+// names when paired with a marketing suffix. "Truck Line", "Power Lines",
+// "Heavy Express" — none of these are real entities.
+const GENERIC_TWO_WORD_PREFIXES = new Set([
+  'truck', 'trucks', 'trucking', 'power', 'heavy', 'long', 'fast',
+  'global', 'national', 'international', 'american', 'us', 'united',
+  'big', 'small', 'new', 'old', 'best', 'top', 'first', 'main',
+  'general', 'common', 'standard', 'basic',
+]);
+
 function looksLikeBoilerplate(name: string): boolean {
   if (name.length < 6) return true;
-  if (name.split(/\s+/).length < 2) return true;
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return true;
+  // Two-word matches require a hard corporate suffix. Marketing suffixes
+  // (LOGISTICS, LINES, EXPRESS, etc.) on a 2-word match are too noisy.
+  if (words.length === 2 && !HARD_SUFFIX_RE.test(name)) return true;
+  // Two-word matches with a generic first word are almost always noise
+  // even with a hard suffix ("Truck LLC" is hypothetically a registered
+  // entity but still not the kind of signal that means anything to a
+  // broker vetting their counterparty).
+  if (words.length === 2 && GENERIC_TWO_WORD_PREFIXES.has(words[0].toLowerCase())) return true;
   return BOILERPLATE_PATTERNS.some((re) => re.test(name));
 }
 

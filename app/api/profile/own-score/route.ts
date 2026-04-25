@@ -171,7 +171,7 @@ export async function GET() {
     if (ac.configured) carrier.addressCheck = ac;
   }
   try {
-    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot });
+    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address });
     if (web.configured) {
       let domainAgeDays: number | null | undefined;
       let hasMx: boolean | undefined;

@@ -2,11 +2,37 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
+import { sendEmail, supportAdminReplyTemplate, supportWorkingTemplate, supportSolvedTemplate, isResendConfigured } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const STATUSES = new Set(['open', 'working', 'solved']);
+
+function ticketUrl(): string {
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com').replace(/\/+$/, '');
+  return `${site}/support`;
+}
+
+// Look up the ticket owner's preferred email + name. Pulled from the auth
+// admin API so we respect notification_email if the user set one in
+// Settings → Notifications.
+async function getTicketRecipient(svc: any, userId: string): Promise<{ email: string | null; name: string | null }> {
+  try {
+    const { data } = await svc.auth.admin.getUserById(userId);
+    const u = data?.user;
+    if (!u?.email) return { email: null, name: null };
+    const meta = (u.user_metadata || {}) as any;
+    const override = typeof meta.notification_email === 'string' ? meta.notification_email.trim() : '';
+    return {
+      email: override || u.email,
+      name: (meta.full_name || meta.name || null) as string | null,
+    };
+  } catch (err) {
+    console.warn('[admin/support] getUserById failed:', err);
+    return { email: null, name: null };
+  }
+}
 
 async function authorizeAdmin(): Promise<{ ok: true; me: any } | { ok: false; status: number; error: string }> {
   const supabase = getServerSupabase();
@@ -61,7 +87,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   if (!message) return NextResponse.json({ error: 'Message body is required.' }, { status: 400 });
 
   const { data: ticket } = await svc.from('support_tickets')
-    .select('id, status')
+    .select('id, user_id, subject, status')
     .eq('id', params.id)
     .single();
   if (!ticket) return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
@@ -73,9 +99,26 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const newStatus = ticket.status === 'open' ? 'working' : ticket.status;
+  const statusFlipped = ticket.status === 'open' && newStatus === 'working';
   await svc.from('support_tickets')
     .update({ updated_at: new Date().toISOString(), status: newStatus })
     .eq('id', params.id);
+
+  // Notify the ticket owner of the admin reply. Best-effort.
+  if (isResendConfigured()) {
+    const recipient = await getTicketRecipient(svc, ticket.user_id);
+    if (recipient.email) {
+      const tpl = supportAdminReplyTemplate({
+        subject: ticket.subject,
+        reply: message,
+        recipientEmail: recipient.email,
+        ticketUrl: ticketUrl(),
+        statusFlipped,
+      });
+      sendEmail({ to: recipient.email, subject: tpl.subject, html: tpl.html, kind: 'support_reply' })
+        .catch((err) => console.warn('[admin/support reply] email failed:', err?.message));
+    }
+  }
 
   return NextResponse.json({ message: inserted, status: newStatus });
 }
@@ -91,9 +134,46 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const status = (body?.status || '').toString().toLowerCase();
   if (!STATUSES.has(status)) return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
 
+  // Read the current state so we only email when the status actually flips.
+  // Re-pinging "working" → "working" should not spam the user.
+  const { data: ticket } = await svc.from('support_tickets')
+    .select('id, user_id, subject, status')
+    .eq('id', params.id)
+    .single();
+  if (!ticket) return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+  const prevStatus = ticket.status;
+
   const { error } = await svc.from('support_tickets')
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Only notify on a real transition. open → working and any → solved
+  // are the two changes worth an email. working → open (reopened) is
+  // typically driven by user replies which already get their own email
+  // path; we skip notifying on that case.
+  if (isResendConfigured() && prevStatus !== status) {
+    const recipient = await getTicketRecipient(svc, ticket.user_id);
+    if (recipient.email) {
+      if (status === 'working' && prevStatus === 'open') {
+        const tpl = supportWorkingTemplate({
+          subject: ticket.subject,
+          recipientEmail: recipient.email,
+          ticketUrl: ticketUrl(),
+        });
+        sendEmail({ to: recipient.email, subject: tpl.subject, html: tpl.html, kind: 'support_working' })
+          .catch((err) => console.warn('[admin/support PATCH] working email failed:', err?.message));
+      } else if (status === 'solved') {
+        const tpl = supportSolvedTemplate({
+          subject: ticket.subject,
+          recipientEmail: recipient.email,
+          ticketUrl: ticketUrl(),
+        });
+        sendEmail({ to: recipient.email, subject: tpl.subject, html: tpl.html, kind: 'support_solved' })
+          .catch((err) => console.warn('[admin/support PATCH] solved email failed:', err?.message));
+      }
+    }
+  }
+
   return NextResponse.json({ ok: true, status });
 }

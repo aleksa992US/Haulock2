@@ -365,7 +365,11 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
     mc: query.kind === 'mc' ? query.value : c.docketNumber ? String(c.docketNumber) : undefined,
     dot: c.dotNumber ? String(c.dotNumber) : query.kind === 'dot' ? query.value : undefined,
     address: fmtAddress(c),
-    phone: c.telephone || undefined,
+    // FMCSA QCMobile returns the phone in different fields depending on the
+    // carrier record shape: `telephone` is the canonical one, but some
+    // records only populate `phyPhone` (physical-address phone) or
+    // `mailingPhone`. Read all of them and pick the first non-empty.
+    phone: c.telephone || c.phyPhone || c.mailingPhone || c.phone || undefined,
     authorityStatus: common ?? (allowedY ? 'Active' : 'Inactive'),
     commonAuthority: common,
     brokerAuthority: broker,

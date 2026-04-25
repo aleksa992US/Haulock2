@@ -56,7 +56,7 @@ export type SendArgs = {
   attachments?: SendAttachment[];
   // `kind` tags the send so the admin newsletter dashboard can show counts
   // per type per recipient. Optional — old call sites stay legal.
-  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'other';
+  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'other';
 };
 
 export async function sendEmail({ to, subject, html, replyTo, attachments, kind }: SendArgs) {
@@ -476,6 +476,95 @@ ${divider()}
   Don&rsquo;t recognize this invite? You can safely ignore this email — no account will be created.
 </div>`;
   return { subject, html: baseLayout({ preview: `${inviter} invited you to ${team} on Haulock.`, body }) };
+}
+
+// ---------- Support tickets ----------
+
+// "We got your ticket" — fired immediately after the user opens a ticket.
+export function supportReceivedTemplate(args: {
+  subject: string;
+  preview: string;
+  recipientEmail: string;
+  ticketUrl: string;
+}): { subject: string; html: string } {
+  const body = `
+${h1(`We got your ticket: ${italicAccent(escapeHtml(args.subject))}`)}
+${p(`Thanks for reaching out. We&rsquo;ve logged your ticket and someone from the team will look at it as soon as possible. We answer every ticket personally, usually within one business day.`)}
+<div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:18px 20px;margin:0 0 24px 0;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">Your message</div>
+  <div style="font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);white-space:pre-wrap;">${escapeHtml(args.preview)}</div>
+</div>
+${button(args.ticketUrl, 'Open ticket →')}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">You&rsquo;ll get an email when we reply or change the status. You can also reply directly inside Haulock to add more info.</div>`;
+  return {
+    subject: `We got your ticket: ${args.subject}`,
+    html: baseLayout({ preview: 'We got your ticket. We will get back to you shortly.', body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// "Admin replied" — fired when an admin posts a reply on a ticket. Includes
+// the reply body so the user sees the answer in their inbox.
+export function supportAdminReplyTemplate(args: {
+  subject: string;
+  reply: string;
+  recipientEmail: string;
+  ticketUrl: string;
+  statusFlipped: boolean; // true if this reply also flipped status to "working"
+}): { subject: string; html: string } {
+  const headline = args.statusFlipped
+    ? `We&rsquo;re on your ticket: ${italicAccent(escapeHtml(args.subject))}`
+    : `New reply on your ticket: ${italicAccent(escapeHtml(args.subject))}`;
+  const body = `
+${h1(headline)}
+${p(args.statusFlipped ? `Someone from the team picked this up and just replied. The ticket is now in &ldquo;Working on it&rdquo;.` : `Someone from the team just replied to your ticket.`)}
+<div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:18px 20px;margin:0 0 24px 0;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:#FF6B35;font-weight:600;margin-bottom:8px;">From Haulock support</div>
+  <div style="font-size:15px;line-height:1.65;color:rgba(11,30,63,0.85);white-space:pre-wrap;">${escapeHtml(args.reply)}</div>
+</div>
+${button(args.ticketUrl, 'View thread & reply →')}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Hit reply right here, or open the ticket on Haulock to keep the conversation going.</div>`;
+  const subject = args.statusFlipped
+    ? `Working on your ticket: ${args.subject}`
+    : `Re: ${args.subject}`;
+  return {
+    subject,
+    html: baseLayout({ preview: args.reply.slice(0, 140), body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// "Working on it" — fired when the admin moves the status to working
+// without (yet) posting a reply.
+export function supportWorkingTemplate(args: {
+  subject: string;
+  recipientEmail: string;
+  ticketUrl: string;
+}): { subject: string; html: string } {
+  const body = `
+${h1(`We&rsquo;re working on your ticket: ${italicAccent(escapeHtml(args.subject))}`)}
+${p(`Quick update. Someone from the Haulock team picked up your ticket and is looking into it now. We&rsquo;ll reply with what we find as soon as we have something useful.`)}
+${button(args.ticketUrl, 'Open ticket →')}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">No action needed from you. We just wanted you to know it&rsquo;s in motion.</div>`;
+  return {
+    subject: `Working on it: ${args.subject}`,
+    html: baseLayout({ preview: 'Your support ticket is in motion.', body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// "Solved" — fired when the admin marks the ticket solved.
+export function supportSolvedTemplate(args: {
+  subject: string;
+  recipientEmail: string;
+  ticketUrl: string;
+}): { subject: string; html: string } {
+  const body = `
+${h1(`Resolved: ${italicAccent(escapeHtml(args.subject))}`)}
+${p(`We&rsquo;ve marked your ticket as solved. If anything is still off, just reply on the ticket and it will reopen automatically.`)}
+${button(args.ticketUrl, 'Open ticket →')}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Thanks for the heads-up that something needed attention. The more tickets we get, the better Haulock gets.</div>`;
+  return {
+    subject: `Resolved: ${args.subject}`,
+    html: baseLayout({ preview: 'Your support ticket has been marked solved.', body, unsubEmail: args.recipientEmail }),
+  };
 }
 
 export const supabaseInviteUserTemplate = baseLayout({

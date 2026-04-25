@@ -9,6 +9,16 @@ const BLOCKED_DOMAINS = new Set<string>([
   'glassdoor.com', 'indeed.com', 'crunchbase.com',
   'carriersource.io', 'truckersedge.net', 'mytruckhauler.com', 'trucker.com',
   'inboundlogistics.com', 'logisticsmgmt.com', 'fleetowner.com',
+  // Carrier-data / vetting / monitoring competitors. These republish FMCSA
+  // data but are NOT the carrier's own website. They keep showing up first
+  // in Brave/Google because they're SEO-heavy.
+  'brokersnapshot.com', 'mycarrierpackets.com', 'mycarrierportal.com',
+  'highway.com', 'rmismetacarrier.com', 'rmiscarrierservices.com',
+  'macropoint.com', 'descartes.com', 'transportation.descartes.com',
+  'safer-watch.com', 'smartwaymovers.com', 'isaaccarrier.com',
+  'truckerpath.com', 'overdriveonline.com', 'ccjdigital.com',
+  // Other haulock-adjacent / lookup tools
+  'haulock.com', 'haulock.app',
   // Social / video
   'facebook.com', 'fb.com', 'm.facebook.com',
   'linkedin.com', 'twitter.com', 'x.com', 'instagram.com',
@@ -54,6 +64,10 @@ export function isBraveConfigured(): boolean {
   return Boolean(process.env.BRAVE_SEARCH_API_KEY);
 }
 
+export function isPlacesConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_PLACES_API_KEY);
+}
+
 export type WebsiteFinderResult = {
   configured: boolean;
   found: boolean;
@@ -61,7 +75,9 @@ export type WebsiteFinderResult = {
   url?: string;
   title?: string;
   snippet?: string;
-  source?: 'cse' | 'brave';
+  // 'places' is the authoritative source — Google Places returns the
+  // business owner's verified website, not a SEO-ranked search result.
+  source?: 'places' | 'cse' | 'brave';
   error?: string;
 };
 
@@ -102,14 +118,79 @@ async function searchCse(q: string): Promise<RawHit[] | { error: string }> {
   return Array.isArray(data?.items) ? data.items.map((it: any) => ({ link: it.link, title: it.title, snippet: it.snippet })) : [];
 }
 
-export async function findCarrierWebsite(opts: { name: string; mc?: string; dot?: string }): Promise<WebsiteFinderResult> {
+// Google Places returns the website that the business owner registered on
+// their own listing. That is FAR more reliable than a generic web search,
+// which (especially for SEO-poor small carriers) tends to return data
+// brokers like brokersnapshot.com instead of the carrier's own site.
+async function findPlacesWebsite(opts: { name: string; address?: string }): Promise<WebsiteFinderResult | null> {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) return null;
+  const name = (opts.name || '').trim();
+  if (!name) return null;
+
+  // Try the most-specific text query first (name + address), fall back to
+  // name + "trucking" to disambiguate common names. We ask Places for the
+  // websiteUri + displayName fields directly.
+  const queries: string[] = [];
+  if (opts.address) queries.push(`${name} ${opts.address}`);
+  queries.push(`${name} trucking`);
+  queries.push(name);
+
+  for (const textQuery of queries) {
+    try {
+      const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'places.displayName,places.websiteUri,places.formattedAddress',
+        },
+        body: JSON.stringify({ textQuery, pageSize: 3 }),
+        cache: 'no-store',
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const places = (data?.places || []) as any[];
+      for (const p of places) {
+        const websiteUri: string | undefined = p?.websiteUri;
+        if (!websiteUri) continue;
+        const host = hostnameOf(websiteUri);
+        if (!host || isBlocked(host)) continue;
+        return {
+          configured: true,
+          found: true,
+          domain: host,
+          url: websiteUri,
+          title: p?.displayName?.text,
+          snippet: p?.formattedAddress,
+          source: 'places',
+        };
+      }
+    } catch {
+      // try next query
+    }
+  }
+  return null;
+}
+
+export async function findCarrierWebsite(opts: { name: string; mc?: string; dot?: string; address?: string }): Promise<WebsiteFinderResult> {
+  const usePlaces = isPlacesConfigured();
   const useBrave = isBraveConfigured();
   const useCse = !useBrave && isCustomSearchConfigured();
-  if (!useBrave && !useCse) return { configured: false, found: false };
-  const source: 'brave' | 'cse' = useBrave ? 'brave' : 'cse';
+  if (!usePlaces && !useBrave && !useCse) return { configured: false, found: false };
 
   const name = (opts.name || '').trim();
   if (!name) return { configured: true, found: false };
+
+  // Step 1: Google Places (preferred — owner-registered website).
+  if (usePlaces) {
+    const places = await findPlacesWebsite({ name, address: opts.address });
+    if (places) return places;
+  }
+
+  // Step 2: fall back to Brave/CSE web search if Places had nothing.
+  if (!useBrave && !useCse) return { configured: true, found: false };
+  const source: 'brave' | 'cse' = useBrave ? 'brave' : 'cse';
 
   const queries: string[] = [];
   if (opts.mc) queries.push(`"${name}" MC-${opts.mc}`);

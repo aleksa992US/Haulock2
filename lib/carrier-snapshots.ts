@@ -189,6 +189,45 @@ export async function findCarrierFromSnapshot(args: { dot?: string; mc?: string 
   };
 }
 
+// Walks the most-recent N snapshots for a carrier and merges them into a
+// single "best-available" view. For each field we keep the value from the
+// MOST RECENT snapshot that actually had it populated. Useful for backfill
+// when today's primary FMCSA call returned an empty field but an older
+// snapshot has it (common for phone, fax, drivers count, etc.).
+export async function findCarrierFieldsFromSnapshots(
+  args: { dot?: string; mc?: string },
+  depth: number = 10,
+): Promise<Partial<CarrierFingerprint> | null> {
+  const { dot, mc } = args;
+  if (!dot && !mc) return null;
+  const { getServiceSupabase } = await import('./supabase/service');
+  const svc = getServiceSupabase();
+  if (!svc) return null;
+
+  let query = svc
+    .from('carrier_snapshots')
+    .select('data,captured_at')
+    .order('captured_at', { ascending: false })
+    .limit(Math.max(1, Math.min(50, depth)));
+  if (dot) query = query.eq('dot', dot);
+  else if (mc) query = query.eq('mc', mc);
+
+  const { data, error } = await query;
+  if (error || !data || data.length === 0) return null;
+
+  // Walk newest to oldest. For each field, the first time we see a value
+  // populated, lock it in.
+  const merged: Record<string, any> = {};
+  for (const row of data) {
+    const d = (row.data || {}) as Record<string, any>;
+    for (const [k, v] of Object.entries(d)) {
+      if (v == null || v === '' || k in merged) continue;
+      merged[k] = v;
+    }
+  }
+  return merged as Partial<CarrierFingerprint>;
+}
+
 // Read the timeline for one carrier, newest first.
 export async function getCarrierHistory(args: { dot?: string; mc?: string; limit?: number }): Promise<CarrierSnapshotRow[]> {
   const { dot, mc } = args;
