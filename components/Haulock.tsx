@@ -39,6 +39,24 @@ function routeToPath(route: string, slug?: string | null): string {
   return `/${route}`;
 }
 
+// Stored when an unauthenticated user hits an app route via RequireAuth, so
+// that login/signup (email or OAuth) bring them back to the page they wanted.
+const POST_LOGIN_REDIRECT_KEY = 'haulock:postLoginRedirect';
+
+function peekPostLoginRedirect(): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY); } catch { return null; }
+}
+
+function consumePostLoginRedirect(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const v = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY);
+    if (v) sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
+    return v;
+  } catch { return null; }
+}
+
 // Lazy-mount each page once and toggle visibility with display:none on subsequent navigations.
 // Keeps state, scroll position, and avoids re-firing useEffect fetches on every tab switch.
 function PageSlot({ routeId, current, children }: { routeId: string; current: string; children: React.ReactNode }) {
@@ -158,8 +176,16 @@ export default function Haulock() {
       setUser(u);
       const r = typeof window !== 'undefined' ? pathToRoute(window.location.pathname) : 'landing';
       if (r === 'landing' || r === 'login' || r === 'signup') {
-        if (typeof window !== 'undefined') window.history.replaceState({}, '', '/dashboard');
-        setRoute('dashboard');
+        // If they were sent to /login from a gated page, honor that target
+        // rather than the default dashboard landing.
+        const redirect = consumePostLoginRedirect();
+        const target = redirect ? pathToRoute(redirect) : 'dashboard';
+        if (typeof window !== 'undefined') window.history.replaceState({}, '', routeToPath(target));
+        setRoute(target);
+      } else {
+        // We landed directly on the gated page (e.g. via the OAuth callback's
+        // ?next=). The redirect cookie is no longer needed.
+        consumePostLoginRedirect();
       }
     });
     const { data: sub } = sb.auth.onAuthStateChange(async (_event, session) => {
@@ -253,7 +279,10 @@ export default function Haulock() {
       {route === 'privacy' && <LegalPage page="privacy" navigate={navigate} user={user} />}
       {route === 'blog' && <BlogPage slug={blogSlug} navigate={navigate} user={user} />}
       {route === 'about' && <AboutPage navigate={navigate} user={user} />}
-      {user && ['dashboard', 'verify', 'report', 'reports', 'watchlist', 'alerts', 'settings', 'plan', 'history', 'admin', 'support'].includes(route) && (
+      {!user && APP_ROUTES.includes(route) && (
+        <RequireAuth navigate={navigate} />
+      )}
+      {user && APP_ROUTES.includes(route) && (
         <AppShell user={user} route={route} navigate={navigate} logout={logout}>
           <PageSlot routeId="dashboard" current={route}><Dashboard navigate={navigate} user={user} /></PageSlot>
           <PageSlot routeId="verify" current={route}><VerifyTool navigate={navigate} /></PageSlot>
@@ -2093,6 +2122,11 @@ function Login({ navigate, loginAs }: any) {
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) { setError(error.message); return; }
+    const redirect = consumePostLoginRedirect();
+    if (redirect) {
+      navigate(pathToRoute(redirect));
+      return;
+    }
     const plan = data.user?.user_metadata?.plan;
     navigate(plan ? 'dashboard' : 'plan');
   };
@@ -2117,9 +2151,13 @@ function Login({ navigate, loginAs }: any) {
     if (!configured) { loginAs(); return; }
     const sb = getSupabase()!;
     const site = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
+    // Thread the gated page through `?next=` so the server callback can
+    // redirect there after exchanging the code for a session.
+    const next = peekPostLoginRedirect();
+    const callback = `${site}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`;
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${site}/auth/callback` },
+      options: { redirectTo: callback },
     });
     if (error) setError(error.message);
   };
@@ -2212,7 +2250,8 @@ function Signup({ navigate, loginAs }: any) {
     if (error) { setError(error.message); return; }
     if (data.session) {
       fetch('/api/email/welcome', { method: 'POST' }).catch(() => {});
-      navigate('plan');
+      const redirect = consumePostLoginRedirect();
+      navigate(redirect ? pathToRoute(redirect) : 'plan');
     } else {
       setInfo('Check your email to confirm your account.');
     }
@@ -2222,9 +2261,11 @@ function Signup({ navigate, loginAs }: any) {
     if (!configured) { loginAs(); return; }
     const sb = getSupabase()!;
     const site = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
+    const next = peekPostLoginRedirect();
+    const callback = `${site}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`;
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${site}/auth/callback` },
+      options: { redirectTo: callback },
     });
     if (error) setError(error.message);
   };
@@ -2330,6 +2371,58 @@ const AUTH_TESTIMONIALS: Array<{
     initials: 'KD',
   },
 ];
+
+function RequireAuth({ navigate }: any) {
+  // Capture the gated path on mount so login / signup / OAuth all bring the
+  // user back here. Stored in sessionStorage (per-tab) so an unrelated tab
+  // can't hijack the redirect.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const path = window.location.pathname + window.location.search + window.location.hash;
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, path);
+    } catch {}
+  }, []);
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Nav navigate={navigate} user={null} />
+      <div className="flex-1 flex items-center justify-center px-6 py-16 relative overflow-hidden">
+        <div className="absolute inset-0 grid-bg opacity-30 pointer-events-none" />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-[#FF6B35]/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="relative max-w-md w-full text-center">
+          <div className="w-16 h-16 rounded-2xl bg-[#0B1E3F] flex items-center justify-center mx-auto mb-6 card-shadow">
+            <Lock className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-3xl md:text-4xl serif text-[#0B1E3F] mb-3">Sign in to continue</h1>
+          <p className="text-[#0B1E3F]/60 mb-8">
+            You need an account to view this page. Log in and we&apos;ll bring you right back here.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              onClick={() => navigate('login')}
+              className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition card-shadow"
+            >
+              Log in
+            </button>
+            <button
+              onClick={() => navigate('signup')}
+              className="px-6 py-3.5 border border-[#0B1E3F]/20 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 bg-white transition"
+            >
+              Create free account
+            </button>
+          </div>
+          <button
+            onClick={() => navigate('landing')}
+            className="mt-6 text-sm text-[#0B1E3F]/60 hover:text-[#0B1E3F]"
+          >
+            ← Back to home
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AuthShell({ title, subtitle, children, navigate }: any) {
   // We pick a testimonial randomly per page load, but Math.random() runs
