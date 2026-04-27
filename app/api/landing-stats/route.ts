@@ -45,21 +45,28 @@ export async function GET() {
     svc ? svc.from('lookups').select('id', { count: 'exact', head: true }) : Promise.resolve({ count: 0 } as any),
     svc ? svc.from('fraud_reports').select('id', { count: 'exact', head: true }) : Promise.resolve({ count: 0 } as any),
     // 12 most recent lookups with a verdict — used for the live MC ticker.
+    // Filter to verify-style sources only; PDF forensic scans live in the
+    // same table but have no MC/DOT to display.
     svc
       ? svc
           .from('lookups')
           .select('mc,dot,verdict,data,created_at')
           .not('verdict', 'is', null)
+          .in('source', ['quick', 'ratecon'])
           .order('created_at', { ascending: false })
           .limit(12)
       : Promise.resolve({ data: [] } as any),
     // Most recent HIGH or MEDIUM risk lookup — used as the "featured scan"
     // hero card. Prefer high; fall back to medium so the card is rarely empty.
+    // Restricted to broker/carrier verifies (`quick`, `ratecon`) so PDF
+    // forensic scans (source='forensics', no MC/DOT, entity='NO AUTHORITY')
+    // never end up on the marketing hero.
     svc
       ? svc
           .from('lookups')
-          .select('mc,dot,name,score,verdict,data,created_at')
+          .select('mc,dot,name,score,verdict,data,source,created_at')
           .in('verdict', ['high', 'medium'])
+          .in('source', ['quick', 'ratecon'])
           .order('created_at', { ascending: false })
           .limit(1)
       : Promise.resolve({ data: [] } as any),
