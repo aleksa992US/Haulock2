@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   Shield, Search, AlertTriangle, CheckCircle2, XCircle, TrendingUp, FileText, Bell,
-  Users, Settings, LogOut, ChevronRight, ArrowRight, Lock, Zap, Database, Eye, Flag,
+  Users, Settings, LogOut, ChevronRight, ArrowRight, Lock, Zap, Database, Eye, EyeOff, Flag,
   Clock, MapPin, Phone, Mail, Building2, Download, Share2, Plus, BarChart3, Menu,
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
   Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
@@ -2502,10 +2502,33 @@ function AuthShell({ title, subtitle, children, navigate }: any) {
 }
 
 function Field({ label, name, type = 'text', placeholder, defaultValue, required, autoComplete }: any) {
+  const isPassword = type === 'password';
+  const [reveal, setReveal] = useState(false);
+  const inputType = isPassword && reveal ? 'text' : type;
   return (
     <div>
       <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">{label}</label>
-      <input name={name} type={type} placeholder={placeholder} defaultValue={defaultValue} required={required} autoComplete={autoComplete} className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+      <div className="relative">
+        <input
+          name={name}
+          type={inputType}
+          placeholder={placeholder}
+          defaultValue={defaultValue}
+          required={required}
+          autoComplete={autoComplete}
+          className={`w-full px-4 py-3 ${isPassword ? 'pr-11' : ''} bg-white border border-[#0B1E3F]/15 rounded-xl focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30`}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setReveal(v => !v)}
+            aria-label={reveal ? 'Hide password' : 'Show password'}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#0B1E3F]/50 hover:text-[#0B1E3F] p-1"
+          >
+            {reveal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
