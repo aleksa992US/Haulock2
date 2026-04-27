@@ -56,11 +56,9 @@ export async function GET() {
           .order('created_at', { ascending: false })
           .limit(12)
       : Promise.resolve({ data: [] } as any),
-    // Most recent HIGH or MEDIUM risk lookup — used as the "featured scan"
-    // hero card. Prefer high; fall back to medium so the card is rarely empty.
-    // Restricted to broker/carrier verifies (`quick`, `ratecon`) so PDF
-    // forensic scans (source='forensics', no MC/DOT, entity='NO AUTHORITY')
-    // never end up on the marketing hero.
+    // Most recent HIGH or MEDIUM risk lookup — used by InTheWildCard.
+    // The marketing HERO no longer uses this (it renders hardcoded
+    // example scenarios so no real user search appears on the public page).
     svc
       ? svc
           .from('lookups')
@@ -99,7 +97,7 @@ export async function GET() {
     })
     .filter(Boolean);
 
-  // Featured scan — anonymized real lookup for the hero "broker lookup" card.
+  // Featured scan — anonymized real lookup used by InTheWildCard only.
   // Uses the verdict the row was scored with at lookup time (lib/risk.ts
   // already differentiated broker vs carrier rules), so the visual class
   // (HIGH RISK / CAUTION) matches what the dashboard would show.

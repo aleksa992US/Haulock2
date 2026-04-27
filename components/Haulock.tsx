@@ -443,7 +443,7 @@ function Landing({ navigate, user }: any) {
             </div>
           </div>
           <div className="lg:col-span-6 fade-up fade-up-3 relative">
-            <HeroDashboardMockup featured={live?.featuredScan ?? null} />
+            <HeroDashboardMockup />
           </div>
         </div>
       </section>
@@ -451,18 +451,31 @@ function Landing({ navigate, user }: any) {
       <section className="border-y border-[#0B1E3F]/10 bg-white overflow-hidden py-5 text-[#0B1E3F]">
         <div className="flex gap-16 ticker whitespace-nowrap">
           {(() => {
-            // Real recent verdicts from /api/landing-stats. The verdict on
-            // each row was scored at lookup time using the broker-vs-carrier
-            // rules in lib/risk.ts, so it's already entity-aware. We display
-            // the entity badge (BROKER / CARRIER / BROKER+CARRIER) alongside
-            // so the ticker reflects the same logic the dashboard uses.
-            const items: LandingTickerItem[] = (live?.ticker?.length ?? 0) > 0
-              ? live!.ticker
-              : [
-                  { id: 'MC-847•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
-                  { id: 'MC-226•••', verdict: 'VERIFIED',  color: '#16A34A', entity: 'CARRIER' },
-                  { id: 'MC-498•••', verdict: 'CAUTION',   color: '#F59E0B', entity: 'BROKER' },
-                ];
+            // Marketing ticker — hardcoded demo data biased toward HIGH RISK /
+            // CAUTION so the band reads as "we catch problems," not "everyone
+            // is verified." IDs are blurred (last 3 chars masked) and aren't
+            // tied to specific real lookups. Do not wire this back to real
+            // user history.
+            const items: LandingTickerItem[] = [
+              { id: 'MC-847•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
+              { id: 'DOT-3271•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'CARRIER' },
+              { id: 'MC-612•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
+              { id: 'DOT-1547•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'CARRIER' },
+              { id: 'MC-921•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
+              { id: 'DOT-4012•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'BROKER+CARRIER' },
+              { id: 'MC-508•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'BROKER' },
+              { id: 'DOT-2438•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'CARRIER' },
+              { id: 'MC-704•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
+              { id: 'DOT-1226•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER+CARRIER' },
+              { id: 'MC-339•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'CARRIER' },
+              { id: 'DOT-2961•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'BROKER' },
+              { id: 'MC-128•••', verdict: 'VERIFIED', color: '#16A34A', entity: 'BROKER' },
+              { id: 'MC-672•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'CARRIER' },
+              { id: 'DOT-0891•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'BROKER+CARRIER' },
+              { id: 'MC-441•••', verdict: 'HIGH RISK', color: '#DC2626', entity: 'BROKER' },
+              { id: 'DOT-3271•••', verdict: 'CAUTION', color: '#F59E0B', entity: 'CARRIER' },
+              { id: 'MC-203•••', verdict: 'VERIFIED', color: '#16A34A', entity: 'BROKER' },
+            ];
             return [...Array(2)].map((_, round) => (
               <div key={round} className="flex gap-16 items-center">
                 {items.map((item, i) => (
@@ -876,6 +889,7 @@ const HERO_SCENARIOS: Array<{
   mc: string;
   dot: string;
   score: number;
+  entity: 'BROKER' | 'CARRIER' | 'BROKER+CARRIER';
   badgeLabel: string;
   badgeColor: string;
   verdictTitle: string;
@@ -889,6 +903,7 @@ const HERO_SCENARIOS: Array<{
   {
     name: 'Nationwide Cargo Solutions Inc',
     mc: 'MC-612•••', dot: 'DOT-2184•••', score: 84,
+    entity: 'BROKER',
     badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
     verdictTitle: 'Do not book', verdictLine: '5 critical red flags · Suspected double-brokering', verdictTone: 'danger',
     flags: [
@@ -902,6 +917,7 @@ const HERO_SCENARIOS: Array<{
   {
     name: 'Summit Logistics Group',
     mc: 'MC-921•••', dot: 'DOT-4012•••', score: 91,
+    entity: 'BROKER',
     badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
     verdictTitle: 'Do not book', verdictLine: '6 critical red flags · Confirmed payment fraud', verdictTone: 'danger',
     flags: [
@@ -915,6 +931,7 @@ const HERO_SCENARIOS: Array<{
   {
     name: 'Redline Transport Brokerage',
     mc: 'MC-508•••', dot: 'DOT-1884•••', score: 52,
+    entity: 'BROKER',
     badgeLabel: 'CAUTION', badgeColor: '#F59E0B',
     verdictTitle: 'Proceed with care', verdictLine: '2 warning signs detected · Verify before booking', verdictTone: 'warn',
     flags: [
@@ -928,6 +945,7 @@ const HERO_SCENARIOS: Array<{
   {
     name: 'Crossroads Brokerage Partners',
     mc: 'MC-704•••', dot: 'DOT-2961•••', score: 44,
+    entity: 'BROKER',
     badgeLabel: 'CAUTION', badgeColor: '#F59E0B',
     verdictTitle: 'Proceed with care', verdictLine: '2 warning signs · Request COI directly from insurer', verdictTone: 'warn',
     flags: [
@@ -941,6 +959,7 @@ const HERO_SCENARIOS: Array<{
   {
     name: 'Keystone Freight Network',
     mc: 'MC-128•••', dot: 'DOT-0891•••', score: 18,
+    entity: 'BROKER+CARRIER',
     badgeLabel: 'VERIFIED', badgeColor: '#16A34A',
     verdictTitle: 'Safe to book', verdictLine: 'All checks passed · Established broker', verdictTone: 'good',
     flags: [
@@ -951,14 +970,87 @@ const HERO_SCENARIOS: Array<{
     scanTime: '1.7s', dataSources: 14,
     communityAlert: 'Positive payment history from 40+ carriers',
   },
+  {
+    name: 'Pinnacle Freight Logistics LLC',
+    mc: 'MC-845•••', dot: 'DOT-3271•••', score: 76,
+    entity: 'BROKER',
+    badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
+    verdictTitle: 'Do not book', verdictLine: '4 critical red flags · Identity reuse pattern', verdictTone: 'danger',
+    flags: [
+      { s: 'critical', t: 'MC reactivated 6 days ago after 2-year gap', i: AlertTriangle },
+      { s: 'critical', t: 'Same officer name on 3 revoked authorities', i: Flag },
+      { s: 'warning', t: 'Email on free domain (gmail.com)', i: Mail },
+    ],
+    scanTime: '2.1s', dataSources: 14,
+    communityAlert: '5 carriers flagged this broker in last 21 days',
+  },
+  {
+    name: 'Eastline Cargo Services',
+    mc: 'MC-339•••', dot: 'DOT-1547•••', score: 62,
+    entity: 'CARRIER',
+    badgeLabel: 'CAUTION', badgeColor: '#F59E0B',
+    verdictTitle: 'Proceed with care', verdictLine: '3 warning signs · Verify rate con before booking', verdictTone: 'warn',
+    flags: [
+      { s: 'warning', t: 'Vehicle OOS rate 31.2% · above national avg', i: AlertTriangle },
+      { s: 'warning', t: '2 fatal crashes on record (24 mo)', i: Flag },
+      { s: 'good', t: 'Authority active 6 years', i: CheckCircle2 },
+    ],
+    scanTime: '2.0s', dataSources: 14,
+    communityAlert: '2 carriers flagged this broker in last 60 days',
+  },
+  {
+    name: 'Atlas Carrier Group LLC',
+    mc: 'MC-672•••', dot: 'DOT-2438•••', score: 48,
+    entity: 'CARRIER',
+    badgeLabel: 'CAUTION', badgeColor: '#F59E0B',
+    verdictTitle: 'Proceed with care', verdictLine: '2 warning signs detected · Limited operating history', verdictTone: 'warn',
+    flags: [
+      { s: 'warning', t: 'Authority granted 11 months ago', i: Clock },
+      { s: 'warning', t: 'No website on file', i: Globe },
+      { s: 'good', t: 'Insurance current · $1M/$100K', i: Shield },
+    ],
+    scanTime: '1.6s', dataSources: 14,
+    communityAlert: 'No fraud reports · low platform footprint',
+  },
+  {
+    name: 'Heartland Express Logistics',
+    mc: 'MC-441•••', dot: 'DOT-1226•••', score: 88,
+    entity: 'BROKER+CARRIER',
+    badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
+    verdictTitle: 'Do not book', verdictLine: '5 critical red flags · Confirmed double-brokering', verdictTone: 'danger',
+    flags: [
+      { s: 'critical', t: 'Listed on FreightValidate watchlist', i: Flag },
+      { s: 'critical', t: 'DBA changed 3× in last 6 months', i: AlertTriangle },
+      { s: 'critical', t: 'VOIP phone · address is mailbox center', i: Phone },
+    ],
+    scanTime: '2.3s', dataSources: 14,
+    communityAlert: '14 carriers flagged this broker in last 30 days',
+  },
+  {
+    name: 'Cardinal Freight Solutions',
+    mc: 'MC-203•••', dot: 'DOT-0764•••', score: 12,
+    entity: 'BROKER',
+    badgeLabel: 'VERIFIED', badgeColor: '#16A34A',
+    verdictTitle: 'Safe to book', verdictLine: 'All checks passed · Strong payment history', verdictTone: 'good',
+    flags: [
+      { s: 'good', t: 'Authority active 18+ years', i: CheckCircle2 },
+      { s: 'good', t: 'Quick-pay reports from 60+ carriers', i: Shield },
+      { s: 'good', t: 'Verified physical office · 2,400 sqft', i: Building2 },
+    ],
+    scanTime: '1.5s', dataSources: 14,
+    communityAlert: 'Positive payment history from 60+ carriers',
+  },
 ];
 
-function HeroDashboardMockup({ featured }: { featured?: LandingFeaturedScan }) {
+function HeroDashboardMockup() {
+  // Marketing hero deliberately renders only hardcoded HERO_SCENARIOS — never
+  // real user lookups — so a visitor's own search history can't appear on the
+  // public landing page. Pick a random scenario per page load.
   const [idx, setIdx] = useState<number | null>(null);
   useEffect(() => {
     setIdx(Math.floor(Math.random() * HERO_SCENARIOS.length));
   }, []);
-  if (idx === null && !featured) {
+  if (idx === null) {
     return (
       <div className="relative text-[#0B1E3F]">
         <div className="bg-white rounded-3xl card-shadow-lg border border-[#0B1E3F]/10" style={{ minHeight: 540 }} />
@@ -966,12 +1058,8 @@ function HeroDashboardMockup({ featured }: { featured?: LandingFeaturedScan }) {
     );
   }
 
-  // Build a unified "scenario" shape from either a real featured scan
-  // (preferred — actual lookup with anonymized MC/DOT and stored flags) or
-  // a fallback hardcoded HERO_SCENARIOS entry while the API is loading or
-  // when no risky scans exist yet.
   const flagColor = (level: 'critical' | 'warning' | 'good') => level === 'critical' ? '#DC2626' : level === 'warning' ? '#F59E0B' : '#16A34A';
-  let s: {
+  const s: {
     name: string; mc: string; dot: string; score: number;
     badgeLabel: string; badgeColor: string;
     verdictTitle: string; verdictLine: string; verdictTone: 'danger' | 'warn' | 'good';
@@ -980,40 +1068,7 @@ function HeroDashboardMockup({ featured }: { featured?: LandingFeaturedScan }) {
     communityAlert?: string;
     entity?: string;
     isReal: boolean;
-  };
-
-  if (featured) {
-    const v = featured.verdict;
-    const tone: 'danger' | 'warn' | 'good' = v === 'high' ? 'danger' : v === 'medium' ? 'warn' : 'good';
-    const badgeLabel = v === 'high' ? 'HIGH RISK' : v === 'medium' ? 'CAUTION' : 'VERIFIED';
-    const badgeColor = v === 'high' ? '#DC2626' : v === 'medium' ? '#F59E0B' : '#16A34A';
-    const verdictTitle = v === 'high' ? 'Do not book' : v === 'medium' ? 'Proceed with care' : 'Safe to book';
-    const verdictLine = featured.flagCount > 0
-      ? `${featured.flagCount} red flag${featured.flagCount === 1 ? '' : 's'} detected · scored using ${featured.entity.toLowerCase()} rules`
-      : `Scored as ${badgeLabel.toLowerCase()} using ${featured.entity.toLowerCase()} rules`;
-    const flagSevToTone = (sev: string): 'critical' | 'warning' | 'good' =>
-      sev === 'critical' ? 'critical' : sev === 'warning' ? 'warning' : 'good';
-    const flags = featured.flags.length > 0
-      ? featured.flags.map((f) => ({ s: flagSevToTone(f.sev), t: f.title, i: f.sev === 'critical' ? AlertTriangle : Flag }))
-      : [{ s: 'good' as const, t: 'No red flags detected', i: CheckCircle2 }];
-
-    s = {
-      name: featured.name,
-      mc: featured.mc || '—',
-      dot: featured.dot || '—',
-      score: featured.score,
-      badgeLabel, badgeColor,
-      verdictTitle, verdictLine, verdictTone: tone,
-      flags,
-      scanTime: '—',
-      dataSources: 14,
-      entity: featured.entity,
-      isReal: true,
-    };
-  } else {
-    const fallback = HERO_SCENARIOS[idx ?? 0];
-    s = { ...fallback, isReal: false };
-  }
+  } = { ...HERO_SCENARIOS[idx], isReal: false };
 
   const toneBg = s.verdictTone === 'danger' ? 'bg-[#DC2626]/10 border-[#DC2626]/30' : s.verdictTone === 'warn' ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30' : 'bg-[#16A34A]/10 border-[#16A34A]/30';
   const toneText = s.verdictTone === 'danger' ? 'text-[#DC2626]' : s.verdictTone === 'warn' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
@@ -1049,7 +1104,14 @@ function HeroDashboardMockup({ featured }: { featured?: LandingFeaturedScan }) {
                 </span>
               )}
             </div>
-            <div className="text-xl font-semibold text-[#0B1E3F] mb-0.5">{s.name}</div>
+            <div className="text-xl font-semibold text-[#0B1E3F] mb-0.5 flex items-center gap-2 flex-wrap">
+              <span>{s.name}</span>
+              {s.entity && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] mono uppercase tracking-wider bg-[#0B1E3F]/5 text-[#0B1E3F]/65 font-normal">
+                  {s.entity}
+                </span>
+              )}
+            </div>
             <div className="text-xs mono text-[#0B1E3F]/50">{s.mc} · {s.dot}</div>
           </div>
           <RiskGauge score={s.score} size="md" />
