@@ -56,13 +56,21 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     console.warn('[auth/callback] exchangeCodeForSession failed', { message: error.message, status: error.status });
     const dest = new URL('/login', url.origin);
     dest.searchParams.set('auth_error', error.message || 'Could not complete sign-in.');
     return NextResponse.redirect(dest);
   }
+
+  const setCookieNames = response.cookies.getAll().map(c => c.name);
+  console.log('[auth/callback] exchange ok', {
+    next,
+    userId: data?.user?.id,
+    email: data?.user?.email,
+    cookiesSet: setCookieNames,
+  });
 
   return response;
 }

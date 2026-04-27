@@ -166,7 +166,8 @@ export default function Haulock() {
     // Read the local session synchronously from the cookie. getUser() makes
     // a network roundtrip and was holding the auth lock for 5s+ on slow
     // networks, blanking the UI as logged-out right after Google sign-in.
-    sb.auth.getSession().then(async ({ data }) => {
+    sb.auth.getSession().then(async ({ data, error }) => {
+      console.log('[haulock-auth] getSession result', { hasUser: !!data?.session?.user, error: error?.message, cookies: typeof document !== 'undefined' ? document.cookie.split(';').map(c => c.trim().split('=')[0]).filter(n => n.startsWith('sb-')) : [] });
       const sessionUser = data?.session?.user;
       if (!sessionUser) return;
       recordAuthProvider(sessionUser);
@@ -188,23 +189,48 @@ export default function Haulock() {
         consumePostLoginRedirect();
       }
     });
-    const { data: sub } = sb.auth.onAuthStateChange(async (_event, session) => {
+    const { data: sub } = sb.auth.onAuthStateChange((_event, session) => {
+      console.log('[haulock-auth] onAuthStateChange', { event: _event, hasUser: !!session?.user });
       if (session?.user) {
+        // CRITICAL: do NOT await any Supabase calls inside this callback.
+        // The auth client holds an internal lock during onAuthStateChange,
+        // and calling sb.auth.* (e.g. updateUser inside ensureDefaultPlan)
+        // synchronously deadlocks — the callback never resumes, setUser
+        // never fires, and the UI is stuck on RequireAuth even though we
+        // logged hasUser: true. Set the user immediately from the session,
+        // then defer side-effects with setTimeout.
         recordAuthProvider(session.user);
-        const ensured = await ensureDefaultPlan(session.user);
-        identify(ensured.id);
-        // Distinguish first-time signup from a returning login. created_at
-        // is set once on insert so any session.user appearing within 30s
-        // of that timestamp is a brand-new account. Only fires once per
-        // session because of `_event === 'SIGNED_IN'`.
-        if (_event === 'SIGNED_IN') {
-          const createdAt = ensured.created_at ? new Date(ensured.created_at).getTime() : 0;
-          const isFresh = createdAt > 0 && Date.now() - createdAt < 30_000;
-          const provider = String((ensured.app_metadata as any)?.provider || 'email').toLowerCase();
-          if (isFresh) track('signup_complete', { provider });
-          else track('login', { provider });
+        identify(session.user.id);
+        setUser(userFromSession(session.user));
+        if (_event === 'SIGNED_IN' && typeof window !== 'undefined') {
+          const r = pathToRoute(window.location.pathname);
+          if (r === 'landing' || r === 'login' || r === 'signup') {
+            const redirect = consumePostLoginRedirect();
+            const target = redirect ? pathToRoute(redirect) : 'dashboard';
+            window.history.replaceState({}, '', routeToPath(target));
+            setRoute(target);
+          } else {
+            consumePostLoginRedirect();
+          }
         }
-        setUser(userFromSession(ensured));
+        // Backfill plan + analytics off the auth thread so we never block
+        // the UI render or deadlock the auth client.
+        setTimeout(async () => {
+          try {
+            const ensured = await ensureDefaultPlan(session.user);
+            if (_event === 'SIGNED_IN') {
+              const createdAt = ensured.created_at ? new Date(ensured.created_at).getTime() : 0;
+              const isFresh = createdAt > 0 && Date.now() - createdAt < 30_000;
+              const provider = String((ensured.app_metadata as any)?.provider || 'email').toLowerCase();
+              if (isFresh) track('signup_complete', { provider });
+              else track('login', { provider });
+            }
+            // Refresh local user with the ensured-plan version.
+            setUser(userFromSession(ensured));
+          } catch (e) {
+            console.warn('[haulock-auth] post-signin backfill failed', e);
+          }
+        }, 0);
       } else {
         if (_event === 'SIGNED_OUT') track('logout');
         identify(null);
