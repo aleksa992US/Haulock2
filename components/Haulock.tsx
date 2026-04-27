@@ -145,18 +145,19 @@ export default function Haulock() {
       try { localStorage.setItem('haulock:lastAuthProvider', provider); } catch {}
     };
 
-    sb.auth.getUser().then(async ({ data }) => {
-      if (!data?.user) return;
-      recordAuthProvider(data.user);
-      const ensured = await ensureDefaultPlan(data.user);
+    // Read the local session synchronously from the cookie. getUser() makes
+    // a network roundtrip and was holding the auth lock for 5s+ on slow
+    // networks, blanking the UI as logged-out right after Google sign-in.
+    sb.auth.getSession().then(async ({ data }) => {
+      const sessionUser = data?.session?.user;
+      if (!sessionUser) return;
+      recordAuthProvider(sessionUser);
+      const ensured = await ensureDefaultPlan(sessionUser);
       const u = userFromSession(ensured);
-      // Identify the user in GA so cross-device sessions stitch together.
-      // The Supabase UUID is opaque and contains no PII.
       identify(ensured.id);
       setUser(u);
       const r = typeof window !== 'undefined' ? pathToRoute(window.location.pathname) : 'landing';
       if (r === 'landing' || r === 'login' || r === 'signup') {
-        // After backfill every user has a plan, so just send them to /dashboard.
         if (typeof window !== 'undefined') window.history.replaceState({}, '', '/dashboard');
         setRoute('dashboard');
       }
