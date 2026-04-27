@@ -19,7 +19,7 @@ import { track, identify, trackPurchase } from '@/lib/analytics';
 
 const APP_ROUTES = ['dashboard', 'verify', 'history', 'reports', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'support'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
-const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about', 'careers'];
+const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about'];
 const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
 
 function pathToRoute(pathname: string): string {
@@ -252,7 +252,6 @@ export default function Haulock() {
       {route === 'privacy' && <LegalPage page="privacy" navigate={navigate} user={user} />}
       {route === 'blog' && <BlogPage slug={blogSlug} navigate={navigate} user={user} />}
       {route === 'about' && <AboutPage navigate={navigate} user={user} />}
-      {route === 'careers' && <CareersPage navigate={navigate} user={user} />}
       {user && ['dashboard', 'verify', 'report', 'reports', 'watchlist', 'alerts', 'settings', 'plan', 'history', 'admin', 'support'].includes(route) && (
         <AppShell user={user} route={route} navigate={navigate} logout={logout}>
           <PageSlot routeId="dashboard" current={route}><Dashboard navigate={navigate} user={user} /></PageSlot>
@@ -1819,7 +1818,7 @@ function Nav({ navigate, user }: any) {
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         {/* Logo always sends the user back to the marketing home. Used to
             be an unwrapped <Logo /> which felt broken on /blog, /about,
-            /careers, /terms, /privacy etc. — the standard convention every
+            /terms, /privacy etc. — the standard convention every
             user expects. */}
         <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} aria-label="Haulock home" className="hover:opacity-80 transition">
           <Logo />
@@ -1968,8 +1967,7 @@ function Footer({ navigate }: any) {
     { t: 'Company', items: [
       { label: 'About',    route: 'about' },
       { label: 'Blog',     route: 'blog' },
-      { label: 'Careers',  route: 'careers' },
-      { label: 'Contact',  href: 'mailto:hello@haulock.com' },
+      { label: 'Contact',  href: 'mailto:contact@haulock.com' },
     ] },
     { t: 'Legal', items: [
       { label: 'Terms of Use',    route: 'terms' },
@@ -2476,7 +2474,7 @@ function LegalPage({ page, navigate, user }: { page: 'terms' | 'privacy'; naviga
             <button onClick={() => navigate(isTerms ? 'privacy' : 'terms')} className="text-[#0B1E3F] hover:underline text-left">
               {isTerms ? 'Read the Privacy Policy' : 'Read the Terms of Use'}
             </button>
-            <a href="mailto:legal@haulock.com" className="text-[#0B1E3F] hover:underline">Questions? legal@haulock.com</a>
+            <a href="mailto:contact@haulock.com" className="text-[#0B1E3F] hover:underline">Questions? contact@haulock.com</a>
           </div>
         </div>
       </section>
@@ -2596,7 +2594,7 @@ function TermsContent() {
 
       <LegalH2>15. Contact</LegalH2>
       <LegalP>
-        Legal notices and questions about these Terms can be sent to <a href="mailto:legal@haulock.com" className="text-[#0B1E3F] underline">legal@haulock.com</a>.
+        Legal notices and questions about these Terms can be sent to <a href="mailto:contact@haulock.com" className="text-[#0B1E3F] underline">contact@haulock.com</a>.
       </LegalP>
     </div>
   );
@@ -2692,7 +2690,7 @@ function PrivacyContent() {
 
       <LegalH2>11. Contact</LegalH2>
       <LegalP>
-        Privacy questions can be sent to <a href="mailto:privacy@haulock.com" className="text-[#0B1E3F] underline">privacy@haulock.com</a>.
+        Privacy questions can be sent to <a href="mailto:contact@haulock.com" className="text-[#0B1E3F] underline">contact@haulock.com</a>.
       </LegalP>
     </div>
   );
@@ -2770,7 +2768,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
 
           <LegalH2>Talk to us</LegalH2>
           <LegalP>
-            Press, partnerships, and general questions: <a href="mailto:hello@haulock.com" className="text-[#0B1E3F] underline">hello@haulock.com</a>. Legal: <a href="mailto:legal@haulock.com" className="text-[#0B1E3F] underline">legal@haulock.com</a>. Privacy: <a href="mailto:privacy@haulock.com" className="text-[#0B1E3F] underline">privacy@haulock.com</a>. If you want to join the team, the <button onClick={() => navigate('careers')} className="text-[#0B1E3F] underline">careers page</button> has open roles.
+            For press, partnerships, legal, privacy, careers, and general questions: <a href="mailto:contact@haulock.com" className="text-[#0B1E3F] underline">contact@haulock.com</a>.
           </LegalP>
 
           <div className="mt-10 pt-8 border-t border-[#0B1E3F]/10 flex flex-col sm:flex-row gap-3 justify-between text-sm">
@@ -2787,113 +2785,6 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Careers
-// ---------------------------------------------------------------------------
-
-const OPEN_ROLES: { title: string; type: string; location: string; description: string }[] = [
-  // Empty for now — the page will render the "no open roles, but please reach
-  // out" state. When you start hiring, push entries here.
-];
-
-function CareersPage({ navigate, user }: { navigate: any; user?: any }) {
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const original = document.title;
-    document.title = 'Careers at Haulock · Help us stop freight fraud';
-    setMeta('description', 'Open roles at Haulock and how to apply. Small team, freight + software, remote-friendly.');
-    return () => { document.title = original; };
-  }, []);
-
-  const hasRoles = OPEN_ROLES.length > 0;
-
-  return (
-    <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
-      <Nav navigate={navigate} user={user} />
-
-      <section className="py-20 px-6 relative bg-[#F5F3EE]">
-        <div className="absolute inset-0 radial-glow pointer-events-none" />
-        <div className="relative max-w-3xl mx-auto">
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">Careers</div>
-          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
-            Help us stop freight fraud.
-          </h1>
-          <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
-            We are a small team building tools that protect carriers and brokers from identity-theft scams, double brokering, and rate-con fraud. If you care about either freight or software (and ideally both), keep reading.
-          </p>
-        </div>
-      </section>
-
-      <section className="px-6 pb-12">
-        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
-          <LegalH2>How we work</LegalH2>
-          <LegalUl>
-            <li><strong>Small team, big surface area.</strong> Whoever joins will own meaningful pieces of the product end-to-end. There is no committee. There is no managing-up game.</li>
-            <li><strong>Remote-friendly.</strong> The team works async with overlap hours in U.S. time zones. We meet in person a few times a year.</li>
-            <li><strong>Freight first.</strong> Everyone reads carrier and broker community forums weekly. Half the team has dispatched, brokered, or driven. If you have not, you will after a month here.</li>
-            <li><strong>Ship in days, not quarters.</strong> Most product changes go from idea to live in under a week. Roadmaps are short.</li>
-            <li><strong>Honest about limitations.</strong> We will not pretend Haulock can stop fraud we cannot stop. Your work should match. We sell trust, and the moment we lose it we are done.</li>
-          </LegalUl>
-
-          <LegalH2>Open roles</LegalH2>
-          {hasRoles ? (
-            <div className="space-y-4 mb-6">
-              {OPEN_ROLES.map((role, i) => (
-                <div key={i} className="p-5 border border-[#0B1E3F]/10 rounded-xl hover:border-[#0B1E3F]/25 transition">
-                  <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
-                    <div>
-                      <div className="text-lg font-semibold text-[#0B1E3F]">{role.title}</div>
-                      <div className="text-xs mono text-[#0B1E3F]/55 mt-1">{role.type} · {role.location}</div>
-                    </div>
-                    <a
-                      href={`mailto:careers@haulock.com?subject=${encodeURIComponent('Application: ' + role.title)}`}
-                      className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-semibold hover:bg-[#0B1E3F]/90 inline-flex items-center gap-2"
-                    >
-                      Apply <ArrowRight className="w-3.5 h-3.5" />
-                    </a>
-                  </div>
-                  <p className="text-sm text-[#0B1E3F]/75 leading-relaxed">{role.description}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="p-6 bg-[#0B1E3F]/[0.04] rounded-xl mb-6 text-[15px] leading-relaxed text-[#0B1E3F]/80">
-              We do not have any open roles right now. That changes fast. If you are an exceptional engineer, designer, or freight operator and want to work on this problem, send a note. We keep good resumes on file and reach out the moment something opens up.
-            </div>
-          )}
-
-          <LegalH2>How to reach out</LegalH2>
-          <LegalP>
-            Email <a href="mailto:careers@haulock.com" className="text-[#0B1E3F] underline">careers@haulock.com</a> with:
-          </LegalP>
-          <LegalUl>
-            <li>One paragraph on what you have built, broken, or fixed in freight or software (or both).</li>
-            <li>A link to anything that shows your work: GitHub, a portfolio, a deck, a write-up, a Loom of you walking through a problem.</li>
-            <li>What kind of role you want, and what you are not interested in.</li>
-            <li>Your time zone.</li>
-          </LegalUl>
-          <LegalP>
-            We read every email. We respond to every one we genuinely cannot pass on. Form-letter applications get a form-letter response.
-          </LegalP>
-
-          <div className="mt-10 pt-8 border-t border-[#0B1E3F]/10 flex flex-col sm:flex-row gap-3">
-            <a
-              href="mailto:careers@haulock.com"
-              className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 inline-flex items-center justify-center gap-2"
-            >
-              Send a note <ArrowRight className="w-4 h-4" />
-            </a>
-            <button onClick={() => navigate('about')} className="px-5 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">
-              Read about Haulock
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <Footer navigate={navigate} />
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Blog
