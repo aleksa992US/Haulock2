@@ -1582,7 +1582,13 @@ function InTheWildCard({ featured }: { featured?: LandingFeaturedScan }) {
               <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#0B1E3F]/5 text-[#0B1E3F]/55">Sample</span>
             )}
           </div>
-          <div className="text-2xl font-semibold text-[#0B1E3F]">{s.name}</div>
+          <div
+            className="text-2xl font-semibold text-[#0B1E3F]"
+            style={s.isReal ? { filter: 'blur(6px)', userSelect: 'none' } : undefined}
+            aria-label={s.isReal ? 'Company name redacted' : undefined}
+          >
+            {s.name}
+          </div>
           <div className="text-sm mono text-[#0B1E3F]/50">{s.mc} · {s.dot}</div>
         </div>
         <RiskGauge score={s.score} size="sm" />
