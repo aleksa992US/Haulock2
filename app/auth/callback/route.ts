@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
-import { getServerSupabase } from '@/lib/supabase/server';
+import { NextResponse, type NextRequest } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,9 +8,11 @@ export const dynamic = 'force-dynamic';
 // session and set the auth cookies on the response, then bounce the user
 // back to `?next=` (or `/` by default).
 //
-// On any failure we redirect to `/login?auth_error=<reason>` so the user
-// sees a real message instead of a silently-broken page.
-export async function GET(req: Request) {
+// IMPORTANT: in a Route Handler, auth cookies must be written onto the
+// response we are about to return. Writing via `next/headers`'s cookies()
+// store does not reliably propagate onto a NextResponse.redirect(), so the
+// session is silently lost on the next request.
+export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
   const next = url.searchParams.get('next') ?? '/';
@@ -31,12 +33,28 @@ export async function GET(req: Request) {
     return NextResponse.redirect(dest);
   }
 
-  const supabase = getServerSupabase();
-  if (!supabase) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
     const dest = new URL('/login', url.origin);
     dest.searchParams.set('auth_error', 'Auth not configured on the server.');
     return NextResponse.redirect(dest);
   }
+
+  const response = NextResponse.redirect(new URL(next, url.origin));
+
+  const supabase = createServerClient(supabaseUrl, supabaseKey, {
+    cookies: {
+      getAll() {
+        return req.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set({ name, value, ...options });
+        });
+      },
+    },
+  });
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
@@ -46,5 +64,5 @@ export async function GET(req: Request) {
     return NextResponse.redirect(dest);
   }
 
-  return NextResponse.redirect(new URL(next, url.origin));
+  return response;
 }
