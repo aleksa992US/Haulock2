@@ -73,7 +73,7 @@ export type SendArgs = {
   attachments?: SendAttachment[];
   // `kind` tags the send so the admin newsletter dashboard can show counts
   // per type per recipient. Optional — old call sites stay legal.
-  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'other';
+  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'other';
 };
 
 export async function sendEmail({ to, subject, html, replyTo, attachments, kind }: SendArgs) {
@@ -748,6 +748,91 @@ ${button(args.siteUrl + '/dashboard', 'Open dashboard →')}
   return {
     subject: noActivity ? 'Your quiet week on Haulock' : `Your week on Haulock: ${args.stats.lookups} lookups, ${args.stats.highVerdictCount} high risk`,
     html: baseLayout({ preview: 'Your weekly Haulock summary.', body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// ---------- Abandoned cart recovery ----------
+
+// Sent ~1 hour after a user starts checkout but never confirms payment.
+// Friendly nudge + 20% off first month (NEW20). The promo code is wired
+// to the existing checkout URL (`?promoCode=NEW20`) so the discount is
+// already applied when they land back on the page.
+export function abandonedCart1hTemplate(args: {
+  planLabel: string;
+  priceLabel: string;          // e.g. "$49/mo"
+  recipientEmail: string;
+  recipientName?: string;
+  resumeUrl: string;           // checkout URL with promo applied
+  promoCode: string;           // 'NEW20'
+}): { subject: string; html: string } {
+  const greeting = args.recipientName ? `Hi ${escapeHtml(args.recipientName.split(' ')[0])},` : 'Hi,';
+  const body = `
+${h1(`${greeting} you left ${italicAccent('Haulock ' + escapeHtml(args.planLabel))} in your cart.`)}
+${p(`Looks like something pulled you away during checkout. We&rsquo;ve got your spot held — and to make it easier, here&rsquo;s <strong style="color:#FF6B35;">20% off your first month</strong>.`)}
+
+<div style="background:linear-gradient(135deg,#0B1E3F 0%,rgba(11,30,63,0.92) 100%);border-radius:14px;padding:22px 24px;margin:0 0 24px 0;color:#ffffff;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+      <td>
+        <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-bottom:6px;">Your code</div>
+        <div style="font-size:26px;font-weight:700;letter-spacing:0.04em;color:#ffffff;">${escapeHtml(args.promoCode)}</div>
+        <div style="font-size:13px;color:rgba(255,255,255,0.65);margin-top:6px;">20% off your first month of ${escapeHtml(args.planLabel)} (${escapeHtml(args.priceLabel)}). Renews at full price. One-time use.</div>
+      </td>
+    </tr>
+  </table>
+</div>
+
+${button(args.resumeUrl, 'Finish checkout with 20% off →')}
+
+${p(`The ride from "I&rsquo;ll deal with it later" to "I just got burned on a load" is short. Verifying brokers takes 2 seconds with Haulock — long before money or trailers move.`)}
+
+<div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:16px 18px;margin:0 0 24px 0;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">What you get</div>
+  <ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.7;color:rgba(11,30,63,0.85);">
+    <li>Live FMCSA broker verification with risk scoring</li>
+    <li>Rate-con PDF scan — flags fraud before you book</li>
+    <li>Watchlist alerts when a broker&rsquo;s status changes</li>
+    <li>Cancel anytime from Settings</li>
+  </ul>
+</div>
+
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Code expires in 7 days. Questions? Just reply to this email.</div>`;
+  return {
+    subject: `You left Haulock ${args.planLabel} behind — 20% off if you finish today`,
+    html: baseLayout({ preview: `Use NEW20 for 20% off your first month of Haulock ${args.planLabel}.`, body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// Sent ~7 days after the abandoned checkout if the user still hasn't
+// completed. Last-chance reminder — same code, ending soon framing.
+export function abandonedCart7dTemplate(args: {
+  planLabel: string;
+  priceLabel: string;
+  recipientEmail: string;
+  recipientName?: string;
+  resumeUrl: string;
+  promoCode: string;
+}): { subject: string; html: string } {
+  const greeting = args.recipientName ? `Hi ${escapeHtml(args.recipientName.split(' ')[0])},` : 'Hi,';
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:rgba(255,107,53,0.12);color:#FF6B35;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;font-weight:600;">Last chance · code expires today</div>
+${h1(`${greeting} your ${italicAccent('20% off')} is about to disappear.`)}
+${p(`Quick one. We held the discount on your Haulock ${escapeHtml(args.planLabel)} cart for a week. After today the code <strong style="color:#0B1E3F;">${escapeHtml(args.promoCode)}</strong> goes away and the plan goes back to full price.`)}
+
+<div style="background:linear-gradient(135deg,#FF6B35 0%,#FF8556 100%);border-radius:14px;padding:22px 24px;margin:0 0 24px 0;color:#ffffff;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.7);margin-bottom:6px;">Final reminder</div>
+  <div style="font-size:24px;font-weight:700;color:#ffffff;line-height:1.2;">20% off your first month</div>
+  <div style="font-size:14px;color:rgba(255,255,255,0.85);margin-top:8px;">Code <strong style="letter-spacing:0.04em;">${escapeHtml(args.promoCode)}</strong> · ${escapeHtml(args.planLabel)} (${escapeHtml(args.priceLabel)}) · expires today</div>
+</div>
+
+${button(args.resumeUrl, 'Lock in 20% off now →')}
+
+${p(`The carriers who get burned by double-brokering and identity-fraud rate cons all say the same thing afterward: <em style="color:#0B1E3F;">"I should have just verified them first."</em> Haulock is the 2-second check that prevents the 6-month loss.`)}
+
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;margin-top:8px;">Not the right fit? No worries — we won&rsquo;t bug you again.</div>`;
+  return {
+    subject: `Last day for 20% off Haulock ${args.planLabel}`,
+    html: baseLayout({ preview: `Code ${args.promoCode} expires today — 20% off your first month.`, body, unsubEmail: args.recipientEmail }),
   };
 }
 

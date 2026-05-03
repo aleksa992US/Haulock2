@@ -4020,6 +4020,133 @@ function StripeOverviewCard() {
   );
 }
 
+// Admin-only "Cart recovery" card — exit-intent modal events, abandoned-
+// cart email sends, and live NEW20 promo redemption count from Stripe.
+// Pairs with the abandoned-carts cron + checkout exit-intent modal.
+function CartRecoveryCard() {
+  type Stats = {
+    exitIntent: {
+      shown: { all: number; last30d: number };
+      claimed: { all: number; last30d: number };
+      dismissed: { all: number; last30d: number };
+    };
+    emails: {
+      abandoned_1h: { all: number; last30d: number };
+      abandoned_7d: { all: number; last30d: number };
+      total_recovery_rows: { all: number; last30d: number };
+    };
+    promo: {
+      code: string;
+      active: boolean | null;
+      times_redeemed: number | null;
+      max_redemptions: number | null;
+      coupon_id: string | null;
+      percent_off: number | null;
+      duration: string | null;
+    };
+  };
+  const [data, setData] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch('/api/admin/cart-recovery-stats');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setData(j);
+    } catch (e: any) {
+      setError(e?.message || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  // Conversion = claimed / shown. Surfaces whether the modal is actually
+  // pulling people back vs. just being annoying.
+  const shown = data?.exitIntent.shown.last30d ?? 0;
+  const claimed = data?.exitIntent.claimed.last30d ?? 0;
+  const claimRate = shown > 0 ? Math.round((claimed / shown) * 100) : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold">Cart recovery</span>
+          <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
+            Last 30 days
+          </span>
+          {data?.promo.active === false && (
+            <span className="px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
+              {data.promo.code} inactive
+            </span>
+          )}
+        </div>
+        <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <Stat
+          label="Exit modal shown"
+          value={data ? data.exitIntent.shown.last30d : '—'}
+          sub={data ? `${data.exitIntent.shown.all} all-time` : null}
+        />
+        <Stat
+          label="Code claimed"
+          value={data ? data.exitIntent.claimed.last30d : '—'}
+          sub={claimRate != null ? `${claimRate}% of shown` : (data ? `${data.exitIntent.claimed.all} all-time` : null)}
+        />
+        <Stat
+          label="Dismissed"
+          value={data ? data.exitIntent.dismissed.last30d : '—'}
+          sub="Closed without claim"
+        />
+        <Stat
+          label="1h emails sent"
+          value={data ? data.emails.abandoned_1h.last30d : '—'}
+          sub={data ? `${data.emails.abandoned_1h.all} all-time` : null}
+        />
+        <Stat
+          label="7d emails sent"
+          value={data ? data.emails.abandoned_7d.last30d : '—'}
+          sub={data ? `${data.emails.abandoned_7d.all} all-time` : null}
+        />
+      </div>
+
+      <div className="p-4 bg-gradient-to-br from-[#0B1E3F] to-[#0B1E3F]/92 rounded-xl text-white flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-[10px] mono uppercase tracking-wider text-white/55 mb-1">Promo code redemptions</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-semibold mono tracking-tight">
+              {data?.promo.times_redeemed != null ? data.promo.times_redeemed : '—'}
+            </span>
+            <span className="text-xs mono text-white/60">
+              {data?.promo.code ?? 'NEW20'}
+              {data?.promo.percent_off != null ? ` · ${data.promo.percent_off}% off` : ''}
+              {data?.promo.duration ? ` · ${data.promo.duration}` : ''}
+            </span>
+          </div>
+          {data?.promo.max_redemptions != null && (
+            <div className="text-[11px] mono text-white/45 mt-1">
+              cap {data.promo.max_redemptions}
+            </div>
+          )}
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] mono uppercase tracking-wider text-white/55">Source</div>
+          <div className="text-xs mono text-white/75 mt-0.5">Stripe (live)</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Admin-only "History data growth" card — shows how many rows have been
 // written to carrier_snapshots over time, broken down by source (lookup vs
 // bulk-ingest) and change type (initial vs update). Lets us watch the
@@ -4975,6 +5102,7 @@ function AdminPage({ navigate }: any) {
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Watchlist rows</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.watchlist}</div></div>
           </div>
           <StripeOverviewCard />
+          <CartRecoveryCard />
         </div>
       )}
 

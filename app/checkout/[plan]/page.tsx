@@ -16,6 +16,9 @@ function getStripePromise() {
 
 type Billing = 'monthly' | 'annual';
 
+const EXIT_OFFER_CODE = 'NEW20';
+const EXIT_OFFER_KEY = 'haulock_exit_offer_seen';
+
 export default function CheckoutPage() {
   const params = useParams<{ plan: string }>();
   const search = useSearchParams();
@@ -30,6 +33,8 @@ export default function CheckoutPage() {
   const [promoCode, setPromoCode] = useState('');
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  const [showExitOffer, setShowExitOffer] = useState(false);
+  const [claimingExitOffer, setClaimingExitOffer] = useState(false);
   const [totals, setTotals] = useState<{
     currency: string;
     subtotal: number | null;
@@ -87,6 +92,91 @@ export default function CheckoutPage() {
     setAppliedCode(null);
     await createSubscription(null);
   };
+
+  // Fire-and-forget telemetry for the admin "exit intent" stats card.
+  // Failures must never block checkout, so we swallow everything.
+  const logExitEvent = (kind: 'shown' | 'claimed' | 'dismissed') => {
+    try {
+      fetch('/api/analytics/exit-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, plan: planId, billing }),
+        keepalive: true,
+      }).catch(() => null);
+    } catch { /* ignore */ }
+  };
+
+  const claimExitOffer = async () => {
+    if (claimingExitOffer || appliedCode) return;
+    setClaimingExitOffer(true);
+    setShowExitOffer(false);
+    logExitEvent('claimed');
+    try {
+      sessionStorage.setItem(EXIT_OFFER_KEY, '1');
+    } catch { /* sessionStorage may be unavailable */ }
+    await createSubscription(EXIT_OFFER_CODE);
+    setPromoCode(EXIT_OFFER_CODE);
+    setClaimingExitOffer(false);
+  };
+
+  const dismissExitOffer = () => {
+    setShowExitOffer(false);
+    logExitEvent('dismissed');
+    try {
+      sessionStorage.setItem(EXIT_OFFER_KEY, '1');
+    } catch { /* ignore */ }
+  };
+
+  // Exit-intent triggers — fire only while the Payment Element is mounted
+  // (we have a clientSecret), no code is already applied, and we haven't
+  // shown the offer in this session yet. Three triggers:
+  //   1. Desktop: mouse leaves the viewport via the top edge.
+  //   2. Mobile/desktop: pagehide / visibility change (back button, tab switch).
+  //   3. Idle fallback: 30s on the page with no interaction.
+  useEffect(() => {
+    if (!clientSecret || appliedCode) return;
+    try {
+      if (sessionStorage.getItem(EXIT_OFFER_KEY) === '1') return;
+    } catch { /* ignore */ }
+
+    let fired = false;
+    const fire = () => {
+      if (fired) return;
+      fired = true;
+      setShowExitOffer(true);
+      logExitEvent('shown');
+    };
+
+    const onMouseOut = (e: MouseEvent) => {
+      // Mouse left the viewport via the top — classic exit intent.
+      if (e.clientY <= 0 && (!e.relatedTarget && !(e as any).toElement)) fire();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') fire();
+    };
+    const idleTimer = window.setTimeout(fire, 30_000);
+    const resetIdle = () => {
+      window.clearTimeout(idleTimer);
+    };
+
+    document.addEventListener('mouseout', onMouseOut);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', fire);
+    document.addEventListener('mousemove', resetIdle, { once: true });
+    document.addEventListener('keydown', resetIdle, { once: true });
+    document.addEventListener('touchstart', resetIdle, { once: true });
+
+    return () => {
+      window.clearTimeout(idleTimer);
+      document.removeEventListener('mouseout', onMouseOut);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', fire);
+      document.removeEventListener('mousemove', resetIdle);
+      document.removeEventListener('keydown', resetIdle);
+      document.removeEventListener('touchstart', resetIdle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientSecret, appliedCode]);
 
   const appearance = useMemo(() => ({
     theme: 'flat' as const,
@@ -231,8 +321,141 @@ export default function CheckoutPage() {
           </aside>
         </div>
       </div>
+      {showExitOffer && (
+        <ExitOfferModal
+          planLabel={plan.label}
+          price={price}
+          priceSuffix={priceSuffix}
+          claiming={claimingExitOffer}
+          onClaim={claimExitOffer}
+          onDismiss={dismissExitOffer}
+        />
+      )}
     </div>
   );
+}
+
+function ExitOfferModal({
+  planLabel,
+  price,
+  priceSuffix,
+  claiming,
+  onClaim,
+  onDismiss,
+}: {
+  planLabel: string;
+  price: string;
+  priceSuffix: string;
+  claiming: boolean;
+  onClaim: () => void;
+  onDismiss: () => void;
+}) {
+  // Lock body scroll while the modal is open and close on Escape.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onDismiss(); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onDismiss]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4 animate-[fadeIn_0.2s_ease-out]"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="exit-offer-title"
+    >
+      <style jsx>{`
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+      `}</style>
+      <button
+        type="button"
+        aria-label="Close offer"
+        onClick={onDismiss}
+        className="absolute inset-0 bg-[#0B1E3F]/55 backdrop-blur-sm"
+      />
+      <div
+        className="relative w-full max-w-md bg-white rounded-3xl card-shadow border border-[#0B1E3F]/10 overflow-hidden"
+        style={{ animation: 'popIn 0.28s cubic-bezier(0.22, 1, 0.36, 1)' }}
+      >
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Close"
+          className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 text-[#0B1E3F]/55 hover:text-[#0B1E3F] flex items-center justify-center transition"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1L13 13M13 1L1 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+        </button>
+
+        <div className="px-8 pt-10 pb-2 text-center">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FF6B35]/10 text-[#FF6B35] text-[11px] mono uppercase tracking-[0.18em] font-semibold mb-5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#FF6B35] animate-pulse" />
+            Wait — one second
+          </div>
+          <h2 id="exit-offer-title" className="text-3xl md:text-4xl serif italic text-[#0B1E3F] leading-tight mb-3">
+            Take 20% off your first month.
+          </h2>
+          <p className="text-[15px] text-[#0B1E3F]/65 leading-relaxed mb-6 max-w-sm mx-auto">
+            Try Haulock {planLabel} risk-free. Cancel anytime — but most carriers stay after their first flagged broker.
+          </p>
+        </div>
+
+        <div className="px-8 pb-6">
+          <div className="bg-gradient-to-br from-[#0B1E3F] to-[#0B1E3F]/90 rounded-2xl p-5 text-white">
+            <div className="flex items-baseline justify-between mb-1">
+              <div className="text-xs mono uppercase tracking-wider text-white/55">Your price today</div>
+              <div className="text-[11px] mono uppercase tracking-wider text-[#FF6B35] bg-white/10 px-2 py-0.5 rounded-full">Code NEW20</div>
+            </div>
+            <div className="flex items-baseline gap-3 mt-1">
+              <div className="text-[15px] text-white/45 line-through">{price}{priceSuffix}</div>
+              <div className="text-3xl serif italic text-white">{discountedPriceLabel(price)}<span className="text-base text-white/60">{priceSuffix}</span></div>
+            </div>
+            <div className="text-[13px] text-white/60 mt-2 leading-relaxed">
+              First month only. Renews at <span className="text-white/85">{price}{priceSuffix}</span>. One-time use per account.
+            </div>
+          </div>
+        </div>
+
+        <div className="px-8 pb-8 space-y-3">
+          <button
+            type="button"
+            onClick={onClaim}
+            disabled={claiming}
+            className="w-full py-4 bg-[#FF6B35] text-white rounded-full font-semibold text-[15px] hover:bg-[#FF6B35]/92 transition disabled:opacity-60 flex items-center justify-center gap-2 shadow-[0_8px_24px_-8px_rgba(255,107,53,0.6)]"
+          >
+            {claiming && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+            {claiming ? 'Applying NEW20…' : 'Apply 20% off → keep checking out'}
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="w-full py-2.5 text-[13px] text-[#0B1E3F]/55 hover:text-[#0B1E3F] transition"
+          >
+            No thanks, I&rsquo;ll pay full price
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Best-effort 20%-off label for the modal headline. We don't have invoice
+// totals yet at modal-open time (those arrive only after createSubscription),
+// so we shave 20% off the displayed plan price string. If the price isn't a
+// simple "$NN" we fall back to the original label.
+function discountedPriceLabel(price: string): string {
+  const m = price.match(/^\$(\d+(?:\.\d+)?)/);
+  if (!m) return price;
+  const v = Number(m[1]);
+  if (!Number.isFinite(v)) return price;
+  const cut = v * 0.8;
+  const formatted = cut % 1 === 0 ? `$${cut.toFixed(0)}` : `$${cut.toFixed(2)}`;
+  return formatted;
 }
 
 function CheckoutForm({ plan, price, billing, actualTotal }: { plan: string; price: string; billing: Billing; actualTotal?: string | null }) {

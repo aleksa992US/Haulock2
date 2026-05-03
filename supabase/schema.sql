@@ -352,3 +352,39 @@ create policy "support_messages_insert_own_ticket" on public.support_messages fo
   and exists (select 1 from public.support_tickets t where t.id = ticket_id and t.user_id = auth.uid())
 );
 -- Admin replies go through service role.
+
+-- Abandoned-cart recovery email log. One row per (subscription, kind) so
+-- the hourly cron can dedupe — never email the same incomplete sub twice
+-- for the same stage. Service role only.
+create table if not exists public.cart_recovery_sends (
+  id bigserial primary key,
+  stripe_subscription_id text not null,
+  stripe_customer_id text,
+  user_id uuid,
+  to_email text not null,
+  kind text not null,                  -- 'abandoned_1h' | 'abandoned_7d'
+  sent_at timestamptz not null default now(),
+  unique (stripe_subscription_id, kind)
+);
+create index if not exists cart_recovery_sends_email_idx on public.cart_recovery_sends(lower(to_email));
+alter table public.cart_recovery_sends enable row level security;
+-- Service role only — no user-facing policies.
+
+-- Exit-intent modal observability. One row per (user_id, plan, kind) via
+-- a unique index so a user who triggers the modal twice in the same
+-- checkout attempt only counts once. Fires from the client and is logged
+-- anonymously when the user isn't signed in. Service role only.
+create table if not exists public.exit_intent_events (
+  id bigserial primary key,
+  user_id uuid,
+  user_email text,
+  plan text,
+  billing text,
+  kind text not null,                  -- 'shown' | 'claimed' | 'dismissed'
+  meta jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists exit_intent_events_kind_created_idx on public.exit_intent_events(kind, created_at desc);
+create index if not exists exit_intent_events_user_idx on public.exit_intent_events(user_id, created_at desc);
+alter table public.exit_intent_events enable row level security;
+-- Service role only — no user-facing policies.
