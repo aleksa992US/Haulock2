@@ -3064,6 +3064,77 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
     }
   };
 
+  if (submitted) {
+    return (
+      <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F] flex flex-col">
+        <Nav navigate={navigate} user={user} />
+
+        <section className="flex-1 py-20 px-6 relative bg-[#F5F3EE] flex items-center justify-center">
+          <div className="absolute inset-0 radial-glow pointer-events-none" />
+          <div className="relative max-w-2xl mx-auto text-center">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-[#16A34A] text-white mb-8 card-shadow">
+              <CheckCircle2 className="w-10 h-10" />
+            </div>
+            <div className="text-xs mono uppercase tracking-[0.2em] text-[#16A34A] mb-4 font-semibold">Application received</div>
+            <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
+              Thanks{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ''} &mdash; we&rsquo;ve got it.
+            </h1>
+            <p className="text-lg text-[#0B1E3F]/70 leading-relaxed max-w-xl mx-auto mb-10">
+              Your application landed in our inbox at <span className="mono text-[#0B1E3F]">marketing@viceseo.com</span>. We read every one personally and reply within <strong className="text-[#0B1E3F]">48 hours</strong> with a yes, a no, or a question.
+            </p>
+
+            <div className="bg-white border border-[#0B1E3F]/10 rounded-2xl p-6 md:p-8 card-shadow text-left max-w-xl mx-auto">
+              <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-4">What happens next</div>
+              <ol className="space-y-4">
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 w-7 h-7 rounded-full bg-[#0B1E3F] text-white flex items-center justify-center text-xs mono font-bold">1</span>
+                  <div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">We review your application</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">A real person reads every submission. Usually within 24-48 hours.</div>
+                  </div>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 w-7 h-7 rounded-full bg-[#0B1E3F] text-white flex items-center justify-center text-xs mono font-bold">2</span>
+                  <div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">If you&rsquo;re a fit, we email you a promo code</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Plus the rate we&rsquo;re paying per signup and a link to create your Haulock account.</div>
+                  </div>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex-shrink-0 w-7 h-7 rounded-full bg-[#0B1E3F] text-white flex items-center justify-center text-xs mono font-bold">3</span>
+                  <div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">You log in to track every redemption live</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">The <strong>My earnings</strong> tab updates the moment your code is used at checkout.</div>
+                  </div>
+                </li>
+              </ol>
+              <div className="mt-6 pt-5 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60 leading-relaxed">
+                <strong className="text-[#0B1E3F]">Heads-up:</strong> our reply comes from <span className="mono text-[#0B1E3F]">marketing@viceseo.com</span>. If you don&rsquo;t see it, check spam &mdash; the first email from a new sender often lands there.
+              </div>
+            </div>
+
+            <div className="mt-10 flex items-center justify-center gap-3 flex-wrap">
+              <button
+                onClick={() => navigate('landing')}
+                className="px-6 py-3 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2"
+              >
+                <ArrowRight className="w-4 h-4 rotate-180" /> Back to Haulock
+              </button>
+              <button
+                onClick={() => { setSubmitted(false); setName(''); setAudience(''); setAudienceSize(''); setSource(''); setMessage(''); }}
+                className="text-xs mono text-[#0B1E3F]/55 hover:text-[#0B1E3F] transition"
+              >
+                Submit another application
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <Footer navigate={navigate} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
@@ -3101,20 +3172,7 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
             <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-2">Apply</div>
             <h2 className="text-2xl serif italic text-[#0B1E3F] mb-6">Tell us about yourself.</h2>
 
-            {submitted ? (
-              <div className="p-6 bg-[#16A34A]/5 border border-[#16A34A]/30 rounded-xl">
-                <div className="flex items-start gap-3">
-                  <CheckCircle2 className="w-6 h-6 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                  <div>
-                    <div className="text-base font-semibold text-[#0B1E3F] mb-1">Got it &mdash; we&rsquo;ll be in touch.</div>
-                    <div className="text-sm text-[#0B1E3F]/65 leading-relaxed">
-                      Your application is in our inbox. We read every one personally. If we&rsquo;re a fit you&rsquo;ll hear back within 48 hours with your promo code and login details.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <form onSubmit={onSubmit} className="space-y-5">
+            <form onSubmit={onSubmit} className="space-y-5">
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Your name <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
@@ -3149,7 +3207,6 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
                   {submitting ? 'Sending…' : <>Apply <ArrowRight className="w-4 h-4" /></>}
                 </button>
               </form>
-            )}
           </div>
         </div>
       </section>
