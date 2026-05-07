@@ -57,48 +57,63 @@ export async function GET() {
     svc.from('cart_recovery_sends').select('id', { count: 'exact', head: true }).gte('sent_at', since30d),
   ]);
 
-  // NEW20 redemption count — Stripe is the source of truth. `times_redeemed`
-  // lives on the coupon (not the promotion code), so we resolve the promo
-  // code first and then read its coupon.
-  let promoStats: {
+  // All promo codes pulled live from Stripe. We list every promotion_code in
+  // the account (paginated, up to ~300), include any that have been
+  // redeemed at least once OR are still active, and use whichever counter
+  // is higher between `promotion_code.times_redeemed` and
+  // `coupon.times_redeemed` (older subscriptions used `subscription.create({ coupon })`
+  // which only increments the coupon counter; the new-checkout flow uses
+  // `discounts: [{ promotion_code }]` and increments both).
+  type PromoStats = {
+    id: string;          // Stripe promotion_code id — unique even when two codes share the same human label
     code: string;
-    active: boolean | null;
-    times_redeemed: number | null;
+    active: boolean;
+    times_redeemed: number;
     max_redemptions: number | null;
     coupon_id: string | null;
     percent_off: number | null;
+    amount_off: number | null;
     duration: string | null;
-  } = {
-    code: RECOVERY_PROMO,
-    active: null,
-    times_redeemed: null,
-    max_redemptions: null,
-    coupon_id: null,
-    percent_off: null,
-    duration: null,
   };
+  const promos: PromoStats[] = [];
   try {
     const stripe = getStripe();
     if (stripe) {
-      const list = await stripe.promotionCodes.list({ code: RECOVERY_PROMO, limit: 1, expand: ['data.coupon'] });
-      const promo: any = list.data[0];
-      if (promo) {
-        const coupon: any = promo.coupon || null;
-        promoStats = {
-          code: RECOVERY_PROMO,
-          active: !!promo.active,
-          // Promotion-code level redemptions (this code specifically).
-          times_redeemed: typeof promo.times_redeemed === 'number' ? promo.times_redeemed : (coupon?.times_redeemed ?? null),
-          max_redemptions: promo.max_redemptions ?? coupon?.max_redemptions ?? null,
-          coupon_id: coupon?.id || null,
-          percent_off: coupon?.percent_off ?? null,
-          duration: coupon?.duration || null,
-        };
+      let starting_after: string | undefined;
+      for (let page = 0; page < 3; page++) {
+        const list: any = await stripe.promotionCodes.list({
+          limit: 100,
+          expand: ['data.coupon'],
+          ...(starting_after ? { starting_after } : {}),
+        });
+        for (const promo of list.data) {
+          const coupon: any = promo.coupon || null;
+          const promoCount = typeof promo.times_redeemed === 'number' ? promo.times_redeemed : 0;
+          const couponCount = typeof coupon?.times_redeemed === 'number' ? coupon.times_redeemed : 0;
+          const times_redeemed = Math.max(promoCount, couponCount);
+          // Skip codes that are inactive AND have never been used — pure noise.
+          if (times_redeemed === 0 && !promo.active) continue;
+          promos.push({
+            id: promo.id,
+            code: promo.code,
+            active: !!promo.active,
+            times_redeemed,
+            max_redemptions: promo.max_redemptions ?? coupon?.max_redemptions ?? null,
+            coupon_id: coupon?.id || null,
+            percent_off: coupon?.percent_off ?? null,
+            amount_off: coupon?.amount_off ?? null,
+            duration: coupon?.duration || null,
+          });
+        }
+        if (!list.has_more) break;
+        starting_after = list.data.at(-1)?.id;
       }
     }
   } catch {
-    // Stripe outage shouldn't take down the admin page — leave promoStats nulled.
+    // Stripe outage shouldn't take down the admin page — leave the list empty.
   }
+  // Sort: active first, then by redemption count desc.
+  promos.sort((a, b) => Number(b.active) - Number(a.active) || b.times_redeemed - a.times_redeemed);
 
   return NextResponse.json({
     exitIntent: {
@@ -111,6 +126,10 @@ export async function GET() {
       abandoned_7d: { all: email7dAll.count || 0, last30d: email7d30d.count || 0 },
       total_recovery_rows: { all: recoveryRowsAll.count || 0, last30d: recoveryRows30d.count || 0 },
     },
-    promo: promoStats,
+    promos,
+    // The recovery code is still surfaced separately so the UI can show an
+    // "inactive — recovery code disabled" warning if NEW20 specifically gets
+    // turned off in Stripe.
+    recoveryCode: RECOVERY_PROMO,
   });
 }

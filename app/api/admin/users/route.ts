@@ -29,10 +29,9 @@ export async function GET() {
 
   // Aggregate usage per user. One query per aggregation for simplicity.
   const since = monthStart().toISOString();
-  const [lookupsAgg, watchlistAgg, fraudAgg] = await Promise.all([
+  const [lookupsAgg, watchlistAgg] = await Promise.all([
     svc.from('lookups').select('user_id, source, created_at'),
     svc.from('watchlist').select('user_id'),
-    svc.from('fraud_reports').select('reporter_user_id'),
   ]);
   const lookupsByUser = new Map<string, { total: number; quickMonth: number; scanMonth: number; lastAt: string | null }>();
   for (const l of lookupsAgg.data || []) {
@@ -51,11 +50,6 @@ export async function GET() {
   for (const w of watchlistAgg.data || []) {
     watchlistByUser.set(w.user_id, (watchlistByUser.get(w.user_id) || 0) + 1);
   }
-  const fraudByUser = new Map<string, number>();
-  for (const f of fraudAgg.data || []) {
-    fraudByUser.set(f.reporter_user_id, (fraudByUser.get(f.reporter_user_id) || 0) + 1);
-  }
-
   const users = authUsers.map((u: any) => {
     const meta = u.user_metadata || {};
     const l = lookupsByUser.get(u.id) || { total: 0, quickMonth: 0, scanMonth: 0, lastAt: null };
@@ -69,6 +63,12 @@ export async function GET() {
       plan: plan.id,
       planLabel: plan.label,
       isAdmin: adminSet.has(String(u.email || '').toLowerCase()),
+      role: meta.role || null,
+      affiliateCode: meta.affiliate_code || null,
+      affiliateCommissionMode: meta.affiliate_commission_mode === 'per_plan' ? 'per_plan' : 'uniform',
+      affiliateCommissionType: meta.affiliate_commission_type || null,
+      affiliateCommissionValue: typeof meta.affiliate_commission_value === 'number' ? meta.affiliate_commission_value : null,
+      affiliateCommissionByPlan: (meta.affiliate_commission_by_plan && typeof meta.affiliate_commission_by_plan === 'object') ? meta.affiliate_commission_by_plan : null,
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at,
       confirmedAt: u.email_confirmed_at,
@@ -77,7 +77,6 @@ export async function GET() {
         lookupsThisMonth: l.quickMonth,
         scansThisMonth: l.scanMonth,
         watchlist: watchlistByUser.get(u.id) || 0,
-        fraudReports: fraudByUser.get(u.id) || 0,
         lastLookupAt: l.lastAt,
       },
       limits: plan.limits,

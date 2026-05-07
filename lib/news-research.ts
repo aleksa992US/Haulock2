@@ -112,10 +112,10 @@ CONSTRAINTS:
 - If Haulock (the product running this newsletter) can help with the specific fraud type, set haulockHelps = true and include ONE short paragraph at the end describing how. If Haulock cannot meaningfully help (e.g. cargo theft in transit, factoring fraud against the broker), set haulockHelps = false and skip that paragraph.
 
 WHAT HAULOCK CAN HELP WITH:
-- Verifying brokers and carriers before booking (identity, MC/DOT, insurance, address, website, social, fraud reports).
+- Verifying brokers and carriers before booking (identity, MC/DOT, insurance, address, website, social, web reputation).
 - Detecting spoofed rate confirmations (PDF analysis, broker name vs FMCSA name match, lookalike domains).
 - Flagging chameleon/serial-fraud carriers via shared addresses or phone numbers.
-- Showing community fraud reports submitted by other carriers/brokers.
+- Web-reputation scan across FreightWaves, Land Line, TruckersReport, BBB, and government enforcement sites.
 
 WHAT HAULOCK CANNOT HELP WITH:
 - Fraud that happens AFTER pickup (cargo theft in transit, fictitious-pickup style theft once the truck is loaded).

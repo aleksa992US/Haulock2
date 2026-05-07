@@ -41,9 +41,8 @@ export async function GET() {
   const svc = getServiceSupabase();
 
   // Run all queries in parallel — landing-page latency matters.
-  const [verifyCount, fraudCount, recentLookups, riskyLookups, fmcsaFlags] = await Promise.all([
+  const [verifyCount, recentLookups, riskyLookups, fmcsaFlags] = await Promise.all([
     svc ? svc.from('lookups').select('id', { count: 'exact', head: true }) : Promise.resolve({ count: 0 } as any),
-    svc ? svc.from('fraud_reports').select('id', { count: 'exact', head: true }) : Promise.resolve({ count: 0 } as any),
     // 12 most recent lookups with a verdict — used for the live MC ticker.
     // Filter to verify-style sources only; PDF forensic scans live in the
     // same table but have no MC/DOT to display.
@@ -136,7 +135,6 @@ export async function GET() {
     {
       stats: {
         totalVerifications: (verifyCount as any)?.count || 0,
-        totalFraudReports: (fraudCount as any)?.count || 0,
         activeFmcsaFlags: (fmcsaFlags as any[]).length,
       },
       ticker,

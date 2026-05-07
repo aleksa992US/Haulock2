@@ -17,9 +17,9 @@ import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 
-const APP_ROUTES = ['dashboard', 'verify', 'history', 'reports', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'support'];
+const APP_ROUTES = ['dashboard', 'verify', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'support', 'earnings'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
-const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about'];
+const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about', 'affiliate'];
 const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
 
 function pathToRoute(pathname: string): string {
@@ -89,8 +89,13 @@ function userFromSession(u: any): any {
     notifyHighRisk: meta.notify_high_risk !== false,
     notifyWatchlist: meta.notify_watchlist !== false,
     notifyWeeklyDigest: meta.notify_weekly_digest !== false,
-    notifyCommunity: meta.notify_community !== false,
     notifyFraudTrends: meta.notify_fraud_trends !== false,
+    role: (meta.role || null) as null | 'affiliate',
+    affiliateCode: meta.affiliate_code || null,
+    affiliateCommissionMode: (meta.affiliate_commission_mode === 'per_plan' ? 'per_plan' : 'uniform') as 'uniform' | 'per_plan',
+    affiliateCommissionType: (meta.affiliate_commission_type || null) as null | 'flat' | 'percent',
+    affiliateCommissionValue: typeof meta.affiliate_commission_value === 'number' ? meta.affiliate_commission_value : null,
+    affiliateCommissionByPlan: (meta.affiliate_commission_by_plan && typeof meta.affiliate_commission_by_plan === 'object') ? meta.affiliate_commission_by_plan : null,
   };
 }
 
@@ -305,6 +310,7 @@ export default function Haulock() {
       {route === 'privacy' && <LegalPage page="privacy" navigate={navigate} user={user} />}
       {route === 'blog' && <BlogPage slug={blogSlug} navigate={navigate} user={user} />}
       {route === 'about' && <AboutPage navigate={navigate} user={user} />}
+      {route === 'affiliate' && <AffiliatePage navigate={navigate} user={user} />}
       {!user && APP_ROUTES.includes(route) && (
         <RequireAuth navigate={navigate} />
       )}
@@ -313,7 +319,6 @@ export default function Haulock() {
           <PageSlot routeId="dashboard" current={route}><Dashboard navigate={navigate} user={user} /></PageSlot>
           <PageSlot routeId="verify" current={route}><VerifyTool navigate={navigate} /></PageSlot>
           <PageSlot routeId="report" current={route}><Report report={currentReport} navigate={navigate} /></PageSlot>
-          <PageSlot routeId="reports" current={route}><FraudReports navigate={navigate} /></PageSlot>
           <PageSlot routeId="watchlist" current={route}><Watchlist navigate={navigate} /></PageSlot>
           <PageSlot routeId="support" current={route}><SupportPage user={user} /></PageSlot>
           <PageSlot routeId="alerts" current={route}><Alerts navigate={navigate} /></PageSlot>
@@ -321,6 +326,7 @@ export default function Haulock() {
           <PageSlot routeId="plan" current={route}><Plan user={user} setPlan={setPlan} /></PageSlot>
           <PageSlot routeId="history" current={route}><SearchHistory navigate={navigate} /></PageSlot>
           <PageSlot routeId="admin" current={route}><AdminPage navigate={navigate} /></PageSlot>
+          <PageSlot routeId="earnings" current={route}><EarningsPage user={user} /></PageSlot>
         </AppShell>
       )}
     </div>
@@ -346,7 +352,7 @@ type LandingFeaturedScan = {
   scannedAt: string;
 } | null;
 type LandingStats = {
-  stats: { totalVerifications: number; totalFraudReports: number; activeFmcsaFlags: number };
+  stats: { totalVerifications: number; activeFmcsaFlags: number };
   ticker: LandingTickerItem[];
   featuredScan: LandingFeaturedScan;
 };
@@ -510,7 +516,7 @@ function Landing({ navigate, user }: any) {
               points={[
                 'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, and 24-month inspections.',
                 'Lookalike-domain detection on every carrier email so you spot the impersonator using a real MC.',
-                'Community fraud reports from other brokers, plus chameleon-network detection on shared phones and addresses.',
+                'Chameleon-network detection on shared phones and addresses, plus FMCSA enforcement cross-reference.',
               ]}
               cta="Start verifying carriers"
               onClick={() => navigate('signup')}
@@ -591,7 +597,7 @@ function Landing({ navigate, user }: any) {
             <FeatureCard icon={Users} iconBg="#16A34A" title="Social media footprint" desc="Scans Facebook, LinkedIn, Twitter/X, Instagram, YouTube, and TikTok for the company's presence. Real companies leave a trail. Ghost identities don't." stat="6" statLabel="platforms matched" />
             <FeatureCard icon={MapPin} iconBg="#0B1E3F" title="Google Business address" desc="Cross-checks the FMCSA-registered address against Google Places. Flags UPS Store mailboxes, residential homes, and addresses shared by unrelated businesses." stat="Places" statLabel="real-world match" />
             <FeatureCard icon={FileText} iconBg="#FF6B35" title="Rate con analyzer" desc="Drop a PDF. We extract the broker, verify the email domain against the registered MC, and flag spoofed letterheads and impersonated identities automatically." stat="94%" statLabel="fraud detection rate" />
-            <FeatureCard icon={Radio} iconBg="#16A34A" title="Community fraud network" desc="Real-time feed of scams reported by other carriers and brokers. Get alerted the moment a counterparty on your watchlist is flagged by someone in the network." stat="4,200+" statLabel="verified reports" />
+            <FeatureCard icon={Eye} iconBg="#16A34A" title="Web reputation scan" desc="Searches FreightWaves, Land Line, TruckersReport, BBB, Reddit, and government enforcement sites for fraud, scam, or lawsuit mentions tied to the carrier or broker." stat="50+" statLabel="trusted sources" />
           </div>
         </div>
       </section>
@@ -607,7 +613,7 @@ function Landing({ navigate, user }: any) {
             <div className="space-y-4">
               {[
                 { n: '01', icon: Zap, title: 'Enter MC, DOT, company name, or drop a rate con', desc: 'Works with any identifier — for a broker or a carrier. Type it, paste it, or drop a PDF. Upload works from your phone in the cab or the desk.' },
-                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority & insurance, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, community reports, and more.' },
+                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority & insurance, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, web reputation across 50+ trusted news outlets, and more.' },
                 { n: '03', icon: Target, title: 'Get a score and a clear verdict', desc: 'Plain English. No jargon. "Book this load" or "Walk away." Share with your dispatcher or ops team in one click.' },
               ].map((step, i) => (
                 <div key={i} className="group bg-white border border-[#0B1E3F]/10 rounded-2xl p-7 hover:border-[#0B1E3F]/20 transition card-shadow text-[#0B1E3F]">
@@ -794,7 +800,7 @@ function Landing({ navigate, user }: any) {
             {[
               'FMCSA SAFER', 'L&I authority status', 'MCS-150 filings', 'Insurance filings', 'Crash & inspection history',
               'Authority history', 'Company website', 'Domain WHOIS', 'DNS (MX / SPF)', 'Google Safe Browsing',
-              'Google Business address', 'Social profiles (6 platforms)', 'Disposable email registry', 'Community fraud feed',
+              'Google Business address', 'Social profiles (6 platforms)', 'Disposable email registry', 'Web reputation scan',
             ].map((src, i) => (
               <span key={i} className="px-3 py-1.5 bg-[#F5F3EE] border border-[#0B1E3F]/10 rounded-full text-xs mono text-[#0B1E3F]/70">
                 {src}
@@ -844,16 +850,16 @@ function Landing({ navigate, user }: any) {
           </div>
           <div className="space-y-3">
             {[
-              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And a community-reported fraud network with 4,200+ verified carriers and brokers.' },
+              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And our own historical snapshot archive going back five years.' },
               { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools vet in one direction: brokers checking carriers. Haulock works both ways. Carriers verify brokers, brokers verify carriers, and either side can verify shippers. We also catch things those tools do not, like lookalike domains, chameleon-network shared phone numbers, AI-driven rate confirmation analysis, and identity-history snapshots that show when a carrier quietly changed their address or phone.' },
               { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scored in about 3 seconds.' },
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
-              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, our community fraud reports, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
+              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
               { q: 'Does it work for freight brokers?', a: 'Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.' },
-              { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, and any community fraud reports. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
+              { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, and any web-reputation hits from trusted sources. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
-              { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, community fraud reports, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
+              { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
               { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
             ].map((faq, i) => <FaqItem key={i} {...faq} />)}
@@ -912,7 +918,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'warning', t: 'VOIP phone number · no physical office', i: Phone },
     ],
     scanTime: '1.8s', dataSources: 14,
-    communityAlert: '7 carriers flagged this broker in last 30 days',
+    communityAlert: 'Web reputation: 4 fraud mentions in trade press · FMCSA enforcement match',
   },
   {
     name: 'Summit Logistics Group',
@@ -926,7 +932,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'warning', t: 'Website registered 11 days ago', i: Globe },
     ],
     scanTime: '2.4s', dataSources: 14,
-    communityAlert: '12 carriers flagged this broker in last 45 days',
+    communityAlert: 'Web reputation: 6 trade-press hits · linked to 4 flagged MCs',
   },
   {
     name: 'Redline Transport Brokerage',
@@ -936,11 +942,11 @@ const HERO_SCENARIOS: Array<{
     verdictTitle: 'Proceed with care', verdictLine: '2 warning signs detected · Verify before booking', verdictTone: 'warn',
     flags: [
       { s: 'warning', t: 'Insurance expires in 14 days', i: Shield },
-      { s: 'warning', t: 'Slow-pay reports from 3 carriers', i: Clock },
+      { s: 'warning', t: 'BBB complaints on file · trade-press mention', i: Clock },
       { s: 'good', t: 'Authority active 4+ years', i: CheckCircle2 },
     ],
     scanTime: '1.9s', dataSources: 14,
-    communityAlert: '1 carrier flagged this broker in last 90 days',
+    communityAlert: 'Web reputation: 1 trade-press mention · clean enforcement record',
   },
   {
     name: 'Crossroads Brokerage Partners',
@@ -951,10 +957,10 @@ const HERO_SCENARIOS: Array<{
     flags: [
       { s: 'warning', t: 'Email on free domain (gmail.com)', i: Mail },
       { s: 'warning', t: 'No verifiable physical office', i: MapPin },
-      { s: 'good', t: 'No carrier fraud reports', i: CheckCircle2 },
+      { s: 'good', t: 'No web reputation hits', i: CheckCircle2 },
     ],
     scanTime: '2.0s', dataSources: 14,
-    communityAlert: 'No recent reports · limited footprint',
+    communityAlert: 'No web reputation hits · limited public footprint',
   },
   {
     name: 'Keystone Freight Network',
@@ -968,7 +974,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'good', t: 'Verified physical office', i: Building2 },
     ],
     scanTime: '1.7s', dataSources: 14,
-    communityAlert: 'Positive payment history from 40+ carriers',
+    communityAlert: 'Clean across all 14 sources · 12-year authority',
   },
   {
     name: 'Pinnacle Freight Logistics LLC',
@@ -982,7 +988,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'warning', t: 'Email on free domain (gmail.com)', i: Mail },
     ],
     scanTime: '2.1s', dataSources: 14,
-    communityAlert: '5 carriers flagged this broker in last 21 days',
+    communityAlert: 'Officer linked to 3 revoked authorities (FMCSA archive)',
   },
   {
     name: 'Eastline Cargo Services',
@@ -996,7 +1002,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'good', t: 'Authority active 6 years', i: CheckCircle2 },
     ],
     scanTime: '2.0s', dataSources: 14,
-    communityAlert: '2 carriers flagged this broker in last 60 days',
+    communityAlert: 'Web reputation: 1 mention · 24-month inspection record reviewed',
   },
   {
     name: 'Atlas Carrier Group LLC',
@@ -1010,7 +1016,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'good', t: 'Insurance current · $1M/$100K', i: Shield },
     ],
     scanTime: '1.6s', dataSources: 14,
-    communityAlert: 'No fraud reports · low platform footprint',
+    communityAlert: 'No web reputation hits · short operating history',
   },
   {
     name: 'Heartland Express Logistics',
@@ -1024,7 +1030,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'critical', t: 'VOIP phone · address is mailbox center', i: Phone },
     ],
     scanTime: '2.3s', dataSources: 14,
-    communityAlert: '14 carriers flagged this broker in last 30 days',
+    communityAlert: 'Web reputation: 6 fraud mentions · FreightValidate listed',
   },
   {
     name: 'Cardinal Freight Solutions',
@@ -1034,11 +1040,11 @@ const HERO_SCENARIOS: Array<{
     verdictTitle: 'Safe to book', verdictLine: 'All checks passed · Strong payment history', verdictTone: 'good',
     flags: [
       { s: 'good', t: 'Authority active 18+ years', i: CheckCircle2 },
-      { s: 'good', t: 'Quick-pay reports from 60+ carriers', i: Shield },
+      { s: 'good', t: 'Clean web reputation · featured in trade press', i: Shield },
       { s: 'good', t: 'Verified physical office · 2,400 sqft', i: Building2 },
     ],
     scanTime: '1.5s', dataSources: 14,
-    communityAlert: 'Positive payment history from 60+ carriers',
+    communityAlert: 'Clean across all 14 sources · 18-year authority',
   },
 ];
 
@@ -1165,14 +1171,23 @@ function isSourceSpooky(key: string, carrier: any | null | undefined): boolean {
     Array.isArray(carrier.flags) && carrier.flags.some((f: any) => re.test(String(f?.title || '')));
   switch (key) {
     case 'fmcsa':
-      // Authority not active, OOS, no insurance, missing MCS-150, etc.
-      return flagsMatch(/operating authority is not active|out of service|no liability insurance|no surety bond|MCS-150|reactivated/i);
+      // SAFER subset: authority status, OOS, MCS-150 freshness.
+      return flagsMatch(/operating authority is not active|out of service|MCS-150|reactivated/i);
+    case 'fmcsa-li':
+      // L&I subset: liability insurance and surety bond.
+      return flagsMatch(/no liability insurance|no surety bond|insurance.*cancelled/i);
+    case 'fmcsa-name':
+      // Name → MC/DOT resolution. No spooky outcome on its own.
+      return false;
     case 'places':
       return flagsMatch(/address resolves to a different business|address is a mail-forwarding|business at this address is closed/i);
+    case 'gsb':
+      // Google Safe Browsing flags malicious domains. No emitter today, so this stays green unless we add one.
+      return flagsMatch(/safe browsing|known malicious|phishing/i);
     case 'web':
       return flagsMatch(/website domain doesn|carrier has no public website/i);
     case 'domain':
-      return flagsMatch(/no email server|domain registered.*days ago|domain registered less than/i);
+      return flagsMatch(/no email server|domain registered.*days ago|domain registered less than|no MX|no SPF/i);
     case 'social':
       // Empty social isn't necessarily spooky for small carriers — keep green.
       return false;
@@ -1187,6 +1202,9 @@ function isSourceSpooky(key: string, carrier: any | null | undefined): boolean {
     case 'sms':
       // SMS is "spooky" when FMCSA itself has flagged a BASIC alert.
       return carrier?.sms?.fetched && Object.values(carrier.sms.basics || {}).some((b: any) => b?.alert);
+    case 'archive':
+      // Day-1 archive flags carriers that share email with other MCs (a fraud-network signal).
+      return Array.isArray(carrier?.legacyReference?.emailMatches) && carrier.legacyReference.emailMatches.length > 0;
   }
   return false;
 }
@@ -1199,8 +1217,9 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
     return () => clearInterval(t);
   }, []);
 
-  // 8 source checks, evenly distributed around the radar (45° apart) and
-  // sequenced ~700ms apart so the user sees real progress while the actual
+  // 14 source checks — matches the "14 data sources" promise on the
+  // homepage and FAQ. Distributed evenly around the radar (~25.7° apart)
+  // and sequenced ~750ms apart so the user sees real progress while the
   // backend scan runs in parallel.
   const sources: Array<{
     key: string;
@@ -1212,15 +1231,20 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
     radius: number;
     activateAt: number;
   }> = [
-    { key: 'fmcsa',     label: 'FMCSA registry',         desc: 'Authority status · insurance · crashes · OOS rates',                 chip: 'mobile.fmcsa.dot.gov',     icon: Shield,        angle:  20, radius: 92, activateAt:   500 },
-    { key: 'sms',       label: 'FMCSA SMS · BASIC scores',desc: 'Federal safety scoring · BASIC alerts · 24-mo inspections + crashes', chip: 'ai.fmcsa.dot.gov/SMS',    icon: ShieldCheck,   angle:  60, radius: 70, activateAt:  1700 },
-    { key: 'places',    label: 'Google Places',          desc: 'Business address · operating status · mailbox detection',             chip: 'places.googleapis.com',    icon: MapPin,        angle: 100, radius: 92, activateAt:  3000 },
-    { key: 'web',       label: 'Web presence',           desc: 'Carrier website discovery via Brave Search',                          chip: 'api.search.brave.com',     icon: Globe,         angle: 140, radius: 70, activateAt:  4300 },
-    { key: 'domain',    label: 'Domain & email infra',   desc: 'WHOIS age · MX records · SPF · Google Safe Browsing',                 chip: 'WHOIS · DNS · GSB',        icon: Mail,          angle: 180, radius: 92, activateAt:  5500 },
-    { key: 'social',    label: 'Social media footprint', desc: 'Facebook · LinkedIn · Instagram · X · YouTube · TikTok',              chip: '6 platforms',              icon: Users,         angle: 220, radius: 70, activateAt:  6700 },
-    { key: 'lookalike', label: 'Lookalike-domain check', desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',             chip: 'Levenshtein ≤ 2',          icon: AlertTriangle, angle: 260, radius: 92, activateAt:  7900 },
-    { key: 'chameleon', label: 'Cross-reference scan',   desc: 'Phone or address shared with another flagged FMCSA record',           chip: 'FMCSA Socrata · Haulock DB', icon: Eye,         angle: 300, radius: 70, activateAt:  9100 },
-    { key: 'reputation',label: 'Web fraud reputation',   desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',   chip: '5 fraud queries',          icon: Search,        angle: 340, radius: 92, activateAt: 10300 },
+    { key: 'fmcsa',      label: 'FMCSA SAFER',                desc: 'Authority status · MCS-150 · operating status · address',               chip: 'mobile.fmcsa.dot.gov',       icon: Shield,        angle:  13, radius: 92, activateAt:   500 },
+    { key: 'fmcsa-li',   label: 'FMCSA Licensing & Insurance', desc: 'Liability insurance · cargo coverage · surety bond on file',             chip: 'li-public.fmcsa.dot.gov',    icon: ShieldCheck,   angle:  39, radius: 70, activateAt:  1250 },
+    { key: 'fmcsa-name', label: 'MC name lookup',             desc: 'Socrata fallback · resolves company name to MC / DOT',                   chip: 'data.transportation.gov',    icon: Search,        angle:  64, radius: 92, activateAt:  2000 },
+    { key: 'sms',        label: 'FMCSA SMS · BASIC scores',   desc: 'Federal safety scoring · BASIC alerts · 24-mo inspections + crashes',    chip: 'ai.fmcsa.dot.gov/SMS',       icon: ShieldCheck,   angle:  90, radius: 70, activateAt:  2750 },
+    { key: 'places',     label: 'Google Places',              desc: 'Business address · operating status · mailbox detection',                 chip: 'places.googleapis.com',      icon: MapPin,        angle: 116, radius: 92, activateAt:  3500 },
+    { key: 'gsb',        label: 'Google Safe Browsing',       desc: 'Known malicious · phishing · malware domain check',                       chip: 'safebrowsing.google.com',    icon: Lock,          angle: 141, radius: 70, activateAt:  4250 },
+    { key: 'domain',     label: 'WHOIS · DNS · email infra',  desc: 'Domain age · registrar · MX records · SPF · DMARC',                       chip: 'WHOIS · DNS · DMARC',        icon: Mail,          angle: 167, radius: 92, activateAt:  5000 },
+    { key: 'social',     label: 'Social media footprint',     desc: 'Facebook · LinkedIn · Instagram · X · YouTube · TikTok',                  chip: '6 platforms',                icon: Users,         angle: 193, radius: 70, activateAt:  5750 },
+    { key: 'web',        label: 'Web presence',               desc: 'Carrier website discovery via Brave Search',                              chip: 'api.search.brave.com',       icon: Globe,         angle: 219, radius: 92, activateAt:  6500 },
+    { key: 'lookalike',  label: 'Lookalike-domain check',     desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',                 chip: 'Levenshtein ≤ 2',            icon: AlertTriangle, angle: 244, radius: 70, activateAt:  7250 },
+    { key: 'chameleon',  label: 'Cross-reference scan',       desc: 'Phone or address shared with another flagged FMCSA record',               chip: 'FMCSA Socrata · Haulock DB', icon: Eye,           angle: 270, radius: 92, activateAt:  8000 },
+    { key: 'reputation', label: 'Web fraud reputation',       desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',       chip: '5 fraud queries',            icon: Search,        angle: 296, radius: 70, activateAt:  8750 },
+    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Aliases · sister entities · co-cited MC / DOT numbers in coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 321, radius: 92, activateAt:  9500 },
+    { key: 'archive',    label: 'Haulock Day-1 archive',      desc: '5-year FMCSA snapshot history · email-shared MC cross-reference',         chip: 'Haulock archive',            icon: Database,      angle: 347, radius: 70, activateAt: 10250 },
   ];
   // The bar fills toward 95% and parks there until the API result arrives.
   // We tune the curve so it tracks the typical 12-15s real-world scan
@@ -1372,7 +1396,7 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
 
         {/* Sources list — 1 column on small, 2 columns on desktop. */}
         <div className="lg:col-span-3">
-          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-4">Cross-checking 9 sources in parallel</div>
+          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-4">Cross-checking 14 sources in parallel</div>
           <div className="grid sm:grid-cols-2 gap-2">
             {sources.map((s) => {
               const active = elapsed >= s.activateAt;
@@ -1540,7 +1564,7 @@ function InTheWildCard({ featured }: { featured?: LandingFeaturedScan }) {
       { sev: 'critical' as const, title: 'Authority reactivated 12 days ago', desc: 'Dormant 3 years prior',     pts: 30 },
       { sev: 'warning'  as const, title: 'Address flipped 3× this year',     desc: 'Chicago → Atlanta → Miami',  pts: 30 },
       { sev: 'warning'  as const, title: 'Insurance lapsed 8 days ago',      desc: 'No replacement policy filed', pts: 20 },
-      { sev: 'info'     as const, title: '2 verified fraud reports',         desc: 'Non-payment complaints',     pts: 30 },
+      { sev: 'info'     as const, title: '2 trade-press fraud mentions',     desc: 'FreightWaves · TruckersReport',  pts: 30 },
     ] as LandingFeaturedFlag[],
     isReal: false,
   };
@@ -1952,6 +1976,7 @@ function Nav({ navigate, user }: any) {
           <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">What we check</button>
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
           <button onClick={() => navigate('blog')} className="hover:text-[#0B1E3F]">Blog</button>
+          <button onClick={() => navigate('affiliate')} className="hover:text-[#0B1E3F]">Affiliates</button>
         </div>
         <div className="flex items-center gap-2">
           {user ? (
@@ -2085,13 +2110,13 @@ function Footer({ navigate }: any) {
     { t: 'Product', items: [
       { label: 'Broker verify',      route: 'verify',  data: { tab: 'quick' } },
       { label: 'Rate con analyzer',  route: 'verify',  data: { tab: 'ratecon' } },
-      { label: 'Community network',  route: 'reports' },
       { label: 'API',                href: '/docs/api' },
     ] },
     { t: 'Company', items: [
-      { label: 'About',    route: 'about' },
-      { label: 'Blog',     route: 'blog' },
-      { label: 'Contact',  href: 'mailto:contact@haulock.com' },
+      { label: 'About',     route: 'about' },
+      { label: 'Blog',      route: 'blog' },
+      { label: 'Affiliates', route: 'affiliate' },
+      { label: 'Contact',   href: 'mailto:contact@haulock.com' },
     ] },
     { t: 'Legal', items: [
       { label: 'Terms of Use',    route: 'terms' },
@@ -2458,7 +2483,7 @@ const AUTH_TESTIMONIALS: Array<{
     initials: 'LO',
   },
   {
-    quote: 'The community fraud reports are the killer feature. I see what other carriers got burned on before I ever sign the rate con.',
+    quote: 'The web-reputation scan is the killer feature. If a broker has burned anyone the trade press wrote about, it shows up in my report before I ever sign the rate con.',
     name: 'Kevin Doyle',
     role: 'Owner · Doyle Logistics',
     location: 'Boise, ID',
@@ -2760,7 +2785,7 @@ function TermsContent() {
 
       <LegalH2>7. Indemnification</LegalH2>
       <LegalP>
-        You agree to indemnify and hold Haulock harmless from any claim, demand, loss, liability, or expense (including reasonable attorneys&rsquo; fees) brought by a third party arising out of or relating to (a) your use of the Service, (b) any decision you made based on a Haulock report, (c) any content you submitted to the Service, including community fraud reports, or (d) your violation of these Terms or any applicable law.
+        You agree to indemnify and hold Haulock harmless from any claim, demand, loss, liability, or expense (including reasonable attorneys&rsquo; fees) brought by a third party arising out of or relating to (a) your use of the Service, (b) any decision you made based on a Haulock report, (c) any content you submitted to the Service, or (d) your violation of these Terms or any applicable law.
       </LegalP>
 
       <LegalH2>8. Acceptable use</LegalH2>
@@ -2770,40 +2795,34 @@ function TermsContent() {
         <li>Republish, resell, scrape, or redistribute Haulock reports as your own product or as a substitute for FMCSA data.</li>
         <li>Use the Service to make automated decisions that affect a person or company without human review.</li>
         <li>Attempt to interfere with, reverse engineer, disable, or overload the Service.</li>
-        <li>Submit false or misleading community fraud reports. Submissions must reflect your actual experience and are made under your own name and account.</li>
       </LegalUl>
 
-      <LegalH2>9. Community fraud reports</LegalH2>
-      <LegalP>
-        Haulock allows users to submit fraud reports about brokers and carriers based on their own experience. These reports are user-generated content. Haulock does not investigate, verify, endorse, or guarantee the accuracy of any community report. By submitting a report, you confirm that the report reflects your own first-hand experience, you take full responsibility for its content, and you grant Haulock a worldwide license to display the report inside the Service. We may remove any report at our discretion.
-      </LegalP>
-
-      <LegalH2>10. Account, plan, and billing</LegalH2>
+      <LegalH2>9. Account, plan, and billing</LegalH2>
       <LegalP>
         Some Haulock features require a paid plan. Pricing, lookup limits, and feature inclusions are described on the pricing page and may change. Subscriptions renew automatically at the published price until canceled. Refunds are handled at our discretion. You are responsible for keeping your billing details up to date and for the actions taken under your account.
       </LegalP>
 
-      <LegalH2>11. Intellectual property</LegalH2>
+      <LegalH2>10. Intellectual property</LegalH2>
       <LegalP>
         The Haulock name, logo, design, software, scoring methodology, report layout, and accompanying materials are owned by Haulock and protected by U.S. and international intellectual property laws. The underlying public data we display (such as FMCSA records) is not owned by us and remains the property of its respective publisher. We grant you a limited, non-exclusive, non-transferable license to use the Service for your own legitimate business purposes, subject to these Terms.
       </LegalP>
 
-      <LegalH2>12. Suspension and termination</LegalH2>
+      <LegalH2>11. Suspension and termination</LegalH2>
       <LegalP>
         We may suspend or terminate your access to the Service at any time, with or without notice, if we reasonably believe you have violated these Terms, abused the Service, or created risk for Haulock or other users. You may close your account at any time from Settings.
       </LegalP>
 
-      <LegalH2>13. Changes to these Terms</LegalH2>
+      <LegalH2>12. Changes to these Terms</LegalH2>
       <LegalP>
         We may update these Terms from time to time. When we make material changes, we will update the &ldquo;Last updated&rdquo; date at the top of this page and, where appropriate, notify account holders by email. Your continued use of the Service after the change takes effect constitutes acceptance of the updated Terms.
       </LegalP>
 
-      <LegalH2>14. Governing law and disputes</LegalH2>
+      <LegalH2>13. Governing law and disputes</LegalH2>
       <LegalP>
         These Terms are governed by the laws of the State of Delaware, United States, without regard to its conflict of laws rules. Any dispute arising out of or relating to the Service or these Terms will be resolved in the state or federal courts located in Delaware, and you consent to personal jurisdiction in those courts. Where applicable law allows, you and Haulock waive any right to a jury trial and to participate in any class action arising out of or relating to the Service.
       </LegalP>
 
-      <LegalH2>15. Contact</LegalH2>
+      <LegalH2>14. Contact</LegalH2>
       <LegalP>
         Legal notices and questions about these Terms can be sent to <a href="mailto:contact@haulock.com" className="text-[#0B1E3F] underline">contact@haulock.com</a>.
       </LegalP>
@@ -2870,7 +2889,7 @@ function PrivacyContent() {
       <LegalH2>5. Your choices</LegalH2>
       <LegalUl>
         <li><strong>Email preferences.</strong> Manage which emails you receive from Settings &rarr; Notifications, or click the unsubscribe link in any newsletter.</li>
-        <li><strong>Account deletion.</strong> You can delete your Haulock account from Settings. This removes your account, lookups, watchlist, fraud reports, and team membership, and removes you from our newsletter list. Backups may persist for up to 30 days before being purged.</li>
+        <li><strong>Account deletion.</strong> You can delete your Haulock account from Settings. This removes your account, lookups, watchlist, alerts, and team membership, and removes you from our newsletter list. Backups may persist for up to 30 days before being purged.</li>
         <li><strong>Access and correction.</strong> You can update your profile data from Settings. For other requests, email us.</li>
       </LegalUl>
 
@@ -2916,7 +2935,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
     if (typeof document === 'undefined') return;
     const original = document.title;
     document.title = 'About Haulock · Built for carriers who have been burned';
-    setMeta('description', 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a community fraud network. Built by people who lost loads to fraud and decided to stop it.');
+    setMeta('description', 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a 14-source web-reputation scan. Built by people who lost loads to fraud and decided to stop it.');
     return () => { document.title = original; };
   }, []);
 
@@ -2932,7 +2951,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
             Built for carriers who have been burned.
           </h1>
           <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
-            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and a community fraud network. Trusted by 4,200 carriers and brokers across the lower 48.
+            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and a 14-source web-reputation scan. Trusted by 4,200 carriers and brokers across the lower 48.
           </p>
         </div>
       </section>
@@ -2949,7 +2968,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
 
           <LegalH2>What Haulock actually does</LegalH2>
           <LegalP>
-            Every lookup runs up to 14 sources in parallel: FMCSA SAFER for authority and address, FMCSA L&amp;I for insurance and surety bond, FMCSA SMS for inspection and crash history, public WHOIS and DNS for domain age and email infrastructure, Google Places for address verification, Google Safe Browsing for known threat domains, Brave Search across 50+ trusted news outlets, plus our own community fraud network and historical snapshot archive going back five years.
+            Every lookup runs up to 14 sources in parallel: FMCSA SAFER for authority and address, FMCSA L&amp;I for insurance and surety bond, FMCSA SMS for inspection and crash history, public WHOIS and DNS for domain age and email infrastructure, Google Places for address verification, Google Safe Browsing for known threat domains, Brave Search across 50+ trusted news outlets and forums, FMCSA enforcement cross-reference, linked-entity extraction, plus our historical snapshot archive going back five years.
           </LegalP>
           <LegalP>
             We also analyze rate confirmation PDFs with Claude AI to extract the broker, the carrier, and the load, then cross-check the broker email domain against their FMCSA-registered website to catch lookalike domains. The whole scan finishes in about two seconds.
@@ -2992,6 +3011,1000 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
       </section>
 
       <Footer navigate={navigate} />
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Affiliate program — public application page + authed earnings dashboard
+// ---------------------------------------------------------------------------
+
+function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState(user?.email || '');
+  const [audience, setAudience] = useState('');
+  const [audienceSize, setAudienceSize] = useState('');
+  const [source, setSource] = useState('');
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const original = document.title;
+    document.title = 'Affiliate program · Haulock';
+    setMeta('description', 'Earn commission on every Haulock subscription you refer. Get a unique promo code, track redemptions in real time, and get paid for sending carriers and brokers a tool that actually works.');
+    return () => { document.title = original; };
+  }, []);
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    if (!name.trim() || !email.trim() || message.trim().length < 20) {
+      setError('Please fill in your name, email, and a short note about how you plan to promote Haulock (at least 20 characters).');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/affiliate/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, audience, audienceSize, source, message }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      setSubmitted(true);
+    } catch (err: any) {
+      setError(err?.message || 'Something went wrong — please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
+      <Nav navigate={navigate} user={user} />
+
+      <section className="py-20 px-6 relative bg-[#F5F3EE]">
+        <div className="absolute inset-0 radial-glow pointer-events-none" />
+        <div className="relative max-w-3xl mx-auto">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">Affiliate program</div>
+          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
+            Get paid to send carriers a tool that works.
+          </h1>
+          <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
+            We&apos;ll give you a unique promo code, track every signup it brings in, and pay you a commission on each one. No quotas, no exclusivity, no clawbacks.
+          </p>
+        </div>
+      </section>
+
+      <section className="px-6 pb-20">
+        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
+          <LegalH2>How it works</LegalH2>
+          <LegalUl>
+            <li><strong>You apply.</strong> Fill out the form below. We read every application personally — usually within 48 hours.</li>
+            <li><strong>We approve and issue your code.</strong> If you&apos;re a fit, we create a Stripe promo code (e.g. <span className="mono">JOHN15</span>) tied to your account. The code gives your audience 15&ndash;20% off their first month — your number to negotiate.</li>
+            <li><strong>You promote it.</strong> Share it on a podcast, a YouTube channel, an email list, a Discord server, a billboard. Anywhere your audience pays attention.</li>
+            <li><strong>We pay you per signup.</strong> Every time someone uses your code at checkout, you earn a flat-rate commission ($ per signup) or a percentage of what they paid &mdash; whichever we agreed at approval.</li>
+            <li><strong>You see every redemption in real time.</strong> Sign in to your Haulock account and the &ldquo;My earnings&rdquo; tab shows every signup, the customer&apos;s first name, signup date, and your earnings &mdash; live from Stripe.</li>
+          </LegalUl>
+
+          <LegalH2>Who we&apos;re looking for</LegalH2>
+          <LegalP>
+            Anyone with a real audience of carriers, brokers, dispatchers, or owner-operators. Industry podcasters, YouTube creators, trade newsletter writers, freight forum mods, dispatching schools, factoring companies, and consultants who already work with our target users. We don&apos;t take coupon-aggregator sites or cashback portals.
+          </LegalP>
+
+          <div className="mt-10 pt-10 border-t border-[#0B1E3F]/10">
+            <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-2">Apply</div>
+            <h2 className="text-2xl serif italic text-[#0B1E3F] mb-6">Tell us about yourself.</h2>
+
+            {submitted ? (
+              <div className="p-6 bg-[#16A34A]/5 border border-[#16A34A]/30 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-6 h-6 text-[#16A34A] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-base font-semibold text-[#0B1E3F] mb-1">Got it &mdash; we&rsquo;ll be in touch.</div>
+                    <div className="text-sm text-[#0B1E3F]/65 leading-relaxed">
+                      Your application is in our inbox. We read every one personally. If we&rsquo;re a fit you&rsquo;ll hear back within 48 hours with your promo code and login details.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={onSubmit} className="space-y-5">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Your name <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
+                    <input value={name} onChange={(e) => setName(e.target.value)} required className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]" />
+                  </div>
+                  <div>
+                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Email <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
+                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]" />
+                  </div>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">What&apos;s your audience?</label>
+                    <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Podcast, YouTube channel, newsletter, etc." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+                  </div>
+                  <div>
+                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How big?</label>
+                    <input value={audienceSize} onChange={(e) => setAudienceSize(e.target.value)} placeholder="e.g. 12k subscribers, 800 weekly listens" className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How did you find us?</label>
+                  <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Search, referral, podcast guest, etc." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+                </div>
+                <div>
+                  <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How do you plan to promote Haulock? <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
+                  <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} required minLength={20} maxLength={2000} placeholder="One paragraph is plenty. Tell us where you&rsquo;d feature it, who you&rsquo;re reaching, and why Haulock fits your audience." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
+                  <div className="text-[11px] mono text-[#0B1E3F]/50 mt-1 text-right">{message.length} / 2000</div>
+                </div>
+                {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+                <button type="submit" disabled={submitting} className="px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
+                  {submitting ? 'Sending…' : <>Apply <ArrowRight className="w-4 h-4" /></>}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <Footer navigate={navigate} />
+    </div>
+  );
+}
+
+type PerPlanCell = { type: 'flat' | 'percent'; value: string };
+type PerPlanInput = Record<string, PerPlanCell>; // keyed by `${plan}-${billing}`
+const PLAN_BILLING_CELLS: { plan: 'carrier' | 'team' | 'fleet'; billing: 'monthly' | 'annual' }[] = [
+  { plan: 'carrier', billing: 'monthly' },
+  { plan: 'carrier', billing: 'annual' },
+  { plan: 'team',    billing: 'monthly' },
+  { plan: 'team',    billing: 'annual' },
+  { plan: 'fleet',   billing: 'monthly' },
+  { plan: 'fleet',   billing: 'annual' },
+];
+
+function AffiliateAssignModal({ user, onClose, onSaved }: { user: any; onClose: () => void; onSaved: () => void }) {
+  const [codes, setCodes] = useState<any[] | null>(null);
+  const [code, setCode] = useState<string>(user?.affiliateCode || '');
+  // Hydrate from existing user if they're already an affiliate so editing
+  // an existing config doesn't wipe their values.
+  const initialMode: 'uniform' | 'per_plan' = user?.affiliateCommissionMode === 'per_plan' ? 'per_plan' : 'uniform';
+  const [mode, setMode] = useState<'uniform' | 'per_plan'>(initialMode);
+  const [commissionType, setCommissionType] = useState<'flat' | 'percent'>(user?.affiliateCommissionType || 'flat');
+  const [commissionValue, setCommissionValue] = useState<string>(user?.affiliateCommissionValue != null ? String(user.affiliateCommissionValue) : '');
+  const initialByPlan: PerPlanInput = (() => {
+    const out: PerPlanInput = {};
+    const stored = user?.affiliateCommissionByPlan || {};
+    for (const { plan, billing } of PLAN_BILLING_CELLS) {
+      const key = `${plan}-${billing}`;
+      // Prefer the specific plan-billing entry; fall back to the legacy
+      // bare-plan entry so admins editing an older config see what it pays.
+      const cell = stored[key] ?? stored[plan];
+      out[key] = {
+        type: cell?.type || 'flat',
+        value: cell?.value != null ? String(cell.value) : '',
+      };
+    }
+    return out;
+  })();
+  const [byPlan, setByPlan] = useState<PerPlanInput>(initialByPlan);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/admin/promo-codes');
+        const j = await r.json();
+        if (cancel) return;
+        if (!r.ok) { setError(j?.error || 'Could not load promo codes'); setCodes([]); return; }
+        setCodes(j.codes || []);
+      } catch (e: any) {
+        if (!cancel) { setError(e?.message || 'Could not load promo codes'); setCodes([]); }
+      }
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  const save = async () => {
+    setError(null);
+    if (!code) { setError('Pick a promo code first.'); return; }
+    setSaving(true);
+    try {
+      const payload: any = { userId: user.id, action: 'assign', code, commissionMode: mode };
+      if (mode === 'uniform') {
+        const value = Number(commissionValue);
+        if (!Number.isFinite(value) || value <= 0) { setError('Enter a positive commission number.'); setSaving(false); return; }
+        if (commissionType === 'percent' && value > 100) { setError('Percent cannot exceed 100.'); setSaving(false); return; }
+        payload.commissionType = commissionType;
+        payload.commissionValue = value;
+      } else {
+        const cleanByPlan: Record<string, { type: 'flat' | 'percent'; value: number }> = {};
+        let count = 0;
+        for (const { plan, billing } of PLAN_BILLING_CELLS) {
+          const key = `${plan}-${billing}`;
+          const raw = byPlan[key];
+          if (!raw) continue;
+          const v = Number(raw.value);
+          if (!raw.value || !Number.isFinite(v) || v <= 0) continue;
+          if (raw.type === 'percent' && v > 100) { setError(`${plan} ${billing}: percent cannot exceed 100.`); setSaving(false); return; }
+          cleanByPlan[key] = { type: raw.type, value: v };
+          count += 1;
+        }
+        if (count === 0) { setError('Set a commission for at least one plan/billing combo.'); setSaving(false); return; }
+        payload.commissionByPlan = cleanByPlan;
+      }
+      const res = await fetch('/api/admin/affiliates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      onSaved();
+    } catch (e: any) {
+      setError(e?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const unassign = async () => {
+    if (!confirm(`Remove affiliate status from ${user.email}?`)) return;
+    setSaving(true); setError(null);
+    try {
+      const res = await fetch('/api/admin/affiliates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, action: 'unassign' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      onSaved();
+    } catch (e: any) {
+      setError(e?.message || 'Failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/50" onClick={onClose}>
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 md:p-8 card-shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] mb-1">Affiliate</div>
+            <h2 className="text-2xl serif italic text-[#0B1E3F]">{user?.email}</h2>
+            <div className="text-xs mono text-[#0B1E3F]/50 mt-1">{user?.name || 'No name'}</div>
+          </div>
+          <button onClick={onClose} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F]"><XCircle className="w-5 h-5" /></button>
+        </div>
+
+        <div className="space-y-4 mt-6">
+          <div>
+            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Stripe promo code</label>
+            {codes === null ? (
+              <div className="text-sm text-[#0B1E3F]/55">Loading codes…</div>
+            ) : codes.length === 0 ? (
+              <div className="text-sm text-[#DC2626]">No active Stripe promo codes found. Create one in Stripe Dashboard first, then refresh.</div>
+            ) : (
+              <select value={code} onChange={(e) => setCode(e.target.value)} className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]">
+                <option value="">— Pick a code —</option>
+                {codes.map((c) => {
+                  const discount = c.percent_off != null ? `${c.percent_off}% off` : c.amount_off != null ? `$${(c.amount_off/100).toFixed(2)} off` : '';
+                  return <option key={c.id} value={c.code}>{c.code}{discount ? ` · ${discount}` : ''}{c.duration ? ` · ${c.duration}` : ''}{c.times_redeemed ? ` · ${c.times_redeemed} used` : ''}</option>;
+                })}
+              </select>
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">Commission</label>
+              <div className="flex gap-1 p-0.5 bg-[#0B1E3F]/5 rounded-lg text-xs">
+                <button
+                  type="button"
+                  onClick={() => setMode('uniform')}
+                  className={`px-3 py-1 rounded font-semibold transition ${mode === 'uniform' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}
+                >Same for all plans</button>
+                <button
+                  type="button"
+                  onClick={() => setMode('per_plan')}
+                  className={`px-3 py-1 rounded font-semibold transition ${mode === 'per_plan' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}
+                >Per package</button>
+              </div>
+            </div>
+
+            {mode === 'uniform' ? (
+              <>
+                <div className="flex gap-2">
+                  <div className="flex gap-1 p-0.5 bg-[#0B1E3F]/5 rounded-lg">
+                    <button type="button" onClick={() => setCommissionType('flat')} className={`px-3 py-2 rounded text-xs font-semibold mono transition ${commissionType === 'flat' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>$ flat</button>
+                    <button type="button" onClick={() => setCommissionType('percent')} className={`px-3 py-2 rounded text-xs font-semibold mono transition ${commissionType === 'percent' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>% of paid</button>
+                  </div>
+                  <div className="flex-1 relative">
+                    <input
+                      type="number" min="0" step="any"
+                      value={commissionValue}
+                      onChange={(e) => setCommissionValue(e.target.value)}
+                      placeholder={commissionType === 'flat' ? '10' : '20'}
+                      className="w-full px-4 py-3 pr-10 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm mono text-[#0B1E3F]/40">{commissionType === 'flat' ? '$' : '%'}</span>
+                  </div>
+                </div>
+                <div className="text-[11px] text-[#0B1E3F]/55 mt-2">
+                  {commissionType === 'flat'
+                    ? `${user.email} earns $${commissionValue || '—'} for every paid subscription created with this code, regardless of plan.`
+                    : `${user.email} earns ${commissionValue || '—'}% of what each customer actually paid (post-discount), regardless of plan.`}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-[80px_1fr_1fr] gap-2 items-center">
+                  <div></div>
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 text-center">Monthly</div>
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 text-center">Annual</div>
+
+                  {(['carrier', 'team', 'fleet'] as const).map((plan) => {
+                    const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+                    const renderCell = (billing: 'monthly' | 'annual') => {
+                      const key = `${plan}-${billing}`;
+                      const row = byPlan[key];
+                      const update = (patch: Partial<PerPlanCell>) =>
+                        setByPlan((b) => ({ ...b, [key]: { ...b[key], ...patch } }));
+                      return (
+                        <div key={billing} className="flex items-center gap-1.5">
+                          <div className="flex gap-0.5 p-0.5 bg-[#0B1E3F]/5 rounded-md flex-shrink-0">
+                            <button type="button" onClick={() => update({ type: 'flat' })} className={`px-2 py-1 rounded text-[10px] font-semibold mono transition ${row.type === 'flat' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>$</button>
+                            <button type="button" onClick={() => update({ type: 'percent' })} className={`px-2 py-1 rounded text-[10px] font-semibold mono transition ${row.type === 'percent' ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>%</button>
+                          </div>
+                          <div className="flex-1 relative min-w-0">
+                            <input
+                              type="number" min="0" step="any"
+                              value={row.value}
+                              onChange={(e) => update({ value: e.target.value })}
+                              placeholder={billing === 'monthly' ? '10' : '100'}
+                              className="w-full px-2.5 py-1.5 pr-6 bg-white border border-[#0B1E3F]/15 rounded-md text-sm text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]"
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] mono text-[#0B1E3F]/40">{row.type === 'flat' ? '$' : '%'}</span>
+                          </div>
+                        </div>
+                      );
+                    };
+                    return (
+                      <React.Fragment key={plan}>
+                        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/65">{planLabel}</div>
+                        {renderCell('monthly')}
+                        {renderCell('annual')}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                <div className="text-[11px] text-[#0B1E3F]/55 mt-3 leading-relaxed">
+                  Leave a cell blank to pay <strong>$0</strong> for that plan + billing combo. Free plan never has commission since it&rsquo;s not a paid signup. Annual customers pay 12&times; what monthly do, so a flat-rate annual commission usually makes sense to be higher.
+                </div>
+              </>
+            )}
+          </div>
+
+          {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+
+          <div className="flex gap-2 pt-2">
+            {user?.role === 'affiliate' && (
+              <button type="button" onClick={unassign} disabled={saving} className="px-4 py-3 border border-[#DC2626]/30 rounded-full text-sm font-medium text-[#DC2626] hover:bg-[#DC2626]/5 disabled:opacity-60">
+                Remove affiliate
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="ml-auto py-3 px-5 border border-[#0B1E3F]/15 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Cancel</button>
+            <button type="button" onClick={save} disabled={saving} className="py-3 px-6 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-60">
+              {saving ? 'Saving…' : user?.role === 'affiliate' ? 'Update' : 'Make affiliate'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AffiliatesAdminPanel() {
+  type Rate = { type: 'flat' | 'percent'; value: number };
+  type AdminCommissionSpec =
+    | { mode: 'uniform'; rate: Rate }
+    | { mode: 'per_plan'; byPlan: Partial<Record<string, Rate>> };
+  type AffiliateRow = {
+    id: string;
+    email: string;
+    name: string;
+    code: string | null;
+    commission: AdminCommissionSpec | null;
+    redemptions: number;
+    lifetimeCents: number;
+    paidCents: number;
+    pendingCents: number;
+    availableCents: number;
+    pendingRequests: number;
+    assignedAt: string | null;
+  };
+  type PayoutRow = {
+    id: string;
+    user_id: string;
+    amount_cents: number;
+    status: 'requested' | 'paid' | 'rejected';
+    requested_at: string;
+    paid_at: string | null;
+    rejected_at: string | null;
+    reject_reason: string | null;
+    admin_notes: string | null;
+    affiliate_code: string | null;
+    redemptions_count: number | null;
+    user: { email: string; name: string };
+  };
+
+  const [affiliates, setAffiliates] = useState<AffiliateRow[] | null>(null);
+  const [payouts, setPayouts] = useState<PayoutRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
+  const [view, setView] = useState<'pending' | 'all'>('pending');
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const [a, p] = await Promise.all([
+        fetch('/api/admin/affiliates').then((r) => r.json()),
+        fetch('/api/admin/affiliate-payouts').then((r) => r.json()),
+      ]);
+      setAffiliates(a?.affiliates || []);
+      setPayouts(p?.payouts || []);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const fmtMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  const daysSince = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
+
+  const markPaid = async (p: PayoutRow) => {
+    if (!confirm(`Mark ${fmtMoney(p.amount_cents)} as paid to ${p.user.email}? This sends them a confirmation email and resets their balance.`)) return;
+    setActing(p.id); setError(null);
+    try {
+      const r = await fetch('/api/admin/affiliate-payouts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, action: 'pay' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Could not mark paid');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const reject = async (p: PayoutRow) => {
+    const reason = prompt(`Reject ${fmtMoney(p.amount_cents)} request from ${p.user.email}? Reason (shown to affiliate):`);
+    if (reason == null) return;
+    setActing(p.id); setError(null);
+    try {
+      const r = await fetch('/api/admin/affiliate-payouts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, action: 'reject', reason }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Could not reject');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const pending = (payouts || []).filter((p) => p.status === 'requested');
+  const history = (payouts || []).filter((p) => p.status !== 'requested');
+
+  const totalLifetime = (affiliates || []).reduce((s, a) => s + a.lifetimeCents, 0);
+  const totalPaid = (affiliates || []).reduce((s, a) => s + a.paidCents, 0);
+  const totalPending = (affiliates || []).reduce((s, a) => s + a.pendingCents, 0);
+  const totalAvailable = (affiliates || []).reduce((s, a) => s + a.availableCents, 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">Affiliates</h2>
+          <p className="text-sm text-[#0B1E3F]/60 mt-1">Pending payout requests, lifetime earnings per affiliate, and the full payout ledger.</p>
+        </div>
+        <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="p-4 bg-[#DC2626]/5 border border-[#DC2626]/25 rounded-xl text-sm text-[#DC2626]">{error}</div>}
+
+      {/* Overall totals */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat label="Lifetime earned" value={affiliates ? fmtMoney(totalLifetime) : '—'} sub={`${affiliates?.length ?? 0} affiliate${affiliates?.length === 1 ? '' : 's'}`} />
+        <Stat label="Already paid" value={affiliates ? fmtMoney(totalPaid) : '—'} />
+        <Stat label="Pending requests" value={affiliates ? fmtMoney(totalPending) : '—'} sub={`${pending.length} open`} />
+        <Stat label="Available (unpaid)" value={affiliates ? fmtMoney(totalAvailable) : '—'} />
+      </div>
+
+      {/* Pending payout requests — top of page because they need action */}
+      {pending.length > 0 && (
+        <div className="bg-white rounded-2xl border border-[#F59E0B]/30 card-shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-[#0B1E3F]/10 flex items-center justify-between flex-wrap gap-2 bg-[#F59E0B]/5">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-[#0B1E3F]">Pending payout requests</h3>
+              <span className="px-2 py-0.5 bg-[#F59E0B]/15 text-[#F59E0B] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">{pending.length} waiting</span>
+            </div>
+            <div className="text-[11px] mono text-[#0B1E3F]/55">30-day window from request</div>
+          </div>
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {pending.map((p) => {
+              const days = daysSince(p.requested_at);
+              const overdue = days >= 30;
+              return (
+                <div key={p.id} className="px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-baseline gap-3 flex-wrap">
+                      <span className="text-xl font-semibold text-[#0B1E3F] mono">{fmtMoney(p.amount_cents)}</span>
+                      <span className="text-sm font-medium text-[#0B1E3F]">{p.user.name || p.user.email}</span>
+                      {p.user.name && <span className="text-xs mono text-[#0B1E3F]/55">{p.user.email}</span>}
+                    </div>
+                    <div className="text-xs mono text-[#0B1E3F]/55 mt-1">
+                      Requested {fmtDate(p.requested_at)} · {days}d ago
+                      {p.affiliate_code && <> · code {p.affiliate_code}</>}
+                      {p.redemptions_count != null && <> · {p.redemptions_count} redemption{p.redemptions_count === 1 ? '' : 's'}</>}
+                      {overdue && <span className="ml-2 px-1.5 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded text-[9px] uppercase tracking-wider font-semibold">past 30 days</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => reject(p)}
+                      disabled={acting === p.id}
+                      className="px-3 py-1.5 border border-[#DC2626]/30 text-[#DC2626] rounded-full text-xs font-medium hover:bg-[#DC2626]/5 transition disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                    <button
+                      onClick={() => markPaid(p)}
+                      disabled={acting === p.id}
+                      className="px-4 py-1.5 bg-[#16A34A] text-white rounded-full text-xs font-medium hover:bg-[#16A34A]/90 transition disabled:opacity-50"
+                    >
+                      {acting === p.id ? 'Marking…' : 'Mark paid'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Affiliate roster */}
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#0B1E3F]/10 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-semibold text-[#0B1E3F]">All affiliates</h3>
+            <span className="text-xs mono text-[#0B1E3F]/55">{affiliates?.length ?? 0}</span>
+          </div>
+        </div>
+        {!affiliates ? (
+          <div className="p-8 text-center text-sm text-[#0B1E3F]/55">{loading ? 'Loading…' : ''}</div>
+        ) : affiliates.length === 0 ? (
+          <div className="p-10 text-center text-sm text-[#0B1E3F]/55">
+            No affiliates yet. Go to <strong>Users</strong>, find someone to promote, and click <strong>Make affiliate</strong>.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#0B1E3F]/5 overflow-x-auto">
+            {affiliates.map((a) => (
+              <div key={a.id} className="px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-[#0B1E3F]">{a.name || a.email}</span>
+                    {a.name && <span className="text-xs mono text-[#0B1E3F]/55">{a.email}</span>}
+                  </div>
+                  <div className="text-xs mono text-[#0B1E3F]/55 mt-1">
+                    {a.code ? <>code <strong className="text-[#0B1E3F]">{a.code}</strong></> : <span className="text-[#DC2626]">no code</span>}
+                    {a.code && a.commission && (() => {
+                      if (a.commission.mode === 'uniform') {
+                        const r = a.commission.rate;
+                        return <> · {r.type === 'flat' ? `$${r.value} per signup` : `${r.value}% of paid`}</>;
+                      }
+                      // Per-plan: collapse the 6 rates into a one-line summary.
+                      const byPlan = a.commission.byPlan;
+                      const summary: string[] = [];
+                      for (const plan of ['carrier', 'team', 'fleet'] as const) {
+                        const m = byPlan[`${plan}-monthly`] || byPlan[plan];
+                        const y = byPlan[`${plan}-annual`]  || byPlan[plan];
+                        if (!m && !y) continue;
+                        const fmt = (r?: Rate) => r ? (r.type === 'flat' ? `$${r.value}` : `${r.value}%`) : '—';
+                        summary.push(`${plan[0].toUpperCase()} m${fmt(m)}/y${fmt(y)}`);
+                      }
+                      return <> · per-plan {summary.join(' · ') || 'unset'}</>;
+                    })()}
+                    · {a.redemptions} redemption{a.redemptions === 1 ? '' : 's'}
+                    {a.pendingRequests > 0 && <span className="ml-2 px-1.5 py-0.5 bg-[#F59E0B]/10 text-[#F59E0B] rounded text-[9px] uppercase tracking-wider font-semibold">{a.pendingRequests} pending</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-6 flex-wrap text-right">
+                  <div>
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45">Lifetime</div>
+                    <div className="text-sm mono font-semibold text-[#0B1E3F]">{fmtMoney(a.lifetimeCents)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45">Paid</div>
+                    <div className="text-sm mono font-semibold text-[#0B1E3F]/65">{fmtMoney(a.paidCents)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45">Available</div>
+                    <div className="text-sm mono font-semibold text-[#16A34A]">{fmtMoney(a.availableCents)}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Full payout ledger — paid + rejected */}
+      {history.length > 0 && (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-[#0B1E3F]/10 flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-base font-semibold text-[#0B1E3F]">Payout ledger</h3>
+            <span className="text-xs mono text-[#0B1E3F]/55">{history.length} settled</span>
+          </div>
+          <div className="divide-y divide-[#0B1E3F]/5 max-h-[600px] overflow-y-auto">
+            {history.map((p) => {
+              const badge = p.status === 'paid'
+                ? <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 bg-[#16A34A]/10 text-[#16A34A] rounded-full font-semibold">Paid</span>
+                : <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full font-semibold">Rejected</span>;
+              return (
+                <div key={p.id} className="px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-[#0B1E3F] mono">{fmtMoney(p.amount_cents)}</span>
+                      {badge}
+                      <span className="text-sm text-[#0B1E3F]">{p.user.name || p.user.email}</span>
+                    </div>
+                    <div className="text-xs mono text-[#0B1E3F]/55 mt-1">
+                      Requested {fmtDate(p.requested_at)}
+                      {p.status === 'paid' && p.paid_at && <> · paid {fmtDate(p.paid_at)}</>}
+                      {p.status === 'rejected' && p.rejected_at && <> · rejected {fmtDate(p.rejected_at)}</>}
+                      {p.affiliate_code && <> · code {p.affiliate_code}</>}
+                      {p.reject_reason && <span className="text-[#DC2626] ml-2">— {p.reject_reason}</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EarningsPage({ user }: any) {
+  type Redemption = {
+    id: string;
+    customerFirstName: string;
+    plan: string | null;
+    billing: string | null;
+    createdAt: string;
+    status: string;
+    amountPaidCents: number;
+    earningsCents: number;
+  };
+  type Payout = {
+    id: string;
+    amount_cents: number;
+    status: 'requested' | 'paid' | 'rejected';
+    requested_at: string;
+    paid_at: string | null;
+    rejected_at: string | null;
+    reject_reason: string | null;
+    affiliate_code: string | null;
+    redemptions_count: number | null;
+  };
+  type CommissionRate = { type: 'flat' | 'percent'; value: number };
+  type CommissionSpec =
+    | { mode: 'uniform'; rate: CommissionRate }
+    | { mode: 'per_plan'; byPlan: Partial<Record<string, CommissionRate>> };
+  type Stats = {
+    code: { code: string; active: boolean; percent_off: number | null; amount_off: number | null; duration: string | null } | null;
+    commission: CommissionSpec;
+    summary: {
+      totalRedemptions: number;
+      totalEarningsCents: number;
+      monthEarningsCents: number;
+      paidCents: number;
+      pendingCents: number;
+      availableCents: number;
+      canRequest: boolean;
+      minRequestCents: number;
+      payoutWindowDays: number;
+    };
+    redemptions: Redemption[];
+    payouts: Payout[];
+    message?: string;
+  };
+  const [data, setData] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [requestSuccess, setRequestSuccess] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch('/api/affiliate/stats');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setData(j);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const fmtMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  const addDays = (iso: string, days: number) => {
+    const d = new Date(iso);
+    d.setDate(d.getDate() + days);
+    return d.toISOString();
+  };
+
+  const requestPayout = async () => {
+    if (!data?.summary.canRequest || requesting) return;
+    setRequesting(true); setError(null); setRequestSuccess(null);
+    try {
+      const r = await fetch('/api/affiliate/payouts', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setRequestSuccess(`Requested ${fmtMoney(j.payout.amount_cents)}. We'll send the money within ${data.summary.payoutWindowDays} days.`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Could not request payout');
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8 text-[#0B1E3F]">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">My earnings</div>
+          <h1 className="text-4xl serif italic text-[#0B1E3F]">Every signup. Every dollar.</h1>
+          <p className="text-sm text-[#0B1E3F]/60 mt-2">Live from Stripe. Every time someone uses your promo code, this page updates.</p>
+        </div>
+        <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="p-4 bg-[#DC2626]/5 border border-[#DC2626]/20 rounded-xl text-sm text-[#DC2626]">{error}</div>}
+
+      {/* Code card */}
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+        <div className="flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Your promo code</div>
+            {data?.code ? (
+              <div className="flex items-baseline gap-3 flex-wrap">
+                <span className="text-3xl mono font-bold tracking-tight text-[#0B1E3F]">{data.code.code}</span>
+                <span className="text-sm mono text-[#0B1E3F]/55">
+                  {data.code.percent_off != null ? `${data.code.percent_off}% off` : data.code.amount_off != null ? `$${(data.code.amount_off/100).toFixed(2)} off` : ''}
+                  {data.code.duration ? ` · ${data.code.duration}` : ''}
+                </span>
+                {!data.code.active && <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full font-semibold">inactive</span>}
+              </div>
+            ) : (
+              <div className="text-sm text-[#0B1E3F]/55">{data?.message || 'No code assigned yet.'}</div>
+            )}
+          </div>
+          {data?.commission && (
+            <div className="text-right">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Your commission</div>
+              {data.commission.mode === 'uniform' ? (
+                <div className="text-xl mono font-semibold text-[#0B1E3F]">
+                  {data.commission.rate.type === 'flat' ? `$${data.commission.rate.value} per signup` : `${data.commission.rate.value}% of paid`}
+                </div>
+              ) : (
+                <div className="text-[11px] mono text-[#0B1E3F]/75 leading-relaxed text-right">
+                  {(['carrier', 'team', 'fleet'] as const).map((plan) => {
+                    const monthly = data.commission.mode === 'per_plan' ? (data.commission.byPlan[`${plan}-monthly`] || data.commission.byPlan[plan]) : null;
+                    const annual = data.commission.mode === 'per_plan' ? (data.commission.byPlan[`${plan}-annual`] || data.commission.byPlan[plan]) : null;
+                    if (!monthly && !annual) return null;
+                    const fmt = (r: CommissionRate | undefined | null) => r ? (r.type === 'flat' ? `$${r.value}` : `${r.value}%`) : '—';
+                    return (
+                      <div key={plan} className="flex items-center justify-end gap-2">
+                        <span className="uppercase tracking-wider text-[#0B1E3F]/55">{plan}</span>
+                        <span className="font-semibold">m {fmt(monthly)}</span>
+                        <span className="text-[#0B1E3F]/30">·</span>
+                        <span className="font-semibold">y {fmt(annual)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Stat tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Redemptions</div>
+          <div className="text-3xl font-semibold mono">{data ? data.summary.totalRedemptions : '—'}</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">This month</div>
+          <div className="text-3xl font-semibold mono text-[#16A34A]">{data ? fmtMoney(data.summary.monthEarningsCents) : '—'}</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Lifetime earned</div>
+          <div className="text-3xl font-semibold mono">{data ? fmtMoney(data.summary.totalEarningsCents) : '—'}</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Already paid</div>
+          <div className="text-3xl font-semibold mono text-[#0B1E3F]/65">{data ? fmtMoney(data.summary.paidCents) : '—'}</div>
+        </div>
+      </div>
+
+      {/* Available balance + payout request */}
+      <div className="bg-gradient-to-br from-[#0B1E3F] to-[#0B1E3F]/92 text-white rounded-2xl p-6 md:p-8 card-shadow">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+          <div>
+            <div className="text-xs mono uppercase tracking-wider text-white/55 mb-2">Available to request</div>
+            <div className="text-5xl font-semibold mono tracking-tight">{data ? fmtMoney(data.summary.availableCents) : '—'}</div>
+            {data && (
+              <div className="text-xs mono text-white/55 mt-3 leading-relaxed">
+                {fmtMoney(data.summary.totalEarningsCents)} lifetime
+                {' '}&minus;{' '}
+                {fmtMoney(data.summary.paidCents)} already paid
+                {data.summary.pendingCents > 0 && <> &minus; {fmtMoney(data.summary.pendingCents)} pending</>}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col items-stretch md:items-end gap-2">
+            <button
+              onClick={requestPayout}
+              disabled={!data?.summary.canRequest || requesting}
+              className="px-6 py-3 bg-white text-[#0B1E3F] rounded-full text-sm font-semibold hover:bg-white/90 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {requesting ? (
+                <><div className="w-4 h-4 border-2 border-[#0B1E3F]/30 border-t-[#0B1E3F] rounded-full animate-spin" /> Requesting…</>
+              ) : (
+                <>Request payout <ArrowRight className="w-4 h-4" /></>
+              )}
+            </button>
+            <div className="text-[11px] mono text-white/55 text-right">
+              {data?.summary.pendingCents && data.summary.pendingCents > 0
+                ? 'Pending request — wait for it to clear'
+                : data && data.summary.availableCents < data.summary.minRequestCents
+                  ? `Minimum ${fmtMoney(data.summary.minRequestCents)} to request`
+                  : data
+                    ? `Paid within ${data.summary.payoutWindowDays} days of request`
+                    : ''}
+            </div>
+          </div>
+        </div>
+
+        {requestSuccess && (
+          <div className="mt-5 p-4 bg-[#16A34A]/15 border border-[#16A34A]/40 rounded-xl text-sm text-white">
+            <CheckCircle2 className="w-4 h-4 inline mr-2" />
+            {requestSuccess}
+          </div>
+        )}
+      </div>
+
+      {/* Payout history */}
+      {data && data.payouts.length > 0 && (
+        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-[#0B1E3F]/10 flex items-center justify-between flex-wrap gap-2">
+            <h2 className="text-lg font-semibold text-[#0B1E3F]">Payout history</h2>
+            <div className="text-xs mono text-[#0B1E3F]/55">{data.payouts.length} total</div>
+          </div>
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {data.payouts.map((p) => {
+              const expectedPaidAt = p.status === 'requested' ? addDays(p.requested_at, data.summary.payoutWindowDays) : null;
+              const statusBadge =
+                p.status === 'paid' ? <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 bg-[#16A34A]/10 text-[#16A34A] rounded-full font-semibold">Paid</span> :
+                p.status === 'rejected' ? <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full font-semibold">Rejected</span> :
+                <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 bg-[#F59E0B]/10 text-[#F59E0B] rounded-full font-semibold">Requested</span>;
+              return (
+                <div key={p.id} className="px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-base font-semibold text-[#0B1E3F] mono">{fmtMoney(p.amount_cents)}</span>
+                      {statusBadge}
+                    </div>
+                    <div className="text-xs mono text-[#0B1E3F]/55 mt-1">
+                      Requested {fmtDate(p.requested_at)}
+                      {p.affiliate_code && <> · code {p.affiliate_code}</>}
+                      {p.redemptions_count != null && <> · {p.redemptions_count} redemption{p.redemptions_count === 1 ? '' : 's'}</>}
+                    </div>
+                  </div>
+                  <div className="text-right text-xs mono text-[#0B1E3F]/55">
+                    {p.status === 'paid' && p.paid_at && <>Paid {fmtDate(p.paid_at)}</>}
+                    {p.status === 'rejected' && p.rejected_at && (
+                      <>
+                        Rejected {fmtDate(p.rejected_at)}
+                        {p.reject_reason && <div className="text-[11px] text-[#DC2626] mt-1">{p.reject_reason}</div>}
+                      </>
+                    )}
+                    {p.status === 'requested' && expectedPaidAt && <>Expected by {fmtDate(expectedPaidAt)}</>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Redemption table */}
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#0B1E3F]/10 flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-lg font-semibold text-[#0B1E3F]">Recent signups</h2>
+          <div className="text-xs mono text-[#0B1E3F]/55">{data ? `${data.redemptions.length} total` : ''}</div>
+        </div>
+        {!data ? (
+          <div className="p-8 text-center text-sm text-[#0B1E3F]/55">{loading ? 'Loading…' : ''}</div>
+        ) : data.redemptions.length === 0 ? (
+          <div className="p-8 text-center text-sm text-[#0B1E3F]/55">
+            No signups yet. Once someone uses your promo code at checkout, they&apos;ll show up here.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#0B1E3F]/5">
+            {data.redemptions.map((r) => (
+              <div key={r.id} className="px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full bg-[#0B1E3F]/5 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs mono text-[#0B1E3F]/70 font-semibold">{r.customerFirstName.slice(0, 2).toUpperCase()}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F]">{r.customerFirstName}</div>
+                    <div className="text-xs mono text-[#0B1E3F]/55">
+                      {fmtDate(r.createdAt)}
+                      {r.plan ? ` · ${r.plan}` : ''}
+                      <span className={`ml-1 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold ${r.status === 'active' || r.status === 'trialing' ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/55'}`}>{r.status}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold text-[#16A34A] mono">+{fmtMoney(r.earningsCents)}</div>
+                  <div className="text-[10px] mono text-[#0B1E3F]/45">customer paid {fmtMoney(r.amountPaidCents)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="text-[11px] mono text-[#0B1E3F]/45 text-right">Source: Stripe (live)</div>
     </div>
   );
 }
@@ -3485,7 +4498,7 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
           <AlertTriangle className="w-5 h-5 text-[#DC2626] mt-0.5 flex-shrink-0" />
           <div>
             <div className="text-lg font-semibold text-[#0B1E3F] mb-1">Delete your account</div>
-            <div className="text-sm text-[#0B1E3F]/70 mb-2">This permanently removes your login, lookup history, watchlist, alerts, fraud reports, and team membership ({user?.email}). It cannot be undone.</div>
+            <div className="text-sm text-[#0B1E3F]/70 mb-2">This permanently removes your login, lookup history, watchlist, alerts, and team membership ({user?.email}). It cannot be undone.</div>
             <div className="text-xs mono text-[#0B1E3F]/55">Type <span className="px-1.5 py-0.5 bg-[#0B1E3F]/10 rounded">DELETE</span> to confirm.</div>
           </div>
         </div>
@@ -4021,9 +5034,20 @@ function StripeOverviewCard() {
 }
 
 // Admin-only "Cart recovery" card — exit-intent modal events, abandoned-
-// cart email sends, and live NEW20 promo redemption count from Stripe.
+// cart email sends, and live promo-code redemption counts from Stripe.
 // Pairs with the abandoned-carts cron + checkout exit-intent modal.
 function CartRecoveryCard() {
+  type PromoStats = {
+    id: string;
+    code: string;
+    active: boolean;
+    times_redeemed: number;
+    max_redemptions: number | null;
+    coupon_id: string | null;
+    percent_off: number | null;
+    amount_off: number | null;
+    duration: string | null;
+  };
   type Stats = {
     exitIntent: {
       shown: { all: number; last30d: number };
@@ -4035,15 +5059,8 @@ function CartRecoveryCard() {
       abandoned_7d: { all: number; last30d: number };
       total_recovery_rows: { all: number; last30d: number };
     };
-    promo: {
-      code: string;
-      active: boolean | null;
-      times_redeemed: number | null;
-      max_redemptions: number | null;
-      coupon_id: string | null;
-      percent_off: number | null;
-      duration: string | null;
-    };
+    promos: PromoStats[];
+    recoveryCode: string;
   };
   const [data, setData] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -4072,22 +5089,28 @@ function CartRecoveryCard() {
 
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold">Cart recovery</span>
-          <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
-            Last 30 days
-          </span>
-          {data?.promo.active === false && (
-            <span className="px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
-              {data.promo.code} inactive
-            </span>
-          )}
-        </div>
-        <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
-          {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
+      {(() => {
+        const recovery = data?.promos.find((p) => p.code === data?.recoveryCode);
+        const recoveryInactive = recovery && !recovery.active;
+        return (
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold">Cart recovery</span>
+              <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
+                Last 30 days
+              </span>
+              {recoveryInactive && (
+                <span className="px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">
+                  {data?.recoveryCode} inactive
+                </span>
+              )}
+            </div>
+            <button onClick={load} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition disabled:opacity-50">
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+        );
+      })()}
 
       {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
 
@@ -4119,29 +5142,71 @@ function CartRecoveryCard() {
         />
       </div>
 
-      <div className="p-4 bg-gradient-to-br from-[#0B1E3F] to-[#0B1E3F]/92 rounded-xl text-white flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <div className="text-[10px] mono uppercase tracking-wider text-white/55 mb-1">Promo code redemptions</div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-semibold mono tracking-tight">
-              {data?.promo.times_redeemed != null ? data.promo.times_redeemed : '—'}
-            </span>
-            <span className="text-xs mono text-white/60">
-              {data?.promo.code ?? 'NEW20'}
-              {data?.promo.percent_off != null ? ` · ${data.promo.percent_off}% off` : ''}
-              {data?.promo.duration ? ` · ${data.promo.duration}` : ''}
-            </span>
-          </div>
-          {data?.promo.max_redemptions != null && (
-            <div className="text-[11px] mono text-white/45 mt-1">
-              cap {data.promo.max_redemptions}
-            </div>
-          )}
-        </div>
-        <div className="text-right">
-          <div className="text-[10px] mono uppercase tracking-wider text-white/55">Source</div>
-          <div className="text-xs mono text-white/75 mt-0.5">Stripe (live)</div>
-        </div>
+      <div className="p-4 bg-gradient-to-br from-[#0B1E3F] to-[#0B1E3F]/92 rounded-xl text-white">
+        {(() => {
+          const promos = data?.promos ?? [];
+          const totalRedemptions = promos.reduce((sum, p) => sum + p.times_redeemed, 0);
+          const codeCount = promos.length;
+          return (
+            <>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <div className="text-[10px] mono uppercase tracking-wider text-white/55 mb-1">Promo code redemptions</div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold mono tracking-tight">
+                      {data ? totalRedemptions : '—'}
+                    </span>
+                    <span className="text-xs mono text-white/60">
+                      {data ? `across ${codeCount} code${codeCount === 1 ? '' : 's'}` : ''}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] mono uppercase tracking-wider text-white/55">Source</div>
+                  <div className="text-xs mono text-white/75 mt-0.5">Stripe (live)</div>
+                </div>
+              </div>
+              {data && promos.length === 0 && (
+                <div className="text-xs mono text-white/55 mt-3 pt-3 border-t border-white/10">No promo codes used yet.</div>
+              )}
+              {promos.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/10 divide-y divide-white/10">
+                  {promos.map((p) => {
+                    const discountLabel =
+                      p.percent_off != null ? `${p.percent_off}% off`
+                      : p.amount_off != null ? `$${(p.amount_off / 100).toFixed(2)} off`
+                      : '';
+                    return (
+                      <div key={p.id} className="flex items-center justify-between py-2 gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                          <span className="text-sm mono font-semibold tracking-tight">{p.code}</span>
+                          {discountLabel && (
+                            <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-white/10 text-white/70">
+                              {discountLabel}
+                            </span>
+                          )}
+                          {p.duration && (
+                            <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-white/10 text-white/70">
+                              {p.duration}
+                            </span>
+                          )}
+                          {!p.active && (
+                            <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#DC2626]/30 text-white/85">inactive</span>
+                          )}
+                        </div>
+                        <span className="text-sm mono font-semibold whitespace-nowrap">
+                          {p.times_redeemed}
+                          {p.max_redemptions != null && <span className="text-white/45">/{p.max_redemptions}</span>}
+                          <span className="text-white/45 text-xs"> {p.times_redeemed === 1 ? 'redemption' : 'redemptions'}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
@@ -4462,6 +5527,8 @@ function NewsletterAdminPanel() {
   const [data, setData] = useState<NlData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   const load = async () => {
     setError(null);
@@ -4475,6 +5542,22 @@ function NewsletterAdminPanel() {
     }
   };
   useEffect(() => { load(); }, []);
+
+  const syncAll = async () => {
+    if (!confirm('Add every confirmed Haulock user to the Resend audience? Idempotent — safe to re-run.')) return;
+    setSyncing(true); setSyncResult(null); setError(null);
+    try {
+      const r = await fetch('/api/admin/sync-resend-audience', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setSyncResult(`Synced ${j.total} users · ${j.added} added · ${j.updated} updated · ${j.skipped} skipped${j.errors?.length ? ` · ${j.errors.length} errors` : ''}`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   if (!data && !error) return <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>;
   if (error) return <div className="bg-white rounded-2xl border border-[#DC2626]/20 p-6 text-sm text-[#DC2626]">{error}</div>;
@@ -4507,6 +5590,24 @@ function NewsletterAdminPanel() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-[#0B1E3F]">Newsletter</h2>
+          <p className="text-xs text-[#0B1E3F]/55 mt-1">Resend Audience contacts + per-contact send count from the email log.</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={syncAll}
+            disabled={syncing}
+            className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-xs font-medium hover:bg-[#0B1E3F]/90 transition disabled:opacity-50"
+            title="Backfill every confirmed Haulock user into the Resend audience. Idempotent."
+          >
+            {syncing ? 'Syncing…' : 'Sync all users → audience'}
+          </button>
+          {syncResult && <div className="text-[11px] mono text-[#16A34A] max-w-md text-right">{syncResult}</div>}
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
           <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Subscribers</div>
@@ -4956,14 +6057,20 @@ function Stat({ label, value, sub }: { label: string; value: any; sub?: string |
   );
 }
 
-type AdminTab = 'overview' | 'users' | 'fmcsa' | 'data' | 'newsletter' | 'support';
+type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsletter' | 'support';
+
+type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
+type RoleFilter = 'all' | 'admin' | 'affiliate' | 'regular';
 
 function AdminPage({ navigate }: any) {
   const [users, setUsers] = useState<any[] | null>(null);
   const [filter, setFilter] = useState('');
+  const [planFilter, setPlanFilter] = useState<PlanFilter>('all');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [tab, setTab] = useState<AdminTab>('overview');
+  const [affiliateUser, setAffiliateUser] = useState<any | null>(null);
 
   const load = async () => {
     setError(null);
@@ -5006,7 +6113,7 @@ function AdminPage({ navigate }: any) {
     const fmtMoney = (cents: number, currency = 'USD') =>
       new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
 
-    let confirmMsg = `Permanently delete ${label}?\n\nThis removes their login, lookups, watchlist, reports, and team membership. Cannot be undone.`;
+    let confirmMsg = `Permanently delete ${label}?\n\nThis removes their login, lookups, watchlist, alerts, and team membership. Cannot be undone.`;
     if (subInfo?.hasActiveSub) {
       const price = subInfo.amount != null ? fmtMoney(subInfo.amount, subInfo.currency) : '?';
       const period = subInfo.billing === 'annual' ? '/yr' : '/mo';
@@ -5039,7 +6146,36 @@ function AdminPage({ navigate }: any) {
   };
 
   const f = filter.trim().toLowerCase();
-  const shown = (users || []).filter((u) => !f || (u.email || '').toLowerCase().includes(f) || (u.name || '').toLowerCase().includes(f) || (u.company || '').toLowerCase().includes(f) || (u.mc || '').includes(f));
+  const shown = (users || []).filter((u) => {
+    // Text search runs across the full set.
+    if (f && !(
+      (u.email || '').toLowerCase().includes(f)
+      || (u.name || '').toLowerCase().includes(f)
+      || (u.company || '').toLowerCase().includes(f)
+      || (u.mc || '').includes(f)
+    )) return false;
+    // Plan filter — compare against the lowercased plan id (free / carrier / team / fleet).
+    if (planFilter !== 'all' && (u.plan || 'free').toLowerCase() !== planFilter) return false;
+    // Role filter:
+    //   admin     → user.isAdmin === true
+    //   affiliate → user.role === 'affiliate' (and not admin, since admins skip affiliate)
+    //   regular   → neither admin nor affiliate
+    if (roleFilter === 'admin' && !u.isAdmin) return false;
+    if (roleFilter === 'affiliate' && (u.role !== 'affiliate' || u.isAdmin)) return false;
+    if (roleFilter === 'regular' && (u.isAdmin || u.role === 'affiliate')) return false;
+    return true;
+  });
+
+  // Pagination — filters run across the full set, then we slice the
+  // 10-per-page window. Reset to page 1 whenever any filter changes so the
+  // results always start at the top of the matching subset.
+  const PAGE_SIZE = 10;
+  const [userPage, setUserPage] = useState(1);
+  useEffect(() => { setUserPage(1); }, [filter, planFilter, roleFilter]);
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const safePage = Math.min(userPage, pageCount);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const visible = shown.slice(pageStart, pageStart + PAGE_SIZE);
 
   const totals = (users || []).reduce((acc, u) => ({
     users: acc.users + 1,
@@ -5054,6 +6190,7 @@ function AdminPage({ navigate }: any) {
   const TABS: { id: AdminTab; label: string; count?: number }[] = [
     { id: 'overview',   label: 'Overview' },
     { id: 'users',      label: 'Users',         count: users?.length ?? undefined },
+    { id: 'affiliates', label: 'Affiliates' },
     { id: 'fmcsa',      label: 'FMCSA' },
     { id: 'data',       label: 'Data & storage' },
     { id: 'newsletter', label: 'Newsletter' },
@@ -5128,10 +6265,73 @@ function AdminPage({ navigate }: any) {
       {/* SUPPORT: every user's support tickets, replies, status changes */}
       {tab === 'support' && <SupportAdminPanel />}
 
+      {/* AFFILIATES: pending payout requests + roster of affiliates with live earnings */}
+      {tab === 'affiliates' && <AffiliatesAdminPanel />}
+
       {/* USERS: filter + user list */}
       {tab === 'users' && (<>
-      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-3 card-shadow">
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email, name, company, or MC…" className="w-full px-4 py-2.5 bg-transparent rounded-lg text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40" />
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email, name, company, or MC…" className="w-full px-4 py-3 bg-transparent text-sm focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/40 border-b border-[#0B1E3F]/5" />
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 text-xs">
+          {(() => {
+            // Counts per option are derived from the *text-search-filtered* set
+            // (so the badge tells the operator how many users match the
+            // current search + each candidate filter). Excluded admin user
+            // himself from affiliate count since admins can't be affiliates.
+            const baseSet = (users || []).filter((u) => !f
+              || (u.email || '').toLowerCase().includes(f)
+              || (u.name || '').toLowerCase().includes(f)
+              || (u.company || '').toLowerCase().includes(f)
+              || (u.mc || '').includes(f));
+            const planCounts: Record<PlanFilter, number> = { all: baseSet.length, free: 0, carrier: 0, team: 0, fleet: 0 };
+            const roleCounts: Record<RoleFilter, number> = { all: baseSet.length, admin: 0, affiliate: 0, regular: 0 };
+            for (const u of baseSet) {
+              const p = ((u.plan || 'free').toLowerCase() as PlanFilter);
+              if (p === 'free' || p === 'carrier' || p === 'team' || p === 'fleet') planCounts[p] += 1;
+              if (u.isAdmin) roleCounts.admin += 1;
+              else if (u.role === 'affiliate') roleCounts.affiliate += 1;
+              else roleCounts.regular += 1;
+            }
+            const Pill = ({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) => (
+              <button
+                type="button"
+                onClick={onClick}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition flex items-center gap-1.5 ${active ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/65 hover:text-[#0B1E3F] hover:bg-[#0B1E3F]/5'}`}
+              >
+                {label}
+                <span className={`text-[10px] mono ${active ? 'text-white/60' : 'text-[#0B1E3F]/45'}`}>{count}</span>
+              </button>
+            );
+            return (
+              <>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mr-1">Plan</span>
+                  <Pill active={planFilter === 'all'}     onClick={() => setPlanFilter('all')}     label="All"     count={planCounts.all} />
+                  <Pill active={planFilter === 'free'}    onClick={() => setPlanFilter('free')}    label="Free"    count={planCounts.free} />
+                  <Pill active={planFilter === 'carrier'} onClick={() => setPlanFilter('carrier')} label="Carrier" count={planCounts.carrier} />
+                  <Pill active={planFilter === 'team'}    onClick={() => setPlanFilter('team')}    label="Team"    count={planCounts.team} />
+                  <Pill active={planFilter === 'fleet'}   onClick={() => setPlanFilter('fleet')}   label="Fleet"   count={planCounts.fleet} />
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mr-1">Role</span>
+                  <Pill active={roleFilter === 'all'}       onClick={() => setRoleFilter('all')}       label="All"       count={roleCounts.all} />
+                  <Pill active={roleFilter === 'admin'}     onClick={() => setRoleFilter('admin')}     label="Admin"     count={roleCounts.admin} />
+                  <Pill active={roleFilter === 'affiliate'} onClick={() => setRoleFilter('affiliate')} label="Affiliate" count={roleCounts.affiliate} />
+                  <Pill active={roleFilter === 'regular'}   onClick={() => setRoleFilter('regular')}   label="Regular"   count={roleCounts.regular} />
+                </div>
+                {(planFilter !== 'all' || roleFilter !== 'all') && (
+                  <button
+                    type="button"
+                    onClick={() => { setPlanFilter('all'); setRoleFilter('all'); }}
+                    className="ml-auto text-[11px] mono text-[#0B1E3F]/55 hover:text-[#DC2626] transition"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </>
+            );
+          })()}
+        </div>
       </div>
 
       {users == null ? (
@@ -5143,13 +6343,21 @@ function AdminPage({ navigate }: any) {
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow">
+          <div className="px-5 py-3 border-b border-[#0B1E3F]/5 flex items-center justify-between text-xs mono text-[#0B1E3F]/55">
+            <div>
+              {f
+                ? <>Matching <strong className="text-[#0B1E3F]">{shown.length}</strong> of {users!.length}</>
+                : <>Showing <strong className="text-[#0B1E3F]">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, shown.length)}</strong> of {shown.length}</>}
+            </div>
+            <div>Page {safePage} / {pageCount}</div>
+          </div>
           <div className="divide-y divide-[#0B1E3F]/5">
-            {shown.map((u: any) => {
+            {visible.map((u: any) => {
               const initials = (u.name || u.email || '?').split(/[\s@]/).map((p: string) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
               return (
-                <div key={u.id} className="p-5 text-[#0B1E3F]">
+                <div key={u.id} className={`p-5 text-[#0B1E3F] ${u.isAdmin ? 'bg-[#0B1E3F]/[0.025] border-l-4 border-[#0B1E3F]' : ''}`}>
                   <div className="flex items-start gap-4 flex-wrap">
-                    <div className="w-10 h-10 rounded-full bg-[#0B1E3F] flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">{initials}</div>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold flex-shrink-0 ${u.isAdmin ? 'bg-[#FF6B35]' : 'bg-[#0B1E3F]'}`}>{initials}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
                         <div className="font-semibold text-[#0B1E3F] truncate">{u.name || u.email}</div>
@@ -5169,20 +6377,25 @@ function AdminPage({ navigate }: any) {
                     <UsageMiniCard label="Scans / mo" value={u.usage.scansThisMonth} limit={u.isAdmin ? null : u.limits.rateConScans} />
                     <UsageMiniCard label="Watchlist" value={u.usage.watchlist} limit={u.isAdmin ? null : u.limits.watchlist} />
                     <UsageMiniCard label="Lookups all-time" value={u.usage.lookupsTotal} />
-                    <UsageMiniCard label="Fraud reports" value={u.usage.fraudReports} />
                   </div>
                   <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-[#0B1E3F]/5">
-                    <label className="text-xs text-[#0B1E3F]/60 flex items-center gap-2">
-                      Plan:
-                      <select
-                        value={u.plan}
-                        onChange={(e) => patchUser(u.id, { plan: e.target.value })}
-                        disabled={pendingId === u.id}
-                        className="px-3 py-1.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-xs text-[#0B1E3F] focus:outline-none"
-                      >
-                        {Object.values(PLANS).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                      </select>
-                    </label>
+                    {/* Admins bypass plan + affiliate logic — they have unlimited
+                        access by virtue of the admin flag, and an admin promoting
+                        themselves as their own affiliate would create a feedback
+                        loop in payouts. Show only the demote control. */}
+                    {!u.isAdmin && (
+                      <label className="text-xs text-[#0B1E3F]/60 flex items-center gap-2">
+                        Plan:
+                        <select
+                          value={u.plan}
+                          onChange={(e) => patchUser(u.id, { plan: e.target.value })}
+                          disabled={pendingId === u.id}
+                          className="px-3 py-1.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-xs text-[#0B1E3F] focus:outline-none"
+                        >
+                          {Object.values(PLANS).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                        </select>
+                      </label>
+                    )}
                     <button
                       onClick={() => patchUser(u.id, { isAdmin: !u.isAdmin })}
                       disabled={pendingId === u.id}
@@ -5190,6 +6403,30 @@ function AdminPage({ navigate }: any) {
                     >
                       {pendingId === u.id ? 'Saving…' : u.isAdmin ? 'Revoke admin' : 'Make admin'}
                     </button>
+                    {!u.isAdmin && (
+                      <button
+                        onClick={() => setAffiliateUser(u)}
+                        disabled={pendingId === u.id}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition disabled:opacity-50 ${u.role === 'affiliate' ? 'border border-[#16A34A]/40 text-[#16A34A] hover:bg-[#16A34A]/5' : 'border border-[#0B1E3F]/15 text-[#0B1E3F]/75 hover:bg-[#0B1E3F]/5'}`}
+                      >
+                        {u.role === 'affiliate'
+                          ? (() => {
+                              const codeLabel = u.affiliateCode || '—';
+                              if (u.affiliateCommissionMode === 'per_plan' && u.affiliateCommissionByPlan) {
+                                const parts = (['carrier', 'team', 'fleet'] as const)
+                                  .filter((p) => u.affiliateCommissionByPlan[p])
+                                  .map((p) => {
+                                    const r = u.affiliateCommissionByPlan[p];
+                                    return `${p[0].toUpperCase()} ${r.type === 'percent' ? `${r.value}%` : `$${r.value}`}`;
+                                  })
+                                  .join(' · ');
+                                return `Affiliate · ${codeLabel} · ${parts || 'no plans'}`;
+                              }
+                              return `Affiliate · ${codeLabel} · ${u.affiliateCommissionType === 'percent' ? `${u.affiliateCommissionValue}%` : `$${u.affiliateCommissionValue}`}`;
+                            })()
+                          : 'Make affiliate'}
+                      </button>
+                    )}
                     <button
                       onClick={() => deleteUser(u)}
                       disabled={pendingId === u.id}
@@ -5203,9 +6440,53 @@ function AdminPage({ navigate }: any) {
               );
             })}
           </div>
+          {pageCount > 1 && (
+            <div className="px-5 py-3 border-t border-[#0B1E3F]/5 flex items-center justify-between gap-2 flex-wrap">
+              <button
+                onClick={() => setUserPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-3 py-1.5 border border-[#0B1E3F]/15 rounded-full text-xs font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ← Previous
+              </button>
+              <div className="flex items-center gap-1 flex-wrap">
+                {Array.from({ length: pageCount }, (_, i) => i + 1)
+                  .filter((p) => p === 1 || p === pageCount || Math.abs(p - safePage) <= 1)
+                  .map((p, i, arr) => {
+                    const prev = arr[i - 1];
+                    const gap = prev != null && p - prev > 1;
+                    return (
+                      <span key={p} className="flex items-center gap-1">
+                        {gap && <span className="px-1 text-xs mono text-[#0B1E3F]/40">…</span>}
+                        <button
+                          onClick={() => setUserPage(p)}
+                          className={`w-8 h-8 rounded-full text-xs font-medium transition ${p === safePage ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:bg-[#0B1E3F]/5'}`}
+                        >
+                          {p}
+                        </button>
+                      </span>
+                    );
+                  })}
+              </div>
+              <button
+                onClick={() => setUserPage((p) => Math.min(pageCount, p + 1))}
+                disabled={safePage >= pageCount}
+                className="px-3 py-1.5 border border-[#0B1E3F]/15 rounded-full text-xs font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       )}
       </>)}
+      {affiliateUser && (
+        <AffiliateAssignModal
+          user={affiliateUser}
+          onClose={() => setAffiliateUser(null)}
+          onSaved={() => { setAffiliateUser(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -5583,11 +6864,11 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const openTickets = isAdmin ? (supportCountsRes.data?.open || 0) : 0;
   const lookupsLeft = isAdmin || usagePlan.limits.fmcsaLookups == null ? null : Math.max(0, usagePlan.limits.fmcsaLookups - usageNums.fmcsaLookups);
   const scansLeft = isAdmin || usagePlan.limits.rateConScans == null ? null : Math.max(0, usagePlan.limits.rateConScans - usageNums.rateConScans);
+  const isAffiliate = user?.role === 'affiliate';
   const navItems: any[] = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'verify', label: 'Verify broker', icon: Search },
     { id: 'history', label: 'History', icon: Clock },
-    { id: 'reports', label: 'Fraud reports', icon: Flag },
     { id: 'watchlist', label: 'Watchlist', icon: Eye },
     { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount > 0 ? alertCount : null },
     { id: 'plan', label: 'Plan & billing', icon: Zap },
@@ -5595,6 +6876,9 @@ function AppShell({ user, route, navigate, logout, children }: any) {
     // Admins manage tickets from the Admin → Support tickets tab, so the
     // user-facing Support entry is hidden for them.
     ...(isAdmin ? [] : [{ id: 'support', label: 'Support', icon: LifeBuoy }]),
+    // Affiliate-only — the earnings dashboard appears in the same sidebar
+    // slot the operator sees as Admin. A user can be either, never both.
+    ...(isAffiliate && !isAdmin ? [{ id: 'earnings', label: 'My earnings', icon: TrendingUp }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: ShieldCheck, badge: openTickets > 0 ? openTickets : null }] : []),
   ];
 
@@ -5824,6 +7108,12 @@ function VerifyTool({ navigate }: any) {
     return 'quick';
   });
   const [input, setInput] = useState('');
+  // Identifier-type selector. MC and DOT are separate registries that
+  // frequently collide on the same number — e.g. MC-1162901 (Leader
+  // Group) vs DOT-1162901 (Kiril Georgiev). The user must pick which
+  // registry to query before submitting a bare number. No default — the
+  // whole point of removing 'auto' is to force a deliberate choice.
+  const [kind, setKind] = useState<'mc' | 'dot' | null>(null);
   const [emailInput, setEmailInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -5883,10 +7173,35 @@ function VerifyTool({ navigate }: any) {
     }
   };
 
+  // Apply the MC/DOT type selector to bare numeric input. If the user
+  // already typed a prefix (MC-…, DOT-…, USDOT-…) we respect it; if they
+  // typed a name we leave it alone. Only bare digits get the prefix.
+  const applyKind = (raw: string): string => {
+    const q = raw.trim();
+    if (!kind) return q;
+    if (/^(?:MC|DOT|USDOT)[-#\s]?\d/i.test(q)) return q;
+    const digits = q.replace(/[-\s#]/g, '');
+    if (/^\d{3,9}$/.test(digits)) {
+      return `${kind === 'mc' ? 'MC' : 'DOT'}-${digits}`;
+    }
+    return q;
+  };
+
   const runLookup = async (override?: string, emailOverride?: string) => {
-    const q = (override ?? input).trim();
+    const raw = (override ?? input).trim();
     const e = (emailOverride ?? emailInput).trim();
-    if (!q) { setError('Enter an MC number, DOT number, or company name.'); return; }
+    if (!raw) { setError('Enter an MC number, DOT number, or company name.'); return; }
+    // Force a registry choice for bare digits. The same 7-digit number
+    // can resolve to two different carriers — one in the MC registry and
+    // one in the DOT registry — so we make the user pick. Names and
+    // already-prefixed inputs (MC-…, DOT-…) are exempt.
+    const isBareDigits = /^\d{3,9}$/.test(raw.replace(/[-\s#]/g, ''));
+    const isPrefixed = /^(?:MC|DOT|USDOT)[-#\s]?\d/i.test(raw);
+    if (isBareDigits && !isPrefixed && !kind) {
+      setError('Pick MC or DOT first — the same number can belong to two different carriers across registries.');
+      return;
+    }
+    const q = applyKind(raw);
     setLoading(true); setError(null); setErrorSuggestions(null);
     try {
       // Pass the email field through to the verify route so it can run
@@ -6002,10 +7317,67 @@ function VerifyTool({ navigate }: any) {
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 md:p-12 card-shadow text-[#0B1E3F]">
           <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">MC number, DOT number, or company name</label>
           <div className="flex gap-3">
-            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') runLookup(); }} placeholder="e.g., MC-847291 or Acme Freight Brokers" className="flex-1 px-5 py-4 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-lg focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+            <div className={`flex-1 flex items-stretch bg-[#F5F3EE] border rounded-xl focus-within:border-[#0B1E3F] transition overflow-hidden ${kind ? 'border-[#0B1E3F]/15' : 'border-[#FF6B35]/40'}`}>
+              <div
+                className="flex items-center gap-1.5 pl-2 pr-2 py-2 border-r border-[#0B1E3F]/10 bg-white"
+                title="MC and DOT are separate FMCSA registries — the same number can belong to two different carriers. Pick which one you're searching."
+              >
+                {([
+                  { id: 'mc', label: 'MC', hint: 'Motor Carrier number — search FMCSA MC registry' },
+                  { id: 'dot', label: 'DOT', hint: 'USDOT number — search FMCSA DOT registry' },
+                ] as const).map((k) => {
+                  const active = kind === k.id;
+                  return (
+                    <button
+                      key={k.id}
+                      type="button"
+                      onClick={() => { setKind(k.id); setError(null); }}
+                      title={k.hint}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-bold mono transition border ${
+                        active
+                          ? 'bg-[#0B1E3F] text-white border-[#0B1E3F] shadow-sm'
+                          : 'bg-white text-[#0B1E3F]/70 border-[#0B1E3F]/25 hover:border-[#0B1E3F] hover:text-[#0B1E3F]'
+                      }`}
+                    >
+                      {k.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { runLookup(); return; }
+                  // Block digit entry until the user has picked MC or DOT —
+                  // bare numbers are exactly the case where the registries
+                  // collide. Letters (company names) still pass through.
+                  if (!kind && /^\d$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                    e.preventDefault();
+                    setError('Pick MC or DOT on the left before typing a number.');
+                  }
+                }}
+                onPaste={(e) => {
+                  if (kind) return;
+                  const text = e.clipboardData.getData('text');
+                  if (/\d/.test(text)) {
+                    e.preventDefault();
+                    setError('Pick MC or DOT on the left before pasting a number.');
+                  }
+                }}
+                placeholder={kind === 'mc' ? 'Type the MC number, e.g. 1162901 — no prefix needed' : kind === 'dot' ? 'Type the DOT number, e.g. 3512175 — no prefix needed' : 'Select MC or DOT on the left first, then type the number'}
+                className="flex-1 px-5 py-4 bg-transparent text-lg focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
+              />
+            </div>
             <button onClick={() => runLookup()} disabled={loading} className="px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
               Verify <ArrowRight className="w-4 h-4" />
             </button>
+          </div>
+          <div className="mt-2 text-xs text-[#0B1E3F]/55 leading-relaxed">
+            {kind
+              ? <>Just type the digits — we add <span className="mono">{kind === 'mc' ? 'MC-' : 'DOT-'}</span> for you. Searching by company name? Type it here; the {kind === 'mc' ? 'MC' : 'DOT'} toggle is ignored for names.</>
+              : <>MC and DOT are separate registries — the same number can return two different carriers (e.g. <span className="mono">MC-1162901</span> = LEADER GROUP INC, <span className="mono">DOT-1162901</span> = KIRIL GEORGIEV). Pick one on the left, then type just the digits.</>
+            }
           </div>
           <div className="mt-5">
             <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">Email or domain from the rate con <span className="normal-case text-[#0B1E3F]/40 tracking-normal">(optional — checks domain age, MX, SPF)</span></label>
@@ -6294,7 +7666,6 @@ function Report({ report, navigate }: any) {
   const idLine = [r.mc && `MC-${r.mc}`, r.dot && `DOT-${r.dot}`].filter(Boolean).join(' · ') || 'Unverified';
   const badge = entityBadge(r);
   const [watching, setWatching] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [reportOpen, setReportOpen] = useState(false);
   const [rescanning, setRescanning] = useState(false);
   const [rescanError, setRescanError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -6399,11 +7770,6 @@ function Report({ report, navigate }: any) {
       setRescanning(false);
     }
   };
-  const reportsKey = (r.mc || r.dot) ? `fraud:${r.mc || ''}:${r.dot || ''}` : null;
-  const reportsUrl = (r.mc || r.dot) ? `/api/fraud-reports?${r.mc ? `mc=${encodeURIComponent(r.mc)}&` : ''}${r.dot ? `dot=${encodeURIComponent(r.dot)}` : ''}` : null;
-  const reportsRes = useCachedFetch<{ reports: any[] }>(reportsKey || '__none__', reportsUrl);
-  const communityReports = reportsRes.data?.reports ?? [];
-
   const [watchOpen, setWatchOpen] = useState(false);
   const confirmWatch = async () => {
     if (watching === 'saving' || !r?.name || (!r.mc && !r.dot)) return;
@@ -6442,11 +7808,6 @@ function Report({ report, navigate }: any) {
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs mono uppercase tracking-wider font-semibold whitespace-nowrap" style={{ background: badge.bg, color: badge.color }}>
                 <span>{badge.icon}</span>{badge.label}
               </span>
-              {communityReports.length > 0 && (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs mono uppercase tracking-wider font-semibold bg-[#DC2626] text-white whitespace-nowrap">
-                  <Flag className="w-3 h-3" /> {communityReports.length} carrier{communityReports.length === 1 ? '' : 's'} flagged
-                </span>
-              )}
             </div>
             {r.source === 'mock' && (() => {
               const fmcsaDown = (r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title));
@@ -6495,7 +7856,6 @@ function Report({ report, navigate }: any) {
             <button onClick={onRescan} disabled={!rescanQuery || rescanning} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2 disabled:opacity-50" title="Runs a fresh FMCSA lookup — uses 1 credit">
               {rescanning ? <><div className="w-3.5 h-3.5 border-2 border-[#0B1E3F]/30 border-t-[#0B1E3F] rounded-full animate-spin" /> Scanning…</> : <><Search className="w-4 h-4" /> Scan again</>}
             </button>
-            <button onClick={() => setReportOpen(true)} disabled={!r.mc && !r.dot} className="px-4 py-2 border border-[#DC2626]/30 bg-white rounded-full text-sm font-medium text-[#DC2626] hover:bg-[#DC2626]/5 transition flex items-center gap-2 disabled:opacity-50"><Flag className="w-4 h-4" /> Report fraud</button>
             <button onClick={() => setWatchOpen(true)} disabled={watching === 'saved' || (!r.mc && !r.dot)} className={`px-4 py-2 rounded-full text-sm font-medium transition flex items-center gap-2 disabled:opacity-60 ${watching === 'saved' ? 'bg-[#16A34A] text-white' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}><Eye className="w-4 h-4" /> {watching === 'saved' ? 'Watching' : 'Watch'}</button>
           </div>
         </div>
@@ -6914,7 +8274,7 @@ function Report({ report, navigate }: any) {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="px-2 py-0.5 bg-[#DC2626]/15 text-[#DC2626] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">{link.matchedOn} match</span>
-                        <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{link.source === 'fmcsa-flag' ? 'FMCSA enforcement' : link.source === 'our-lookup' ? 'Prior Haulock high-risk scan' : 'Community fraud report'}</span>
+                        <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{link.source === 'fmcsa-flag' ? 'FMCSA enforcement' : 'Prior Haulock high-risk scan'}</span>
                       </div>
                       <div className="text-sm font-semibold text-[#0B1E3F]">{link.name}</div>
                       <div className="text-[11px] mono text-[#0B1E3F]/55 mt-0.5">
@@ -7011,27 +8371,7 @@ function Report({ report, navigate }: any) {
           )}
         </div>
       </div>
-      {(r.mc || r.dot) && (
-        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
-          <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
-            <h2 className="text-xl font-semibold text-[#0B1E3F]">Community fraud reports</h2>
-            <div className="text-sm mono text-[#0B1E3F]/50">{communityReports.length} report{communityReports.length === 1 ? '' : 's'}</div>
-          </div>
-          {communityReports.length === 0 ? (
-            <div className="py-8 text-center text-[#0B1E3F]/60">
-              <Flag className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/30" />
-              <div className="text-sm">No carriers have reported fraud for this broker.</div>
-              <button onClick={() => setReportOpen(true)} className="mt-4 text-sm text-[#DC2626] hover:underline">Be the first to report fraud →</button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {communityReports.map((cr: any) => <CommunityReportRow key={cr.id} cr={cr} onChanged={() => { invalidateCache(reportsKey!); reportsRes.refetch(); }} />)}
-            </div>
-          )}
-        </div>
-      )}
     </div>
-    {reportOpen && <ReportFraudModal broker={r} onClose={() => setReportOpen(false)} onSaved={() => { setReportOpen(false); if (reportsKey) invalidateCache(reportsKey); invalidateCache('fraud-reports:50'); reportsRes.refetch(); }} />}
     {watchOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/40 backdrop-blur-sm" onClick={() => watching !== 'saving' && setWatchOpen(false)}>
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 max-w-md w-full p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -7041,7 +8381,7 @@ function Report({ report, navigate }: any) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-base font-semibold text-[#0B1E3F]">Watch this {entityBadge(r).label.toLowerCase().includes('broker') ? 'broker' : 'carrier'}?</div>
-              <div className="text-xs text-[#0B1E3F]/60 mt-0.5">We&rsquo;ll alert you if anything changes — authority status, insurance, OOS, or new fraud reports.</div>
+              <div className="text-xs text-[#0B1E3F]/60 mt-0.5">We&rsquo;ll alert you if anything changes — authority status, insurance, OOS, or new web-reputation hits.</div>
             </div>
             <button onClick={() => watching !== 'saving' && setWatchOpen(false)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F] -mt-1 -mr-1 p-1" aria-label="Close">
               <XCircle className="w-5 h-5" />
@@ -7646,7 +8986,7 @@ function FmcsaArchivePanel({ data, navigate }: { data: NonNullable<any>; navigat
           </div>
 
           <div className="mt-4 p-3 bg-[#0B1E3F]/[0.03] rounded-lg text-[11px] text-[#0B1E3F]/65 leading-relaxed">
-            <strong className="text-[#0B1E3F]">How to use this:</strong> if any of these other carriers are inactive, OOS, or have fraud reports, treat the shared email as a yellow flag — not proof. If they all look clean, this is probably one operator running multiple legitimate MCs.
+            <strong className="text-[#0B1E3F]">How to use this:</strong> if any of these other carriers are inactive, OOS, or have FMCSA enforcement actions, treat the shared email as a yellow flag — not proof. If they all look clean, this is probably one operator running multiple legitimate MCs.
           </div>
         </div>
       )}
@@ -7808,124 +9148,6 @@ function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
   );
 }
 
-function CommunityReportRow({ cr, onChanged }: any) {
-  const [removing, setRemoving] = useState(false);
-  const TYPE_LABEL: Record<string, string> = { non_payment: 'Non-payment', double_broker: 'Double brokering', identity_fraud: 'Identity fraud', fake_load: 'Fake load', other: 'Other' };
-  const onDelete = async () => {
-    if (!confirm('Remove this fraud report?')) return;
-    setRemoving(true);
-    await fetch(`/api/fraud-reports?id=${encodeURIComponent(cr.id)}`, { method: 'DELETE' }).catch(() => null);
-    setRemoving(false);
-    onChanged();
-  };
-  return (
-    <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full text-xs font-medium">{TYPE_LABEL[cr.type] || cr.type}</span>
-          {cr.amount != null && <span className="text-sm font-semibold mono text-[#DC2626]">${Number(cr.amount).toLocaleString()}</span>}
-          <span className="text-xs mono text-[#0B1E3F]/50">{timeAgo(cr.created_at)}{cr.mine ? ' · by you' : ''}</span>
-        </div>
-        {cr.mine && <button onClick={onDelete} disabled={removing} className="text-xs text-[#0B1E3F]/50 hover:text-[#DC2626] disabled:opacity-50">{removing ? 'Removing…' : 'Remove'}</button>}
-      </div>
-      {cr.description && <div className="text-sm text-[#0B1E3F]/80 leading-relaxed">{cr.description}</div>}
-    </div>
-  );
-}
-
-function ReportFraudModal({ broker, onClose, onSaved }: any) {
-  const [type, setType] = useState('non_payment');
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!description.trim()) {
-      setError('Please describe what happened — this helps other carriers spot the same scam.');
-      return;
-    }
-    if (description.trim().length < 20) {
-      setError('A bit more detail helps — at least 20 characters.');
-      return;
-    }
-    setError(null); setSaving(true);
-    try {
-      const res = await fetch('/api/fraud-reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: broker.name,
-          mc: broker.mc || null,
-          dot: broker.dot || null,
-          type,
-          amount: amount.trim() || null,
-          description: description.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
-      track('fraud_report_submitted', {
-        type,
-        mc: broker.mc || undefined,
-        dot: broker.dot || undefined,
-        amount: amount.trim() ? Number(amount) : undefined,
-      });
-      onSaved();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to submit');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1E3F]/50" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 md:p-8 card-shadow-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-1">
-          <div>
-            <div className="text-xs mono uppercase tracking-wider text-[#DC2626] mb-1">Report fraud</div>
-            <h2 className="text-2xl serif italic text-[#0B1E3F]">{broker.name}</h2>
-            <div className="text-xs mono text-[#0B1E3F]/50 mt-1">{[broker.mc && `MC-${broker.mc}`, broker.dot && `DOT-${broker.dot}`].filter(Boolean).join(' · ')}</div>
-          </div>
-          <button onClick={onClose} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F]"><XCircle className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={onSubmit} className="space-y-4 mt-6">
-          <div>
-            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Type of fraud</label>
-            <select value={type} onChange={(e) => setType(e.target.value)} className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]">
-              <option value="non_payment">Non-payment</option>
-              <option value="double_broker">Double brokering</option>
-              <option value="identity_fraud">Identity fraud / spoofing</option>
-              <option value="fake_load">Fake load</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Loss amount (optional)</label>
-            <input type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 4200" className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
-          </div>
-          <div>
-            <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">What happened? <span className="normal-case tracking-normal text-[#DC2626]">required</span></label>
-            <textarea required value={description} onChange={(e) => setDescription(e.target.value)} rows={5} minLength={20} maxLength={2000} placeholder="Describe the fraud in your own words — what was promised, what went wrong, any red flags you noticed. Other carriers will see this." className="w-full px-4 py-3 bg-white border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
-            <div className="text-[11px] mono text-[#0B1E3F]/50 mt-1 text-right">{description.length} / 2000</div>
-          </div>
-          <div className="flex items-start gap-2 p-3 bg-[#DC2626]/5 border border-[#DC2626]/20 rounded-lg text-xs text-[#0B1E3F]/75">
-            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-[#DC2626] flex-shrink-0" />
-            <div>This is a public report visible to other Haulock users. Submit only if you have first-hand experience — false reports can be removed and may affect your account.</div>
-          </div>
-          {error && <div className="text-sm text-[#DC2626]">{error}</div>}
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 py-3 border border-[#0B1E3F]/15 rounded-full font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Cancel</button>
-            <button type="submit" disabled={saving} className="flex-1 py-3 bg-[#DC2626] text-white rounded-full font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-60">{saving ? 'Submitting…' : 'Submit fraud report'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 function DetailPanel({ title, items }: any) {
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
@@ -8025,255 +9247,6 @@ function RiskGauge({ score, size = 'lg' }: any) {
         <div className={`${dims.text} serif italic leading-none`} style={{ color }}>{clamped}</div>
         {size === 'lg' && <div className="text-xs mono uppercase tracking-widest text-[#0B1E3F]/60 mt-1">/ 100</div>}
       </div>
-    </div>
-  );
-}
-
-function FraudReports({ navigate }: any) {
-  const res = useCachedFetch<{ reports: any[] }>('fraud-reports:50', '/api/fraud-reports?limit=50');
-  const reports = res.data?.reports ?? null;
-  const enforcementRes = useCachedFetch<{ actions: any[]; count: number }>('enforcement-actions:flagged', '/api/enforcement-actions?limit=300');
-  const enforcement = enforcementRes.data?.actions ?? null;
-  const [enforcementSearch, setEnforcementSearch] = useState('');
-  const [enforcementFlagFilter, setEnforcementFlagFilter] = useState<'all' | 'revocation' | 'no_insurance' | 'no_bond'>('all');
-
-  const flagMatchesFilter = (flags: string[], filter: typeof enforcementFlagFilter): boolean => {
-    if (filter === 'all') return true;
-    const blob = flags.join(' ').toLowerCase();
-    if (filter === 'revocation') return blob.includes('revocation');
-    if (filter === 'no_insurance') return blob.includes('liability insurance');
-    if (filter === 'no_bond') return blob.includes('surety bond');
-    return true;
-  };
-
-  const enforcementFiltered = (() => {
-    if (!enforcement) return null;
-    const q = enforcementSearch.trim().toLowerCase();
-    return enforcement.filter((a: any) => {
-      if (!flagMatchesFilter(a.flags || [], enforcementFlagFilter)) return false;
-      if (!q) return true;
-      const haystack = [a.name, a.dba, a.mc, a.dot, a.city, a.state, (a.flags || []).join(' ')]
-        .filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(q);
-    });
-  })();
-
-  const enforcementCounts = (() => {
-    const all = enforcement || [];
-    const c = (filter: typeof enforcementFlagFilter) =>
-      all.filter((a: any) => flagMatchesFilter(a.flags || [], filter)).length;
-    return {
-      all: all.length,
-      revocation: c('revocation'),
-      no_insurance: c('no_insurance'),
-      no_bond: c('no_bond'),
-    };
-  })();
-  const [filter, setFilter] = useState<'all' | 'non_payment' | 'double_broker' | 'identity_fraud' | 'fake_load' | 'other'>('all');
-  const TYPE_LABEL: Record<string, string> = { non_payment: 'Non-payment', double_broker: 'Double brokering', identity_fraud: 'Identity fraud', fake_load: 'Fake load', other: 'Other' };
-
-  const all = reports || [];
-  const shown = filter === 'all' ? all : all.filter((r: any) => r.type === filter);
-
-  const onRescan = async (cr: any) => {
-    const q = cr.mc || cr.dot;
-    if (!q) return;
-    try {
-      const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `Lookup failed`);
-      navigate('report', data);
-    } catch { navigate('verify'); }
-  };
-
-  const onOpenEnforcement = async (a: any) => {
-    const q = a.mc || a.dot;
-    if (!q) return;
-    try {
-      const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `Lookup failed`);
-      navigate('report', data);
-    } catch { navigate('verify'); }
-  };
-
-
-  const counts = {
-    all: all.length,
-    non_payment: all.filter((r: any) => r.type === 'non_payment').length,
-    double_broker: all.filter((r: any) => r.type === 'double_broker').length,
-    identity_fraud: all.filter((r: any) => r.type === 'identity_fraud').length,
-    fake_load: all.filter((r: any) => r.type === 'fake_load').length,
-    other: all.filter((r: any) => r.type === 'other').length,
-  };
-
-  return (
-    <div className="space-y-8 text-[#0B1E3F]">
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-        <div>
-          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Community fraud feed</div>
-          <h1 className="text-4xl serif italic text-[#0B1E3F]">What other carriers are reporting.</h1>
-          <p className="text-[#0B1E3F]/60 mt-2 text-sm">Real fraud reports submitted by Haulock carriers. Cross-checks against your lookups in real time.</p>
-        </div>
-        <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 w-fit card-shadow"><Search className="w-4 h-4" /> Verify a broker</button>
-      </div>
-
-      {/* FMCSA enforcement red flags — carriers currently flagged in FMCSA's
-          public registry (pending revocation OR undeliverable mail). The
-          dataset doesn't carry an event date, so we surface "currently
-          active" rather than "newly added this month". */}
-      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
-        <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
-          <div>
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold">FMCSA red flags</span>
-              <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">Currently active</span>
-            </div>
-            <h2 className="text-xl font-semibold text-[#0B1E3F]">Carriers operating illegally or under revocation</h2>
-            <div className="text-xs text-[#0B1E3F]/60 mt-1">Pending authority revocation, active carriers with no liability insurance, or active brokers with no surety bond. Pulled live from FMCSA, refreshed daily.</div>
-          </div>
-          {enforcement && enforcement.length > 0 && (
-            <span className="px-3 py-1.5 bg-[#0B1E3F]/5 rounded-full text-xs font-medium text-[#0B1E3F]/70 mono">
-              {enforcementFiltered && enforcementFiltered.length !== enforcement.length
-                ? `${enforcementFiltered.length} of ${enforcement.length} flagged`
-                : `${enforcement.length} flagged`}
-            </span>
-          )}
-        </div>
-
-        {enforcement && enforcement.length > 0 && (
-          <div className="space-y-3 mb-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0B1E3F]/40 pointer-events-none" />
-              <input
-                value={enforcementSearch}
-                onChange={(e) => setEnforcementSearch(e.target.value)}
-                placeholder="Search by name, MC, DOT, city, or state…"
-                className="w-full pl-10 pr-9 py-2.5 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] transition text-[#0B1E3F] placeholder:text-[#0B1E3F]/40"
-              />
-              {enforcementSearch && (
-                <button
-                  onClick={() => setEnforcementSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#0B1E3F]/40 hover:text-[#0B1E3F] p-1"
-                  aria-label="Clear search"
-                >
-                  <XCircle className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {([
-                { id: 'all', label: `All (${enforcementCounts.all})` },
-                { id: 'revocation', label: `Pending revocation (${enforcementCounts.revocation})` },
-                { id: 'no_insurance', label: `No liability insurance (${enforcementCounts.no_insurance})` },
-                { id: 'no_bond', label: `Broker, no surety bond (${enforcementCounts.no_bond})` },
-              ] as const).map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setEnforcementFlagFilter(f.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${enforcementFlagFilter === f.id ? 'bg-[#FF6B35] text-white' : 'bg-white border border-[#0B1E3F]/15 text-[#0B1E3F]/75 hover:border-[#0B1E3F]/30'}`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {enforcement == null ? (
-          <div className="py-8 text-center text-sm text-[#0B1E3F]/50">Loading FMCSA red-flag feed…</div>
-        ) : enforcement.length === 0 ? (
-          <div className="py-8 text-center text-sm text-[#0B1E3F]/55">
-            FMCSA feed unavailable right now. Try again shortly.
-          </div>
-        ) : enforcementFiltered && enforcementFiltered.length === 0 ? (
-          <div className="py-8 text-center text-sm text-[#0B1E3F]/55">
-            No matches. Try a different search or clear the flag filter.
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-            {(enforcementFiltered || []).map((a: any, i: number) => (
-              <button
-                key={`${a.dot || a.mc || a.name}-${i}`}
-                onClick={() => onOpenEnforcement(a)}
-                disabled={!a.mc && !a.dot}
-                className="w-full text-left p-4 bg-[#F5F3EE]/60 hover:bg-[#FF6B35]/5 border border-transparent hover:border-[#FF6B35]/30 rounded-xl transition flex items-start gap-3 disabled:opacity-60 disabled:cursor-default disabled:hover:bg-[#F5F3EE]/60 disabled:hover:border-transparent"
-              >
-                <div className="w-9 h-9 rounded-lg bg-[#FF6B35]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <AlertTriangle className="w-4 h-4 text-[#FF6B35]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    {(a.flags || []).map((f: string) => (
-                      <span key={f} className="px-2 py-0.5 bg-[#FF6B35]/15 text-[#FF6B35] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">{f}</span>
-                    ))}
-                    {a.authorityType && <span className="text-[11px] mono text-[#0B1E3F]/45">· {a.authorityType}</span>}
-                  </div>
-                  <div className="text-sm font-semibold text-[#0B1E3F] truncate">{a.name}</div>
-                  <div className="text-[11px] mono text-[#0B1E3F]/55 truncate">
-                    {[a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`, [a.city, a.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
-                  </div>
-                </div>
-                {(a.mc || a.dot) && <ArrowRight className="w-4 h-4 text-[#0B1E3F]/30 flex-shrink-0 mt-2" />}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Community fraud reports</div>
-        <h2 className="text-xl font-semibold text-[#0B1E3F]">Submitted by Haulock carriers</h2>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {([
-          { id: 'all', label: `All (${counts.all})` },
-          { id: 'non_payment', label: `Non-payment (${counts.non_payment})` },
-          { id: 'double_broker', label: `Double brokering (${counts.double_broker})` },
-          { id: 'identity_fraud', label: `Identity fraud (${counts.identity_fraud})` },
-          { id: 'fake_load', label: `Fake load (${counts.fake_load})` },
-          { id: 'other', label: `Other (${counts.other})` },
-        ] as const).map((f) => (
-          <button key={f.id} onClick={() => setFilter(f.id)} className={`px-4 py-2 rounded-full text-sm font-medium transition ${filter === f.id ? 'bg-[#0B1E3F] text-white' : 'bg-white border border-[#0B1E3F]/15 text-[#0B1E3F]/80 hover:border-[#0B1E3F]/30'}`}>{f.label}</button>
-        ))}
-      </div>
-      {reports == null ? (
-        <div className="py-12 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
-      ) : shown.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-16 text-center text-[#0B1E3F]/60 card-shadow">
-          <Flag className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
-          <div className="text-lg font-medium text-[#0B1E3F] mb-2">{all.length === 0 ? 'No community reports yet' : 'No reports in this category'}</div>
-          <div className="text-sm mb-6">{all.length === 0 ? 'Be the first carrier to report a fraudulent broker — open a report and click "Report fraud".' : 'Try a different filter.'}</div>
-          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker</button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {shown.map((cr: any) => (
-            <div key={cr.id} className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 hover:border-[#0B1E3F]/20 transition card-shadow text-[#0B1E3F]">
-              <div className="flex flex-col md:flex-row md:items-center gap-4 mb-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="px-2 py-0.5 bg-[#DC2626]/10 text-[#DC2626] rounded-full text-xs font-medium">{TYPE_LABEL[cr.type] || cr.type}</span>
-                    <span className="text-xs mono text-[#0B1E3F]/50">{timeAgo(cr.created_at)}{cr.mine ? ' · by you' : ''}</span>
-                  </div>
-                  <div className="text-lg font-semibold text-[#0B1E3F]">{cr.name}</div>
-                  <div className="text-xs mono text-[#0B1E3F]/50">{[cr.mc && `MC-${cr.mc}`, cr.dot && `DOT-${cr.dot}`].filter(Boolean).join(' · ') || 'No ID'}</div>
-                </div>
-                {cr.amount != null && (
-                  <div className="text-right">
-                    <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50">Reported loss</div>
-                    <div className="text-xl font-semibold mono text-[#DC2626]">${Number(cr.amount).toLocaleString()}</div>
-                  </div>
-                )}
-              </div>
-              {cr.description && <div className="text-sm text-[#0B1E3F]/75 leading-relaxed mb-3">{cr.description}</div>}
-              <div className="pt-3 border-t border-[#0B1E3F]/5 flex items-center justify-between">
-                <button onClick={() => onRescan(cr)} className="text-sm text-[#0B1E3F] hover:underline flex items-center gap-1">View full broker report <ArrowRight className="w-3 h-3" /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -8768,7 +9741,7 @@ function SearchHistory({ navigate }: any) {
     setConfirm({
       opts: {
         title: `Clear all ${count} lookup${count === 1 ? '' : 's'}?`,
-        body: 'This hides every scan in your history. Your monthly quota is not refunded — these scans still count toward your plan limit. Watchlist entries, fraud reports, and alerts are unaffected.',
+        body: 'This hides every scan in your history. Your monthly quota is not refunded — these scans still count toward your plan limit. Watchlist entries and alerts are unaffected.',
         confirmLabel: 'Clear history',
         danger: true,
       },
@@ -9050,7 +10023,7 @@ function Alerts({ navigate }: any) {
     if (!window.confirm(
       `Dismiss all ${count} alert${count === 1 ? '' : 's'}?\n\n` +
       `This soft-deletes the underlying scans from your history too. Quota is NOT refunded — the scans still count toward your plan limits.\n\n` +
-      `Watchlist entries and fraud reports are unaffected.`
+      `Watchlist entries are unaffected.`
     )) return;
     setDismissingAll(true); setError(null);
     try {
@@ -9124,7 +10097,7 @@ function Alerts({ navigate }: any) {
             onClick={dismissAll}
             disabled={dismissingAll}
             className="px-4 py-2 border border-[#DC2626]/25 bg-white rounded-full text-sm font-medium text-[#DC2626] hover:bg-[#DC2626]/5 transition flex items-center gap-2 disabled:opacity-50 w-fit"
-            title="Soft-delete every alert. Watchlist + fraud reports unaffected. Quota not refunded."
+            title="Soft-delete every alert. Watchlist unaffected. Quota not refunded."
           >
             {dismissingAll ? (
               <><div className="w-3.5 h-3.5 border-2 border-[#DC2626]/30 border-t-[#DC2626] rounded-full animate-spin" /> Dismissing…</>
@@ -9504,7 +10477,6 @@ function NotificationsTab({ user }: any) {
   const [highRisk, setHighRisk] = useState<boolean>(user?.notifyHighRisk !== false);
   const [watchlist, setWatchlist] = useState<boolean>(user?.notifyWatchlist !== false);
   const [digest, setDigest] = useState<boolean>(user?.notifyWeeklyDigest !== false);
-  const [community, setCommunity] = useState<boolean>(user?.notifyCommunity !== false);
   const [fraudTrends, setFraudTrends] = useState<boolean>(user?.notifyFraudTrends !== false);
   const [saving, setSaving] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
@@ -9524,7 +10496,6 @@ function NotificationsTab({ user }: any) {
         notify_high_risk: highRisk,
         notify_watchlist: watchlist,
         notify_weekly_digest: digest,
-        notify_community: community,
         notify_fraud_trends: fraudTrends,
       },
     });
@@ -9582,15 +10553,6 @@ function NotificationsTab({ user }: any) {
       live: true,
       value: fraudTrends,
       setter: setFraudTrends,
-    },
-    {
-      key: 'community',
-      label: 'New community fraud reports',
-      description: 'Get an email when another Haulock user reports a broker you have looked up in the past 30 days or have on your watchlist. Sent in real time when the report is submitted.',
-      cadence: 'Real time',
-      live: true,
-      value: community,
-      setter: setCommunity,
     },
   ];
 

@@ -36,7 +36,7 @@ export const PLANS: Record<PlanId, Plan> = {
       '3 PDF tamper detections / month',
       '1 watchlist entry',
       'Basic risk score',
-      'Community fraud feed (read-only)',
+      'Web reputation scan across 50+ trusted sources',
       'No rate con scans (upgrade for AI extraction)',
     ],
   },

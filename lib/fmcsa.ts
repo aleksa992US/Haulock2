@@ -77,7 +77,7 @@ export type CarrierReport = {
   // physical address that have an active enforcement flag or fraud history.
   // Populated by the verify route via lib/chameleon-detection.
   chameleonLinks?: {
-    source: 'fmcsa-flag' | 'our-lookup' | 'fraud-report';
+    source: 'fmcsa-flag' | 'our-lookup';
     matchedOn: 'phone' | 'address' | 'phone+address';
     name: string;
     mc?: string;

@@ -12,15 +12,13 @@
 //      flag (pending revocation, no insurance, no surety bond).
 //   2. Our own `lookups` table — find any carrier we've previously scored
 //      as HIGH-risk that shares a phone/address with the one being checked.
-//   3. Our `fraud_reports` table — find community fraud reports that share
-//      a phone/address.
 
 import type { CarrierReport } from './fmcsa';
 
 const SOCRATA_BASE = 'https://data.transportation.gov/resource';
 
 export type ChameleonLink = {
-  source: 'fmcsa-flag' | 'our-lookup' | 'fraud-report';
+  source: 'fmcsa-flag' | 'our-lookup';
   matchedOn: 'phone' | 'address' | 'phone+address';
   name: string;
   mc?: string;
@@ -42,10 +40,6 @@ export async function findChameleonLinks(carrier: CarrierReport): Promise<Chamel
     }),
     queryOurLookupsByFingerprint(phone, address, carrier).catch((e) => {
       console.warn('[chameleon] lookups query failed:', e?.message);
-      return [] as ChameleonLink[];
-    }),
-    queryFraudReportsByFingerprint(phone, address, carrier).catch((e) => {
-      console.warn('[chameleon] fraud-reports query failed:', e?.message);
       return [] as ChameleonLink[];
     }),
   ]);
@@ -210,19 +204,6 @@ async function queryOurLookupsByFingerprint(
     });
   }
   return matches;
-}
-
-async function queryFraudReportsByFingerprint(
-  phone: string | undefined,
-  address: string | undefined,
-  self: CarrierReport,
-): Promise<ChameleonLink[]> {
-  // We don't have phone/address columns on fraud_reports — only name + MC/DOT.
-  // So this source can only confirm a chameleon link when the bad MC/DOT
-  // *already* showed up in the other two queries (it gets dedupe-merged).
-  // Cheap optimization: skip the query unless we have something to look up.
-  void phone; void address; void self;
-  return [];
 }
 
 // ----- normalization -------------------------------------------------------

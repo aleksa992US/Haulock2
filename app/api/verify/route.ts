@@ -638,7 +638,7 @@ export async function GET(req: Request) {
           { label: 'Other FMCSA record', value: link.name },
           { label: 'Matched on', value: link.matchedOn },
           { label: 'Status of the other record', value: link.reason },
-          { label: 'Source', value: link.source === 'fmcsa-flag' ? 'FMCSA enforcement registry' : link.source === 'our-lookup' ? 'Prior Haulock high-risk scan' : 'Community fraud report' },
+          { label: 'Source', value: link.source === 'fmcsa-flag' ? 'FMCSA enforcement registry' : 'Prior Haulock high-risk scan' },
         ],
         recommendation: 'Investigate before booking — call the carrier on a number from a different source, ask for a current insurance certificate, and check whether the linked entity is actively used.',
       },

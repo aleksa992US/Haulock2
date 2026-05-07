@@ -388,3 +388,36 @@ create index if not exists exit_intent_events_kind_created_idx on public.exit_in
 create index if not exists exit_intent_events_user_idx on public.exit_intent_events(user_id, created_at desc);
 alter table public.exit_intent_events enable row level security;
 -- Service role only — no user-facing policies.
+
+-- Affiliate payout requests. Lifetime earnings live in Stripe (we read live
+-- via promotion_code → subscription search). This table records the
+-- promise-to-pay → paid lifecycle so we know how much of the lifetime we've
+-- already settled, and so the affiliate has a permanent payout history.
+--
+-- Available balance = (live Stripe earnings) − Σ(paid + requested amount_cents).
+-- Min request enforced server-side at $100.
+create table if not exists public.affiliate_payouts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  amount_cents integer not null check (amount_cents >= 0),
+  status text not null default 'requested' check (status in ('requested', 'paid', 'rejected')),
+  requested_at timestamptz not null default now(),
+  paid_at timestamptz,
+  rejected_at timestamptz,
+  reject_reason text,
+  admin_notes text,
+  -- Snapshot at request time so the row is interpretable even after the
+  -- affiliate's code is reassigned or the operator changes the commission.
+  affiliate_code text,
+  redemptions_count integer
+);
+create index if not exists affiliate_payouts_user_idx on public.affiliate_payouts(user_id, requested_at desc);
+create index if not exists affiliate_payouts_status_idx on public.affiliate_payouts(status, requested_at desc);
+
+alter table public.affiliate_payouts enable row level security;
+
+drop policy if exists "affiliate_payouts_select_own" on public.affiliate_payouts;
+drop policy if exists "affiliate_payouts_insert_own" on public.affiliate_payouts;
+create policy "affiliate_payouts_select_own" on public.affiliate_payouts for select using (auth.uid() = user_id);
+create policy "affiliate_payouts_insert_own" on public.affiliate_payouts for insert with check (auth.uid() = user_id);
+-- Updates / admin queries go through the service role and bypass RLS.

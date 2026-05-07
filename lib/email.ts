@@ -73,7 +73,7 @@ export type SendArgs = {
   attachments?: SendAttachment[];
   // `kind` tags the send so the admin newsletter dashboard can show counts
   // per type per recipient. Optional — old call sites stay legal.
-  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'other';
+  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'other';
 };
 
 export async function sendEmail({ to, subject, html, replyTo, attachments, kind }: SendArgs) {
@@ -836,45 +836,172 @@ ${p(`The carriers who get burned by double-brokering and identity-fraud rate con
   };
 }
 
-// Community fraud report — pinged when another carrier reports a broker
-// the recipient has interacted with (looked up or watched).
-export function communityReportTemplate(args: {
-  report: { name: string; mc?: string | null; dot?: string | null; type: string; description?: string | null; amount?: number | null };
-  reason: 'looked-up' | 'watching';
+// New affiliate application — sent to the operator inbox (marketing@) when
+// someone fills out the public /affiliate form. Not a customer-facing email,
+// so we skip the unsubscribe block.
+export function affiliateApplicationTemplate(args: {
+  name: string;
+  email: string;
+  audience?: string;
+  audienceSize?: string;
+  message?: string;
+  source?: string;
+}): { subject: string; html: string } {
+  const row = (label: string, value: string | undefined) => value
+    ? `<div style="margin:0 0 14px 0;"><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">${escapeHtml(label)}</div><div style="font-size:15px;color:#0B1E3F;line-height:1.55;">${escapeHtml(value)}</div></div>`
+    : '';
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:rgba(11,30,63,0.08);color:#0B1E3F;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">New affiliate application</div>
+${h1(`${italicAccent(args.name)} wants to promote Haulock.`)}
+<div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:20px 22px;margin:0 0 24px 0;">
+  ${row('Name', args.name)}
+  ${row('Email', args.email)}
+  ${row('Audience', args.audience)}
+  ${row('Audience size', args.audienceSize)}
+  ${row('How they heard about us', args.source)}
+  ${row('How they plan to promote', args.message)}
+</div>
+${p('Reply directly to this email to reach the applicant. To approve them, create a Stripe promotion code (or pick an existing one), then go to Admin → Users, find their account, and click <strong>Make affiliate</strong> to attach the code and set their commission.')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Internal notification · sent automatically by the Haulock affiliate form.</div>`;
+  return {
+    subject: `Affiliate application: ${args.name}`,
+    html: baseLayout({ preview: `${args.name} (${args.email}) wants to promote Haulock.`, body }),
+  };
+}
+
+// Free-user nurture sequence — sent weekly to users still on Free who
+// haven't unsubscribed. Three rotating angles keep the inbox from feeling
+// like a copy/paste loop: value-prop, proof-led, and limited-time-pitch.
+// Always carries the same NEW20 promo code so a single affiliate code
+// powers the redemption tracking.
+export function nurtureFreeUserTemplate(args: {
+  firstName: string;
+  promoCode: string;       // 'NEW20'
+  upgradeUrl: string;      // /pricing or /checkout/carrier?promoCode=NEW20
+  recipientEmail: string;
+  weekIndex: number;       // 0,1,2,3,... — drives the angle rotation
+}): { subject: string; html: string } {
+  const greeting = args.firstName ? `${args.firstName}, ` : '';
+  const angles = [
+    {
+      subject: `${args.firstName ? `${args.firstName}, ` : ''}your free Haulock has 3 lookups. ${args.promoCode} unlocks unlimited.`,
+      preview: `Carrier plan + your unlimited lookups for 20% off the first month.`,
+      pill: 'You\'re on Free',
+      pillBg: 'rgba(11,30,63,0.08)', pillColor: '#0B1E3F',
+      headline: `${greeting}3 lookups isn&rsquo;t enough when ${italicAccent('one bad load')} costs $4,200.`,
+      body: [
+        'We built Haulock for the moment you&rsquo;re staring at a rate con and your gut says <em style="color:#0B1E3F;">something\'s off</em>. The free plan gives you 3 lookups a month — fine for the curious, not enough for the operator who runs five trucks a day.',
+        'Carrier plan unlocks <strong>unlimited verifications, the rate-con PDF analyzer, and 25 watchlist slots</strong> for $49/month. With <strong>'+ args.promoCode +'</strong> it&rsquo;s $39.20 the first month.',
+      ],
+    },
+    {
+      subject: `Real fraud caught last week. Want unlimited Haulock for ${20}% off?`,
+      preview: `One real story from a Carrier-plan user this week.`,
+      pill: 'From the front lines',
+      pillBg: 'rgba(220,38,38,0.1)', pillColor: '#DC2626',
+      headline: `${greeting}a Haulock user dodged a $${italicAccent('5,400')} double-broker last week.`,
+      body: [
+        'Real story: a carrier ran a broker through Haulock before tendering a rate. Surety bond cancelled three weeks ago, FMCSA address was a UPS Store, and two trade-press hits flagged the same operator under a different MC last year. Three signals, scanned in 2 seconds, and they walked away from a load they would have eaten.',
+        'You&rsquo;re on Free with 3 lookups a month. Carrier plan is unlimited. <strong>'+ args.promoCode +'</strong> takes 20% off your first month — and the kind of catch above is exactly what you start running into when verification stops being rationed.',
+      ],
+    },
+    {
+      subject: `${args.promoCode} won't sit forever. 20% off Haulock Carrier.`,
+      preview: `Friendly reminder — your discount code is still active.`,
+      pill: 'Last call',
+      pillBg: 'rgba(255,107,53,0.12)', pillColor: '#FF6B35',
+      headline: `${greeting}your code ${italicAccent(args.promoCode)} is still active.`,
+      body: [
+        'Quick one. We held <strong>'+ args.promoCode +'</strong> on your account for whenever you wanted to upgrade — 20% off your first month of Haulock Carrier, no card surprises.',
+        'If freight fraud isn&rsquo;t hitting you right now, ignore this. If it is — and you keep getting <em style="color:#0B1E3F;">that feeling</em> when a rate con lands — Carrier plan covers unlimited verifications, the PDF analyzer, and the watchlist that emails you the moment something on a broker changes.',
+      ],
+    },
+  ];
+  const angle = angles[args.weekIndex % angles.length];
+
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:${angle.pillBg};color:${angle.pillColor};border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">${escapeHtml(angle.pill)}</div>
+${h1(angle.headline)}
+${angle.body.map((para) => p(para)).join('\n')}
+
+<div style="background:linear-gradient(135deg,#FF6B35 0%,#FF8556 100%);border-radius:14px;padding:22px 24px;margin:6px 0 24px 0;color:#ffffff;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.7);margin-bottom:6px;">Your code</div>
+  <div style="font-size:24px;font-weight:700;color:#ffffff;line-height:1.2;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.04em;">${escapeHtml(args.promoCode)}</div>
+  <div style="font-size:14px;color:rgba(255,255,255,0.85);margin-top:6px;">20% off your first month &middot; applied automatically at checkout</div>
+</div>
+
+${button(args.upgradeUrl, `Upgrade with ${args.promoCode} →`)}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Don&rsquo;t need this right now? No worries — toggle weekly nudges off in <a href="${args.upgradeUrl.replace(/\/pricing.*|\/checkout.*/, '')}/settings" style="color:#0B1E3F;text-decoration:underline;">Settings &rarr; Notifications</a> or unsubscribe below.</div>`;
+
+  return {
+    subject: angle.subject,
+    html: baseLayout({ preview: angle.preview, body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// Operator notification when an affiliate requests a payout.
+export function payoutRequestedTemplate(args: {
+  affiliateName: string;
+  affiliateEmail: string;
+  amountCents: number;
+  code: string;
+  redemptions: number;
+  adminUrl: string;
+}): { subject: string; html: string } {
+  const amount = `$${(args.amountCents / 100).toFixed(2)}`;
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:rgba(255,107,53,0.12);color:#FF6B35;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">Payout requested</div>
+${h1(`${italicAccent(args.affiliateName)} requested ${amount}.`)}
+<div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:20px 22px;margin:0 0 24px 0;">
+  <div style="margin:0 0 12px 0;"><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Amount</div><div style="font-size:22px;font-weight:600;color:#0B1E3F;">${escapeHtml(amount)}</div></div>
+  <div style="margin:0 0 12px 0;"><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Affiliate</div><div style="font-size:15px;color:#0B1E3F;">${escapeHtml(args.affiliateName)} &middot; ${escapeHtml(args.affiliateEmail)}</div></div>
+  <div style="margin:0 0 12px 0;"><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Promo code</div><div style="font-size:15px;color:#0B1E3F;font-family:'SF Mono',Menlo,Consolas,monospace;">${escapeHtml(args.code)}</div></div>
+  <div><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Redemptions to date</div><div style="font-size:15px;color:#0B1E3F;">${args.redemptions}</div></div>
+</div>
+${button(args.adminUrl, 'Review in admin →')}
+${p('You promised to pay within 30 days. When you send the money, click <strong>Mark paid</strong> in the admin Affiliates tab so the affiliate sees it cleared and the balance resets.')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Internal notification · sent automatically when an affiliate requests a payout.</div>`;
+  return {
+    subject: `Payout requested: ${amount} — ${args.affiliateName}`,
+    html: baseLayout({ preview: `${args.affiliateName} requested ${amount} via code ${args.code}.`, body }),
+  };
+}
+
+// Affiliate-facing email confirming a payout was sent.
+export function payoutSentTemplate(args: {
+  affiliateName: string;
+  amountCents: number;
+  code: string;
+  paidAt: string;          // ISO
   recipientEmail: string;
   siteUrl: string;
+  notes?: string;
 }): { subject: string; html: string } {
-  const idLine = [args.report.mc && `MC-${args.report.mc}`, args.report.dot && `DOT-${args.report.dot}`].filter(Boolean).join(' · ') || 'No ID';
-  const reasonLabel = args.reason === 'watching' ? 'on your watchlist' : 'you recently looked up';
-  const typeLabel = ({
-    non_payment: 'Non-payment',
-    double_broker: 'Double brokering',
-    identity_fraud: 'Identity fraud',
-    fake_load: 'Fake load',
-    other: 'Fraud',
-  } as Record<string, string>)[args.report.type] || 'Fraud';
-  const amountLine = args.report.amount ? `<div style="font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);margin:0 0 12px 0;"><strong style="color:#0B1E3F;">Reported loss:</strong> $${Number(args.report.amount).toLocaleString()}</div>` : '';
-  const descBlock = args.report.description && args.report.description.trim() ? `
+  const amount = `$${(args.amountCents / 100).toFixed(2)}`;
+  const paidDate = new Date(args.paidAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  const notesBlock = args.notes && args.notes.trim() ? `
 <div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:18px 20px;margin:0 0 24px 0;">
-  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">Reporter wrote</div>
-  <div style="font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);">${escapeHtml(args.report.description)}</div>
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">Note from Haulock</div>
+  <div style="font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);">${escapeHtml(args.notes)}</div>
 </div>` : '';
   const body = `
-<div style="display:inline-block;padding:4px 10px;background:rgba(220,38,38,0.1);color:#DC2626;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">${escapeHtml(typeLabel)} report</div>
-${h1(`A broker ${reasonLabel} was just ${italicAccent('reported.')}`)}
-<div style="background:rgba(220,38,38,0.05);border:1px solid rgba(220,38,38,0.2);border-radius:12px;padding:20px;margin:0 0 24px 0;">
-  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:6px;">Broker</div>
-  <div style="font-size:22px;font-weight:600;color:#0B1E3F;margin-bottom:4px;">${escapeHtml(args.report.name)}</div>
-  <div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);">${escapeHtml(idLine)}</div>
+<div style="display:inline-block;padding:4px 10px;background:rgba(22,163,74,0.12);color:#16A34A;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">Payout sent</div>
+${h1(`${args.affiliateName.split(' ')[0]}, your ${italicAccent(amount)} is on the way.`)}
+<div style="background:linear-gradient(135deg,#16A34A 0%,#15803d 100%);border-radius:14px;padding:22px 24px;margin:0 0 24px 0;color:#ffffff;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.7);margin-bottom:6px;">Sent</div>
+  <div style="font-size:30px;font-weight:700;color:#ffffff;line-height:1.1;">${escapeHtml(amount)}</div>
+  <div style="font-size:14px;color:rgba(255,255,255,0.85);margin-top:8px;">Code <strong style="letter-spacing:0.04em;">${escapeHtml(args.code)}</strong> &middot; paid ${escapeHtml(paidDate)}</div>
 </div>
-${amountLine}
-${descBlock}
-${p('Another Haulock carrier just submitted this report. Treat it as one signal, not a verdict — community reports are unverified user submissions. If this broker contacts you about a load, slow down and verify identity through independent channels first.')}
-${button(args.siteUrl + '/reports', 'See community fraud reports →')}
+${notesBlock}
+${p('Funds should hit your account within a few business days depending on your bank. Your earnings counter on Haulock has been reset for this payout — keep promoting and the next balance starts now.')}
+${button(args.siteUrl + '/earnings', 'Open my earnings →')}
 ${divider()}
-<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">You&rsquo;re getting this because this broker is ${reasonLabel} on Haulock and you have community-report alerts turned on. Manage in <a href="${args.siteUrl}/settings" style="color:#0B1E3F;text-decoration:underline;">Settings &rarr; Notifications</a>.</div>`;
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Questions? Reply to this email.</div>`;
   return {
-    subject: `${typeLabel} report: ${args.report.name}`,
-    html: baseLayout({ preview: `Another carrier reported ${args.report.name} for ${typeLabel.toLowerCase()}.`, body, unsubEmail: args.recipientEmail }),
+    subject: `Your ${amount} Haulock affiliate payout`,
+    html: baseLayout({ preview: `${amount} just left our account — code ${args.code}.`, body, unsubEmail: args.recipientEmail }),
   };
 }

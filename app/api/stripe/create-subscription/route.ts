@@ -30,7 +30,11 @@ export async function POST(req: Request) {
   }
   const promoCodeRaw = typeof body.promoCode === 'string' ? body.promoCode.trim() : '';
 
-  // Resolve promotion code → coupon ID if provided. Validate it's active.
+  // Resolve the promo code → both the promotion_code id and its coupon id.
+  // We attach via the promotion_code below so Stripe increments
+  // `promotion_code.times_redeemed` (the counter the admin dashboard reads),
+  // not just `coupon.times_redeemed`.
+  let promotionCodeId: string | null = null;
   let couponId: string | null = null;
   if (promoCodeRaw) {
     try {
@@ -39,6 +43,7 @@ export async function POST(req: Request) {
       if (!promo) {
         return NextResponse.json({ error: `Promo code "${promoCodeRaw}" is not valid or has expired.` }, { status: 400 });
       }
+      promotionCodeId = promo.id || null;
       couponId = typeof promo.coupon === 'string' ? promo.coupon : promo.coupon?.id || null;
       if (!couponId) {
         return NextResponse.json({ error: `Promo code "${promoCodeRaw}" has no coupon attached.` }, { status: 400 });
@@ -94,7 +99,13 @@ export async function POST(req: Request) {
   const subscription = await stripe.subscriptions.create({
     customer: customerId!,
     items: [{ price }],
-    ...(couponId ? { coupon: couponId } : {}),
+    // Attach via the promotion code (not the coupon id) so Stripe increments
+    // BOTH `promotion_code.times_redeemed` and `coupon.times_redeemed`. The
+    // admin dashboard reads the promotion-code counter to attribute usage to
+    // a specific code (e.g. NEW20) rather than aggregate coupon usage.
+    ...(promotionCodeId
+      ? { discounts: [{ promotion_code: promotionCodeId }] }
+      : couponId ? { coupon: couponId } : {}),
     payment_behavior: 'default_incomplete',
     payment_settings: {
       save_default_payment_method: 'on_subscription',

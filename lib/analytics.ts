@@ -31,7 +31,6 @@ export type EventName =
   | 'report_shared_email'
   | 'report_exported_pdf'
   | 'watchlist_added'
-  | 'fraud_report_submitted'
   | 'newsletter_subscribed'
   | 'support_ticket_created'
   | 'subscription_started'

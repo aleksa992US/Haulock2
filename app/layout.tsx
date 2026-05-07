@@ -181,7 +181,7 @@ const jsonLd = {
         'Social profile discovery (Facebook, LinkedIn, Twitter/X, Instagram, YouTube, TikTok)',
         'Disposable email detection',
         'Rate confirmation PDF analysis',
-        'Community fraud network alerts',
+        'Web reputation scan across 50+ trusted news outlets',
       ],
     },
     {
@@ -190,7 +190,7 @@ const jsonLd = {
       provider: { '@id': `${SITE_URL}#organization` },
       areaServed: { '@type': 'Country', name: 'United States' },
       description:
-        'Real-time verification of freight brokers and motor carriers using official data from the Federal Motor Carrier Safety Administration (FMCSA), website checks, social footprint analysis, Google Business address matching, and community fraud reports.',
+        'Real-time verification of freight brokers and motor carriers using official data from the Federal Motor Carrier Safety Administration (FMCSA), website checks, social footprint analysis, Google Business address matching, and web-reputation scanning across trusted news outlets.',
       serviceType: 'Fraud protection',
       isBasedOn: {
         '@type': 'GovernmentService',
@@ -249,7 +249,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
@@ -282,7 +282,7 @@ export default function RootLayout({
           </>
         )}
       </head>
-      <body>{children}</body>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

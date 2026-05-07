@@ -51,7 +51,7 @@ export async function checkUserRateLimit(
 const buckets = new Map<string, number[]>();
 
 export type SimpleRateLimitOpts = {
-  // Endpoint name — keeps newsletter limits separate from fraud-report limits.
+  // Endpoint name — keeps each rate-limited route's bucket isolated.
   bucket: string;
   // Stable identifier for this caller (user id, hashed IP, etc.).
   identity: string;

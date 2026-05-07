@@ -23,7 +23,6 @@ export async function DELETE() {
   try {
     await svc.from('lookups').delete().eq('user_id', me.id);
     await svc.from('watchlist').delete().eq('user_id', me.id);
-    await svc.from('fraud_reports').delete().eq('user_id', me.id);
     await svc.from('team_members').delete().eq('user_id', me.id);
     await svc.from('teams').delete().eq('owner_id', me.id);
   } catch (err) {

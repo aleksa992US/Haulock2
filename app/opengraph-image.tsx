@@ -95,7 +95,7 @@ export default async function Image() {
         >
           <span>✓ For carriers and brokers</span>
           <span>✓ 14 data sources</span>
-          <span>✓ Community fraud network</span>
+          <span>✓ Web reputation scan</span>
         </div>
       </div>
     ),

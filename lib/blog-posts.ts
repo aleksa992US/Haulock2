@@ -89,7 +89,7 @@ export const BLOG_POSTS: BlogPost[] = [
       'https://unsplash.com/photos/aerial-view-of-warehouse-and-trucks',
     ),
     haulockHelps: true,
-    haulockHelpsCopy: 'Before you sign a rate confirmation, Haulock cross-checks the broker\'s authority status, surety bond, and address against FMCSA. We also surface community fraud reports filed by other carriers, so a double-broker who already burned someone shows up in your report instead of in your bank statement.',
+    haulockHelpsCopy: 'Before you sign a rate confirmation, Haulock cross-checks the broker\'s authority status, surety bond, and address against FMCSA. We also run a web-reputation scan across FreightWaves, Land Line, TruckersReport, BBB, and government enforcement sites — so a double-broker who already burned someone in trade press shows up in your report instead of in your bank statement.',
     keywords: ['double brokering', 'freight fraud', 'unauthorized re-brokering', 'carrier non-payment', 'FMCSA broker authority'],
     bodyHtml: `
 <p>Double brokering is one of the oldest scams in trucking and one of the costliest. A broker takes your tender, then quietly hands the load to a second carrier (or a fake one) without your knowledge. Sometimes the second carrier is real but uninsured. Sometimes there is no carrier at all. By the time the load is missing or the invoice goes unpaid, the original broker has disappeared.</p>
