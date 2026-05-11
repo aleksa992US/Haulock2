@@ -7373,7 +7373,7 @@ function VerifyTool({ navigate }: any) {
         ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 md:p-12 card-shadow text-[#0B1E3F]">
           <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">MC number, DOT number, or company name</label>
-          <div className="flex gap-3">
+          <div className="flex flex-col md:flex-row gap-3">
             <div className={`flex-1 flex items-stretch bg-[#F5F3EE] border rounded-xl focus-within:border-[#0B1E3F] transition overflow-hidden ${kind ? 'border-[#0B1E3F]/15' : 'border-[#FF6B35]/40'}`}>
               <div
                 className="flex items-center gap-1.5 pl-2 pr-2 py-2 border-r border-[#0B1E3F]/10 bg-white"
@@ -7423,10 +7423,10 @@ function VerifyTool({ navigate }: any) {
                   }
                 }}
                 placeholder={kind === 'mc' ? 'Type the MC number, e.g. 1162901 — no prefix needed' : kind === 'dot' ? 'Type the DOT number, e.g. 3512175 — no prefix needed' : 'Select MC or DOT on the left first, then type the number'}
-                className="flex-1 px-5 py-4 bg-transparent text-lg focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
+                className="flex-1 px-5 py-5 md:py-4 bg-transparent text-xl md:text-lg focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
               />
             </div>
-            <button onClick={() => runLookup()} disabled={loading} className="px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
+            <button onClick={() => runLookup()} disabled={loading} className="w-full md:w-auto justify-center px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
               Verify <ArrowRight className="w-4 h-4" />
             </button>
           </div>
