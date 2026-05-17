@@ -1976,7 +1976,6 @@ function Nav({ navigate, user }: any) {
           <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">What we check</button>
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
           <button onClick={() => navigate('blog')} className="hover:text-[#0B1E3F]">Blog</button>
-          <button onClick={() => navigate('affiliate')} className="hover:text-[#0B1E3F]">Affiliates</button>
         </div>
         <div className="flex items-center gap-2">
           {user ? (
@@ -3025,17 +3024,43 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
   const [email, setEmail] = useState(user?.email || '');
   const [audience, setAudience] = useState('');
   const [audienceSize, setAudienceSize] = useState('');
+  const [social, setSocial] = useState('');
   const [source, setSource] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Auto-rotating hero slider: three angles on the same promise.
+  const heroSlides = [
+    {
+      tag: 'Passive income',
+      title: 'Earn passive income while you drive.',
+      sub: 'Drop your code once. Get paid every month a carrier, broker, or driver you sent keeps using Haulock.',
+    },
+    {
+      tag: 'Recurring forever',
+      title: 'Get paid every single month.',
+      sub: 'Not a one-time bounty. A real recurring check for as long as your referral stays subscribed.',
+    },
+    {
+      tag: 'Refer anyone in trucking',
+      title: 'Carriers, brokers, drivers. All pay you.',
+      sub: 'Refer fleets to a plan or send individual drivers to the app. Every subscription through you earns.',
+    },
+  ];
+  const [slide, setSlide] = useState(0);
+  useEffect(() => {
+    if (submitted) return;
+    const id = setInterval(() => setSlide((s) => (s + 1) % heroSlides.length), 4500);
+    return () => clearInterval(id);
+  }, [submitted, heroSlides.length]);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const original = document.title;
-    document.title = 'Affiliate program · Haulock';
-    setMeta('description', 'Earn commission on every Haulock subscription you refer. Get a unique promo code, track redemptions in real time, and get paid for sending carriers and brokers a tool that actually works.');
+    document.title = 'Affiliate partners · Earn passive income while you drive · Haulock';
+    setMeta('description', 'Become a Haulock affiliate partner and earn recurring commission every single month for every subscription you refer, for as long as that customer keeps paying. Passive income while you drive. Apply in two minutes.');
     return () => { document.title = original; };
   }, []);
 
@@ -3052,13 +3077,13 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
       const res = await fetch('/api/affiliate/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, audience, audienceSize, source, message }),
+        body: JSON.stringify({ name, email, audience, audienceSize, social, source, message }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
       setSubmitted(true);
     } catch (err: any) {
-      setError(err?.message || 'Something went wrong — please try again.');
+      setError(err?.message || 'Something went wrong. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -3077,7 +3102,7 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
             </div>
             <div className="text-xs mono uppercase tracking-[0.2em] text-[#16A34A] mb-4 font-semibold">Application received</div>
             <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
-              Thanks{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ''} &mdash; we&rsquo;ve got it.
+              Thanks{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ''}. We&rsquo;ve got it.
             </h1>
             <p className="text-lg text-[#0B1E3F]/70 leading-relaxed max-w-xl mx-auto mb-10">
               Your application landed in our inbox at <span className="mono text-[#0B1E3F]">marketing@viceseo.com</span>. We read every one personally and reply within <strong className="text-[#0B1E3F]">48 hours</strong> with a yes, a no, or a question.
@@ -3109,7 +3134,7 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
                 </li>
               </ol>
               <div className="mt-6 pt-5 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60 leading-relaxed">
-                <strong className="text-[#0B1E3F]">Heads-up:</strong> our reply comes from <span className="mono text-[#0B1E3F]">marketing@viceseo.com</span>. If you don&rsquo;t see it, check spam &mdash; the first email from a new sender often lands there.
+                <strong className="text-[#0B1E3F]">Heads-up:</strong> our reply comes from <span className="mono text-[#0B1E3F]">marketing@viceseo.com</span>. If you don&rsquo;t see it, check spam. The first email from a new sender often lands there.
               </div>
             </div>
 
@@ -3121,7 +3146,7 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
                 <ArrowRight className="w-4 h-4 rotate-180" /> Back to Haulock
               </button>
               <button
-                onClick={() => { setSubmitted(false); setName(''); setAudience(''); setAudienceSize(''); setSource(''); setMessage(''); }}
+                onClick={() => { setSubmitted(false); setName(''); setAudience(''); setAudienceSize(''); setSocial(''); setSource(''); setMessage(''); }}
                 className="text-xs mono text-[#0B1E3F]/55 hover:text-[#0B1E3F] transition"
               >
                 Submit another application
@@ -3135,78 +3160,293 @@ function AffiliatePage({ navigate, user }: { navigate: any; user?: any }) {
     );
   }
 
+  const scrollToApply = () => {
+    if (typeof document === 'undefined') return;
+    document.getElementById('apply')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
 
-      <section className="py-20 px-6 relative bg-[#F5F3EE]">
-        <div className="absolute inset-0 radial-glow pointer-events-none" />
-        <div className="relative max-w-3xl mx-auto">
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">Affiliate program</div>
-          <h1 className="text-4xl md:text-6xl serif italic text-[#0B1E3F] leading-[1.05] mb-6">
-            Get paid to send carriers a tool that works.
-          </h1>
-          <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
-            We&apos;ll give you a unique promo code, track every signup it brings in, and pay you a commission on each one. No quotas, no exclusivity, no clawbacks.
+      {/* Hero: colorful auto-rotating slider */}
+      <section className="relative overflow-hidden bg-[#0B1E3F]">
+        {/* color blobs */}
+        <div className="absolute -top-32 -left-24 w-[28rem] h-[28rem] rounded-full bg-[#FF6B35]/35 blur-[120px] pointer-events-none" />
+        <div className="absolute -bottom-40 -right-20 w-[30rem] h-[30rem] rounded-full bg-[#2563EB]/30 blur-[130px] pointer-events-none" />
+        <div className="absolute top-1/3 left-1/2 w-80 h-80 rounded-full bg-[#16A34A]/20 blur-[120px] pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0B1E3F] via-[#0B1E3F]/85 to-[#11254A] pointer-events-none" />
+
+        <div className="relative max-w-4xl mx-auto px-6 py-24 md:py-32 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/10 border border-white/15 backdrop-blur text-white/90 text-xs mono uppercase tracking-[0.18em] mb-8">
+            <Sparkles className="w-3.5 h-3.5 text-[#FF6B35]" /> Affiliate partners
+          </div>
+
+          {/* rotating slides */}
+          <div className="relative min-h-[15rem] md:min-h-[16rem]">
+            {heroSlides.map((s, i) => (
+              <div
+                key={i}
+                className={`absolute inset-0 transition-all duration-700 ${i === slide ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}
+              >
+                <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">{s.tag}</div>
+                <h1 className="text-4xl md:text-6xl serif italic text-white leading-[1.05] mb-5 bg-gradient-to-r from-white via-white to-[#FFD9C7] bg-clip-text text-transparent">
+                  {s.title}
+                </h1>
+                <p className="text-lg text-white/70 leading-relaxed max-w-2xl mx-auto">{s.sub}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* slider dots */}
+          <div className="flex items-center justify-center gap-2 mt-2 mb-9">
+            {heroSlides.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setSlide(i)}
+                aria-label={`Slide ${i + 1}`}
+                className={`h-2 rounded-full transition-all ${i === slide ? 'w-8 bg-[#FF6B35]' : 'w-2 bg-white/25 hover:bg-white/40'}`}
+              />
+            ))}
+          </div>
+
+          {/* earnings chips */}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 mb-10">
+            {['$10 / mo · Carrier', '$20 / mo · Team', '$30 / mo · Fleet', 'Paid every month', 'Refer drivers too'].map((chip, i) => (
+              <span key={i} className="px-3.5 py-1.5 rounded-full bg-white/10 border border-white/15 text-white/85 text-xs mono backdrop-blur">
+                {chip}
+              </span>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <button onClick={scrollToApply} className="px-8 py-4 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#FF6B35]/90 transition flex items-center gap-2 shadow-lg shadow-[#FF6B35]/25">
+              Apply for partnership <ArrowRight className="w-4 h-4" />
+            </button>
+            <button onClick={() => document.getElementById('payouts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="px-8 py-4 bg-white/10 border border-white/20 text-white rounded-full text-sm font-medium hover:bg-white/15 transition backdrop-blur">
+              See how much you earn
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Blinking highlight: every affiliate gets a 20%-off promo code */}
+      <section className="px-6 -mt-10 mb-16 relative z-10">
+        <div className="max-w-3xl mx-auto blink-box bg-white border-2 border-[#FF6B35] rounded-2xl p-6 md:p-8 text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6B35] text-white text-xs mono uppercase tracking-[0.18em] mb-3">
+            <Sparkles className="w-3.5 h-3.5" /> Built in for every partner
+          </div>
+          <div className="text-2xl md:text-3xl serif italic text-[#0B1E3F] mb-2">
+            Every approved affiliate gets their own promo code with{' '}
+            <span className="text-[#FF6B35] not-italic font-bold">20% OFF</span> for their customers.
+          </div>
+          <p className="text-sm md:text-base text-[#0B1E3F]/65 leading-relaxed max-w-xl mx-auto">
+            That discount is your closing tool. Your audience saves 20% the moment they use your code, you earn your recurring commission on every one of them. Everybody wins.
           </p>
         </div>
       </section>
 
-      <section className="px-6 pb-20">
+      {/* Why this matters: recurring / compounding / passive */}
+      <section className="px-6 pb-16">
+        <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-4">
+          {[
+            { icon: <TrendingUp className="w-5 h-5" />, title: 'Recurring, not one-off', body: 'You don’t get a one-time bounty. You earn from every subscription, every month, for as long as that customer stays on Haulock.' },
+            { icon: <BarChart3 className="w-5 h-5" />, title: 'It compounds', body: 'Month two pays you for last month’s referrals plus this month’s. Keep referring and the monthly check keeps stacking.' },
+            { icon: <Truck className="w-5 h-5" />, title: 'Truly passive', body: 'Drop your code in a video description, a newsletter footer, a group pin. It keeps converting and paying while you’re on the road.' },
+          ].map((c, i) => (
+            <div key={i} className="bg-white border border-[#0B1E3F]/10 rounded-2xl p-6 card-shadow">
+              <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[#0B1E3F] text-white mb-4">{c.icon}</div>
+              <div className="font-semibold text-[#0B1E3F] mb-1.5">{c.title}</div>
+              <div className="text-sm text-[#0B1E3F]/65 leading-relaxed">{c.body}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* The payout system */}
+      <section className="px-6 pb-16">
         <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
-          <LegalH2>How it works</LegalH2>
+          <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-2">The payout system</div>
+          <LegalH2>Apply once. Get paid every month.</LegalH2>
           <LegalUl>
-            <li><strong>You apply.</strong> Fill out the form below. We read every application personally — usually within 48 hours.</li>
-            <li><strong>We approve and issue your code.</strong> If you&apos;re a fit, we create a Stripe promo code (e.g. <span className="mono">JOHN15</span>) tied to your account. The code gives your audience 15&ndash;20% off their first month — your number to negotiate.</li>
-            <li><strong>You promote it.</strong> Share it on a podcast, a YouTube channel, an email list, a Discord server, a billboard. Anywhere your audience pays attention.</li>
-            <li><strong>We pay you per signup.</strong> Every time someone uses your code at checkout, you earn a flat-rate commission ($ per signup) or a percentage of what they paid &mdash; whichever we agreed at approval.</li>
-            <li><strong>You see every redemption in real time.</strong> Sign in to your Haulock account and the &ldquo;My earnings&rdquo; tab shows every signup, the customer&apos;s first name, signup date, and your earnings &mdash; live from Stripe.</li>
+            <li><strong>You apply, we review.</strong> Our team reads every application personally. If you&apos;re approved, we issue a unique promo code (e.g. <span className="mono">JOHN20</span>) tied to your account that gives your customers 20% off.</li>
+            <li><strong>You share your code.</strong> Drop it on a podcast, a YouTube channel, an email list, a forum, a driver group. Your audience gets 20% off, which is a real reason to use it.</li>
+            <li><strong>Refer companies <em>or</em> drivers.</strong> Send a fleet or broker team onto a paid plan, or point individual drivers and owner-operators to Haulock to verify brokers before they accept a load. Either way, every subscription that comes through your code counts.</li>
+            <li><strong>They subscribe.</strong> The moment your code is used at checkout, that customer (carrier, broker, or driver) is permanently attributed to you and shows up in your affiliate profile.</li>
+            <li><strong>You get paid every month they stay.</strong> While that customer keeps their subscription active, you earn your commission on that subscription <em>every billing cycle</em>. They keep renewing, you keep getting paid.</li>
+            <li><strong>Cash out by ACH or Zelle.</strong> We pay out via ACH bank transfer or Zelle. Request a payout from your affiliate page whenever your balance is ready.</li>
+            <li><strong>You track it live.</strong> Once approved you get a private affiliate profile where every active referral, the plan they&apos;re on, and your running monthly total update in real time.</li>
           </LegalUl>
-
-          <LegalH2>Who we&apos;re looking for</LegalH2>
           <LegalP>
-            Anyone with a real audience of carriers, brokers, dispatchers, or owner-operators. Industry podcasters, YouTube creators, trade newsletter writers, freight forum mods, dispatching schools, factoring companies, and consultants who already work with our target users. We don&apos;t take coupon-aggregator sites or cashback portals.
+            No quotas, no exclusivity, no clawbacks once a payout clears. The only thing that ends a commission is the customer cancelling, which is exactly why we built Haulock to be worth keeping.
           </LegalP>
+        </div>
+      </section>
 
-          <div className="mt-10 pt-10 border-t border-[#0B1E3F]/10">
-            <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-2">Apply</div>
-            <h2 className="text-2xl serif italic text-[#0B1E3F] mb-6">Tell us about yourself.</h2>
+      {/* How much you earn: depends on the client */}
+      <section id="payouts" className="px-6 pb-16 scroll-mt-24">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-10">
+            <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-3">What you earn</div>
+            <h2 className="text-3xl md:text-4xl serif italic text-[#0B1E3F] mb-3">Bigger client, bigger monthly check.</h2>
+            <p className="text-[#0B1E3F]/60 max-w-2xl mx-auto leading-relaxed">
+              Flat commission, paid <strong className="text-[#0B1E3F]">every month</strong>, scaled to the plan your referral is on. No math, no tiers to unlock. You know exactly what each signup is worth before you ever share your code.
+            </p>
+          </div>
 
-            <form onSubmit={onSubmit} className="space-y-5">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Your name <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
-                    <input value={name} onChange={(e) => setName(e.target.value)} required className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]" />
-                  </div>
-                  <div>
-                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Email <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
-                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]" />
-                  </div>
+          <div className="grid md:grid-cols-3 gap-4">
+            {[
+              { plan: 'Carrier', price: 49, commission: 10, blurb: 'Owner-operators & solo drivers', accent: false },
+              { plan: 'Team', price: 99, commission: 20, blurb: 'Growing dispatch & broker teams', accent: true },
+              { plan: 'Fleet', price: 249, commission: 30, blurb: 'Multi-truck fleets & enterprises', accent: false },
+            ].map((t) => (
+              <div key={t.plan} className={`rounded-2xl p-7 card-shadow border ${t.accent ? 'bg-[#0B1E3F] text-white border-[#0B1E3F]' : 'bg-white text-[#0B1E3F] border-[#0B1E3F]/10'}`}>
+                <div className="text-xs mono uppercase tracking-wider mb-1 text-[#FF6B35]">{t.plan} plan</div>
+                <div className={`text-sm mb-5 ${t.accent ? 'text-white/60' : 'text-[#0B1E3F]/55'}`}>{t.blurb}</div>
+                <div className="flex items-baseline gap-1.5 mb-1">
+                  <span className="text-4xl serif italic">${t.commission}</span>
+                  <span className={`text-sm ${t.accent ? 'text-white/55' : 'text-[#0B1E3F]/50'}`}>/ mo, per referral</span>
                 </div>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">What&apos;s your audience?</label>
-                    <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Podcast, YouTube channel, newsletter, etc." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
-                  </div>
-                  <div>
-                    <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How big?</label>
-                    <input value={audienceSize} onChange={(e) => setAudienceSize(e.target.value)} placeholder="e.g. 12k subscribers, 800 weekly listens" className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
-                  </div>
+                <div className={`text-sm mb-5 ${t.accent ? 'text-white/55' : 'text-[#0B1E3F]/50'}`}>
+                  <strong className={t.accent ? 'text-white' : 'text-[#0B1E3F]'}>${t.commission * 12}</strong> a year, for one referral, every year they stay.
                 </div>
-                <div>
-                  <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How did you find us?</label>
-                  <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Search, referral, podcast guest, etc." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+                <div className={`text-xs pt-4 border-t ${t.accent ? 'border-white/15 text-white/55' : 'border-[#0B1E3F]/10 text-[#0B1E3F]/55'}`}>
+                  Customer pays ${t.price}/mo
                 </div>
-                <div>
-                  <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How do you plan to promote Haulock? <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
-                  <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} required minLength={20} maxLength={2000} placeholder="One paragraph is plenty. Tell us where you&rsquo;d feature it, who you&rsquo;re reaching, and why Haulock fits your audience." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
-                  <div className="text-[11px] mono text-[#0B1E3F]/50 mt-1 text-right">{message.length} / 2000</div>
-                </div>
-                {error && <div className="text-sm text-[#DC2626]">{error}</div>}
-                <button type="submit" disabled={submitting} className="px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
-                  {submitting ? 'Sending…' : <>Apply <ArrowRight className="w-4 h-4" /></>}
-                </button>
-              </form>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 bg-[#FF6B35]/10 border border-[#FF6B35]/25 rounded-2xl p-6 md:p-7 flex items-start gap-4">
+            <div className="flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[#FF6B35] text-white"><Sparkles className="w-5 h-5" /></div>
+            <div>
+              <div className="font-semibold text-[#0B1E3F] mb-1">It stacks while you sleep.</div>
+              <div className="text-sm text-[#0B1E3F]/70 leading-relaxed">
+                Send <strong>10 Team-plan customers</strong> at <strong>$20/mo</strong> each. That&apos;s <strong>$200 every month</strong>, <strong>$2,400 a year</strong>, without lifting a finger after the referral. Refer more next month and last month&apos;s referrals are still paying you.
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-[#0B1E3F]/45 mt-4 text-center max-w-2xl mx-auto">
+            Commission is a flat monthly amount per active referral ($10 Carrier, $20 Team, $30 Fleet), paid for as long as the customer stays subscribed. Plan prices: Carrier $49/mo, Team $99/mo, Fleet $249/mo. Rates are confirmed in writing at approval.
+          </p>
+        </div>
+      </section>
+
+      {/* Who we partner with: relevance + right to choose */}
+      <section className="px-6 pb-16">
+        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
+          <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-2">Who we partner with</div>
+          <LegalH2>You have to be relevant to trucking.</LegalH2>
+          <LegalP>
+            This program is for people already trusted inside the freight world: industry podcasters and YouTubers, driver influencers, trade-newsletter writers, freight-forum and driver-group moderators, dispatching and CDL schools, and consultants who work with drivers, carriers, brokers, owner-operators, and fleets every day.
+          </LegalP>
+          <LegalP>
+            We don&apos;t work with coupon-aggregator sites, cashback portals, or audiences with no connection to trucking. A code in front of the wrong people helps no one: not you, not us, not the driver.
+          </LegalP>
+          <div className="mt-6 flex items-start gap-4 bg-[#0B1E3F]/[0.04] rounded-xl p-5">
+            <div className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[#0B1E3F] text-white"><UserCheck className="w-4 h-4" /></div>
+            <div className="text-sm text-[#0B1E3F]/75 leading-relaxed">
+              <strong className="text-[#0B1E3F]">Every application is reviewed and approved by our team.</strong> We protect the Haulock brand and the people we serve, so we reserve the right to choose who we work with and to decline or end a partnership at our discretion. Applying is not a guarantee of acceptance.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA + application form */}
+      <section id="apply" className="px-6 pb-16 scroll-mt-24">
+        <div className="max-w-3xl mx-auto bg-white border border-[#0B1E3F]/10 rounded-2xl p-8 md:p-12 card-shadow">
+          <div className="text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold mb-2">Apply for partnership</div>
+          <h2 className="text-3xl serif italic text-[#0B1E3F] mb-3">Tell us about yourself.</h2>
+          <p className="text-[#0B1E3F]/60 leading-relaxed mb-8">
+            Takes about two minutes. A real person on our team reviews every submission and replies within 48 hours with a yes, a no, or a question.
+          </p>
+
+          <form onSubmit={onSubmit} className="space-y-5">
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Your name <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
+                <input value={name} onChange={(e) => setName(e.target.value)} required className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]" />
+              </div>
+              <div>
+                <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Email <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F]" />
+              </div>
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">What&apos;s your audience?</label>
+                <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Podcast, YouTube channel, newsletter, etc." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+              </div>
+              <div>
+                <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How big?</label>
+                <input value={audienceSize} onChange={(e) => setAudienceSize(e.target.value)} placeholder="e.g. 12k subscribers, 800 weekly listens" className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">Social media profiles &amp; links</label>
+              <textarea value={social} onChange={(e) => setSocial(e.target.value)} rows={3} maxLength={1000} placeholder="Drop the links to where your trucking audience lives: YouTube, Instagram, TikTok, X, Facebook group, LinkedIn, your website or newsletter. One per line is fine." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
+              <div className="flex items-center gap-3 mt-2 text-[#0B1E3F]/30">
+                <Youtube className="w-4 h-4" /><Instagram className="w-4 h-4" /><Facebook className="w-4 h-4" /><Twitter className="w-4 h-4" /><Linkedin className="w-4 h-4" /><Globe className="w-4 h-4" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How did you find us?</label>
+              <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Search, referral, podcast guest, etc." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30" />
+            </div>
+            <div>
+              <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">How do you plan to promote Haulock? <span className="text-[#DC2626] tracking-normal normal-case">required</span></label>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} required minLength={20} maxLength={2000} placeholder="One paragraph is plenty. Tell us where you&rsquo;d feature it, who you&rsquo;re reaching in the trucking industry, and why Haulock fits your audience." className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-[#0B1E3F] focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/30 resize-none" />
+              <div className="text-[11px] mono text-[#0B1E3F]/50 mt-1 text-right">{message.length} / 2000</div>
+            </div>
+            {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+            <button type="submit" disabled={submitting} className="px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
+              {submitting ? 'Sending…' : <>Apply for partnership <ArrowRight className="w-4 h-4" /></>}
+            </button>
+            <p className="text-xs text-[#0B1E3F]/45 leading-relaxed">
+              Submitting an application doesn&apos;t create a partnership. Our team reviews every applicant and we reserve the right to choose who we work with. You&apos;ll hear back within 48 hours either way.
+            </p>
+          </form>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="px-6 pb-24">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">FAQ</div>
+          <h2 className="text-3xl md:text-4xl serif italic text-[#0B1E3F] mb-8">Questions partners ask first.</h2>
+          <div className="space-y-3">
+            {[
+              {
+                q: 'How much can I actually earn, and how do I get paid?',
+                a: 'A flat monthly commission for every active referral: $10 on the Carrier plan, $20 on Team, and $30 on Fleet, paid every month for as long as that customer stays subscribed. No tiers to unlock and no percentages to calculate. We pay out by ACH bank transfer or Zelle, and you request a payout from your affiliate page whenever your balance is ready.',
+              },
+              {
+                q: 'Do my customers get a discount?',
+                a: 'Yes. Every approved affiliate gets a unique promo code that gives their customers 20% off. That discount is your closing tool. Your audience saves money the moment they use your code, and you earn your recurring commission on every one of them.',
+              },
+              {
+                q: 'Is this a one-time payment or recurring?',
+                a: 'Recurring. This is the whole point of the program. You are not paid a one-off bounty. As long as the customer you referred keeps paying their Haulock subscription, you keep earning your commission on it every billing cycle. Stop promoting tomorrow and the customers you already sent still pay you every month.',
+              },
+              {
+                q: 'Who qualifies to become a partner?',
+                a: 'You need a real, relevant audience in the trucking industry: drivers, carriers, brokers, dispatchers, owner-operators, or fleets. Think industry podcasters, YouTubers, newsletter writers, freight-forum and driver-group admins, dispatching/CDL schools, factoring companies, and consultants. We do not accept coupon or cashback sites, or audiences unrelated to freight. Every application is reviewed and approved by our team, and we reserve the right to choose who we work with.',
+              },
+              {
+                q: 'How do I track my referrals and earnings?',
+                a: 'Once you are approved you receive your own private affiliate profile. It updates in real time with every active referral, the plan they are on, their signup date, and your running monthly total, and it is where you request your payouts by ACH or Zelle. No spreadsheets, no guessing.',
+              },
+            ].map((f, i) => <FaqItem key={i} {...f} />)}
+          </div>
+
+          <div className="mt-12 text-center bg-[#0B1E3F] rounded-2xl p-10 card-shadow">
+            <h3 className="text-2xl md:text-3xl serif italic text-white mb-3">Earn while the wheels turn.</h3>
+            <p className="text-white/60 max-w-xl mx-auto mb-7 leading-relaxed">
+              Apply now, get approved, share your 20%-off code, and start earning a monthly check from every carrier, broker, and driver you send our way.
+            </p>
+            <button onClick={scrollToApply} className="px-8 py-4 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#FF6B35]/90 transition inline-flex items-center gap-2">
+              Apply for partnership <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </section>

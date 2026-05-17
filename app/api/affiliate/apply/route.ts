@@ -17,6 +17,7 @@ export async function POST(req: Request) {
     email?: string;
     audience?: string;
     audienceSize?: string;
+    social?: string;
     message?: string;
     source?: string;
   } | null;
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
   const email = (body.email || '').trim().toLowerCase();
   const audience = (body.audience || '').trim();
   const audienceSize = (body.audienceSize || '').trim();
+  const social = (body.social || '').trim().slice(0, 1000);
   const message = (body.message || '').trim();
   const source = (body.source || '').trim();
 
@@ -59,7 +61,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Email is not configured — please email marketing@viceseo.com directly.' }, { status: 503 });
   }
 
-  const tpl = affiliateApplicationTemplate({ name, email, audience, audienceSize, message, source });
+  const tpl = affiliateApplicationTemplate({ name, email, audience, audienceSize, social, message, source });
   try {
     await sendEmail({
       to: APPLICATION_INBOX,

@@ -844,6 +844,7 @@ export function affiliateApplicationTemplate(args: {
   email: string;
   audience?: string;
   audienceSize?: string;
+  social?: string;
   message?: string;
   source?: string;
 }): { subject: string; html: string } {
@@ -858,6 +859,7 @@ ${h1(`${italicAccent(args.name)} wants to promote Haulock.`)}
   ${row('Email', args.email)}
   ${row('Audience', args.audience)}
   ${row('Audience size', args.audienceSize)}
+  ${row('Social media profiles', args.social)}
   ${row('How they heard about us', args.source)}
   ${row('How they plan to promote', args.message)}
 </div>
