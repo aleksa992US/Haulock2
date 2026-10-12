@@ -421,3 +421,22 @@ drop policy if exists "affiliate_payouts_insert_own" on public.affiliate_payouts
 create policy "affiliate_payouts_select_own" on public.affiliate_payouts for select using (auth.uid() = user_id);
 create policy "affiliate_payouts_insert_own" on public.affiliate_payouts for insert with check (auth.uid() = user_id);
 -- Updates / admin queries go through the service role and bypass RLS.
+
+-- Forward-to-scan (scan@haulock.com): one row per received email. Used to
+-- dedupe Resend webhook retries and to rate-limit free/unknown senders.
+-- Stores no email content — sender, document types and outcome only.
+create table if not exists public.inbound_scans (
+  id uuid primary key default gen_random_uuid(),
+  email_id text not null unique,
+  from_email text not null,
+  user_id uuid references auth.users(id) on delete set null,
+  status text not null default 'processing', -- processing | replied | ignored | failed
+  tier text,                                 -- full | preview | limit | nothing
+  doc_types text[],
+  verdict text,
+  note text,
+  created_at timestamptz not null default now()
+);
+create index if not exists inbound_scans_from_created_idx on public.inbound_scans (from_email, created_at desc);
+-- Server-only table: RLS on with no policies, so only the service role can read/write.
+alter table public.inbound_scans enable row level security;
