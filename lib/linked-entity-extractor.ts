@@ -49,6 +49,10 @@ export function extractLinkedEntities(
 
   for (const hit of hits) {
     const text = `${hit.title}\n${hit.snippet}`;
+    // Directory and listing pages ("Trucking Companies in Illinois", carrier
+    // lookup sites) print many carriers side by side. Being listed next to a
+    // company is not a relationship, so skip those pages entirely.
+    if (isDirectoryHit(hit.domain, text)) continue;
 
     // Company-name candidates.
     const seenInThisHit = new Set<string>();
@@ -139,6 +143,27 @@ export function extractLinkedEntities(
 }
 
 // ----- helpers -----------------------------------------------------------
+
+// Carrier directories / lookup sites seen in our own extractor output. They
+// list carriers by MC or by state, not by any connection between them.
+const DIRECTORY_DOMAINS = [
+  'dcontrol.com', 'loadconnect.io', 'bubba.ai', 'fleetfax.com', 'brokersnapshot.com',
+  'quicktransportsolutions.com', 'carrierdatahub.com', 'loadwrap.com', 'carriersource.io',
+  'otrucking.com', 'roserocket.com', 'dot.report', 'coaexpress.com', 'dotcomply.us',
+  'carrier-ok.com', 'carriernetwork.ai', 'dispatchff.com', 'fenderr.com', 'lastmiledr.app',
+  'partnercarrier.com', 'safer.fmcsa.dot.gov', 'usdot.report', 'truckingdatabase.com',
+  'companiesdata.com', 'opencorporates.com', 'bizapedia.com',
+];
+
+// A hit naming 3+ distinct MC / DOT numbers is a list, not an article about a
+// network (articles about chameleon networks name one or two other numbers).
+function isDirectoryHit(domain: string, text: string): boolean {
+  const d = domain.toLowerCase().replace(/^www\./, '');
+  if (DIRECTORY_DOMAINS.some((x) => d === x || d.endsWith(`.${x}`))) return true;
+  const ids = new Set<string>();
+  for (const m of text.matchAll(/\b(?:MC|(?:US)?DOT)\s*[#:\-]?\s*(\d{4,8})\b/gi)) ids.add(m[1].replace(/^0+/, ''));
+  return ids.size >= 3;
+}
 
 function tokenizeName(name: string): string[] {
   const NOISE = new Set(['llc', 'inc', 'incorporated', 'corp', 'corporation', 'co', 'company', 'ltd', 'limited', 'lp', 'llp', 'pllc', 'the', 'and', '&', 'group', 'holdings']);

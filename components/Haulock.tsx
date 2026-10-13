@@ -1243,7 +1243,7 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
     { key: 'lookalike',  label: 'Lookalike-domain check',     desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',                 chip: 'Levenshtein ≤ 2',            icon: AlertTriangle, angle: 244, radius: 70, activateAt:  7250 },
     { key: 'chameleon',  label: 'Cross-reference scan',       desc: 'Phone or address shared with another flagged FMCSA record',               chip: 'FMCSA Socrata · Haulock DB', icon: Eye,           angle: 270, radius: 92, activateAt:  8000 },
     { key: 'reputation', label: 'Web fraud reputation',       desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',       chip: '5 fraud queries',            icon: Search,        angle: 296, radius: 70, activateAt:  8750 },
-    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Aliases · sister entities · co-cited MC / DOT numbers in coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 321, radius: 92, activateAt:  9500 },
+    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Other companies and MC / DOT numbers named in news coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 321, radius: 92, activateAt:  9500 },
     { key: 'archive',    label: 'Haulock Day-1 archive',      desc: '5-year FMCSA snapshot history · email-shared MC cross-reference',         chip: 'Haulock archive',            icon: Database,      angle: 347, radius: 70, activateAt: 10250 },
   ];
   // The bar fills toward 95% and parks there until the API result arrives.
@@ -4847,7 +4847,8 @@ function ProfileTab({ user }: any) {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || 'Failed to save');
-      setInfo('Saved. Your score is being refreshed in the header.');
+      const savedAs = data?.mc ? `MC-${data.mc}` : data?.dot ? `USDOT ${data.dot}` : 'your ID';
+      setInfo(`Saved as ${savedAs}. Your score is being refreshed in the header.`);
       invalidateCache('own-score');
       // Force the local Supabase session JWT to refresh so user_metadata picks up the change.
       const sb = getSupabase();
@@ -6807,6 +6808,8 @@ function HeaderSearch({ navigate }: { navigate: any }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bare number that matches an MC and a USDOT for two different companies.
+  const [choices, setChoices] = useState<{ query: string; name: string; kind: 'mc' | 'dot' }[] | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -6821,15 +6824,17 @@ function HeaderSearch({ navigate }: { navigate: any }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const q = input.trim();
+  const run = async (q: string) => {
     if (!q) return;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setChoices(null);
     try {
       const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 409 && Array.isArray(data?.candidates)) {
+          setChoices(data.candidates);
+          return;
+        }
         if (res.status === 402) throw new Error(data?.error || 'Monthly lookup limit reached.');
         throw new Error(data?.error || `Lookup failed (${res.status})`);
       }
@@ -6848,6 +6853,11 @@ function HeaderSearch({ navigate }: { navigate: any }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    run(input.trim());
   };
 
   return (
@@ -6875,6 +6885,22 @@ function HeaderSearch({ navigate }: { navigate: any }) {
       {error && (
         <div className="absolute left-0 right-0 top-full mt-1 px-3 py-2 bg-white border border-[#DC2626]/30 rounded-lg text-xs text-[#DC2626] shadow-md z-30">
           {error}
+        </div>
+      )}
+      {choices && (
+        <div className="absolute left-0 right-0 top-full mt-1 p-2 bg-white border border-[#0B1E3F]/15 rounded-lg shadow-md z-30">
+          <div className="px-2 pt-1 pb-2 text-xs text-[#0B1E3F]/60">This number belongs to two different companies. Which one?</div>
+          {choices.map((c) => (
+            <button
+              key={c.query}
+              type="button"
+              onClick={() => { setInput(c.query); run(c.query); }}
+              className="w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm text-[#0B1E3F] hover:bg-[#0B1E3F]/5"
+            >
+              <span className="mono text-xs px-1.5 py-0.5 rounded bg-[#0B1E3F]/5">{c.kind === 'mc' ? 'MC' : 'USDOT'}</span>
+              <span className="truncate">{c.name}</span>
+            </button>
+          ))}
         </div>
       )}
     </form>
@@ -8552,7 +8578,7 @@ function Report({ report, navigate }: any) {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Cross-references & shared identifiers</h2>
-              <div className="text-sm text-[#0B1E3F]/60 mt-1">Aliases, sister-entities, and shared phone/address links — auto-detected from FMCSA and trusted-source web coverage.</div>
+              <div className="text-sm text-[#0B1E3F]/60 mt-1">FMCSA records sharing this phone or address, and other companies named in news and industry coverage. A shared mention is not proof of a relationship.</div>
             </div>
             <span className="px-3 py-1.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-xs mono uppercase tracking-wider font-semibold">
               {(r.linkedEntities?.length || 0) + (r.chameleonLinks?.length || 0)} links
@@ -8587,7 +8613,7 @@ function Report({ report, navigate }: any) {
 
           {r.linkedEntities && r.linkedEntities.length > 0 && (
             <div>
-              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Aliases & sister-entities (from web coverage)</div>
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Other companies named in the same coverage</div>
               <div className="grid sm:grid-cols-2 gap-2">
                 {r.linkedEntities.map((entity: any, i: number) => {
                   const display = entity.kind === 'mc' ? `MC-${entity.value}` : entity.kind === 'dot' ? `DOT-${entity.value}` : entity.value;
@@ -8808,7 +8834,15 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
     safetyEventGroup?: string;
     subpageFetched?: boolean;
   };
-  const basics = (sms?.basics || {}) as Record<string, BasicShape | undefined>;
+  // Reports saved before the parser fix carry FMCSA's intervention threshold
+  // (e.g. 80% for Hazmat) as a "percentile" on BASICs with no measure. FMCSA
+  // only ranks carriers that have a measure, so drop those.
+  const basics = Object.fromEntries(
+    Object.entries((sms?.basics || {}) as Record<string, BasicShape | undefined>).map(([k, b]) => [
+      k,
+      b && b.percentile != null && !(b.measure > 0) ? { ...b, percentile: undefined } : b,
+    ]),
+  ) as Record<string, BasicShape | undefined>;
   const inspections = sms?.inspections || null;
   const crashes = sms?.crashes || null;
   const overview = sms?.carrier || {};

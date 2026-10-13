@@ -178,9 +178,12 @@ export type CarrierReport = {
   flags: RiskFlag[];
 };
 
+// `ambiguous` marks bare digits ("1274941"): MC and USDOT numbers both run to
+// 7 digits now and the same digits are usually two different companies, so the
+// kind is only a guess. Callers taking user input run resolveQuery() first.
 export type ParsedQuery =
-  | { kind: 'dot'; value: string }
-  | { kind: 'mc'; value: string }
+  | { kind: 'dot'; value: string; ambiguous?: boolean }
+  | { kind: 'mc'; value: string; ambiguous?: boolean }
   | { kind: 'name'; value: string };
 
 const FMCSA_BASE = 'https://mobile.fmcsa.dot.gov/qc/services/carriers';
@@ -194,9 +197,44 @@ export function parseQuery(raw: string): ParsedQuery | null {
   const dotMatch = upper.match(/^(?:DOT|USDOT)[-#]?(\d{3,9})$/);
   if (dotMatch) return { kind: 'dot', value: dotMatch[1] };
   if (/^\d{3,9}$/.test(q)) {
-    return q.length >= 7 ? { kind: 'dot', value: q } : { kind: 'mc', value: q };
+    return q.length >= 7 ? { kind: 'dot', value: q, ambiguous: true } : { kind: 'mc', value: q, ambiguous: true };
   }
   return { kind: 'name', value: q };
+}
+
+export type QueryCandidate = { kind: 'mc' | 'dot'; value: string; query: string; name: string; mc?: string; dot?: string };
+
+// Turns bare digits into an MC or DOT by asking FMCSA about both. One match →
+// that one; the same company either way → its MC; two different companies →
+// `candidates` so the user picks (e.g. MC-1274941 is RMJ Cargobull LLC while
+// USDOT 1274941 is an unrelated carrier). No match → the original guess, so the
+// caller's usual not-found handling applies.
+export async function resolveQuery(parsed: ParsedQuery): Promise<{ query: ParsedQuery } | { candidates: QueryCandidate[] }> {
+  if (parsed.kind === 'name' || !parsed.ambiguous) return { query: parsed };
+  // Without a WebKey every lookup is the same mock carrier; nothing to compare.
+  if (!process.env.FMCSA_WEB_KEY) return { query: parsed };
+  const value = parsed.value;
+  const [asMc, asDot] = await Promise.all([
+    lookupCarrier({ kind: 'mc', value }).catch(() => null),
+    lookupCarrier({ kind: 'dot', value }).catch(() => null),
+  ]);
+  if (asMc && asDot && asMc.dot !== asDot.dot) {
+    return {
+      candidates: [
+        { kind: 'mc', value, query: `MC-${value}`, name: asMc.name, mc: value, dot: asMc.dot },
+        { kind: 'dot', value, query: `DOT-${value}`, name: asDot.name, mc: asDot.mc, dot: value },
+      ],
+    };
+  }
+  if (asMc) return { query: { kind: 'mc', value } };
+  if (asDot) return { query: { kind: 'dot', value } };
+  return { query: parsed };
+}
+
+// Message shown when a bare number matches two companies.
+export function ambiguousNumberMessage(candidates: QueryCandidate[]): string {
+  const [mc, dot] = candidates;
+  return `${mc.value} matches two different companies: MC-${mc.value} is ${mc.name} and USDOT ${dot.value} is ${dot.name}. Search "MC-${mc.value}" or "DOT-${dot.value}".`;
 }
 
 async function logFmcsaEvent(ev: { path: string; status: 'ok' | 'error'; httpStatus: number | null; durationMs: number; error?: string }): Promise<void> {

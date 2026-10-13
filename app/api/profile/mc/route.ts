@@ -1,25 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
+import { parseQuery, resolveQuery, ambiguousNumberMessage } from '@/lib/fmcsa';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const MC_CHANGE_COOLDOWN_DAYS = 30;
-
-type ParsedId = { kind: 'mc' | 'dot'; value: string };
-
-function parseId(raw: string): ParsedId | null {
-  const s = String(raw).trim().toUpperCase().replace(/\s+/g, '');
-  const mc = s.match(/^MC[-#]?(\d{3,8})$/);
-  if (mc) return { kind: 'mc', value: mc[1] };
-  const dot = s.match(/^(?:DOT|USDOT)[-#]?(\d{3,9})$/);
-  if (dot) return { kind: 'dot', value: dot[1] };
-  if (/^\d{3,9}$/.test(s)) {
-    return s.length >= 7 ? { kind: 'dot', value: s } : { kind: 'mc', value: s };
-  }
-  return null;
-}
 
 export async function POST(req: Request) {
   const supabase = getServerSupabase();
@@ -34,10 +21,17 @@ export async function POST(req: Request) {
   let mc = '';
   let dot = '';
   if (raw) {
-    const parsed = parseId(raw);
-    if (!parsed) return NextResponse.json({ error: 'Invalid MC or DOT — must be 3 to 9 digits.' }, { status: 400 });
-    if (parsed.kind === 'mc') mc = parsed.value;
-    else dot = parsed.value;
+    const parsed = parseQuery(raw);
+    if (!parsed || parsed.kind === 'name') return NextResponse.json({ error: 'Invalid MC or DOT — must be 3 to 9 digits.' }, { status: 400 });
+    // A bare number can be an MC or a USDOT number for two different companies;
+    // ask FMCSA instead of guessing from its length.
+    const resolved = await resolveQuery(parsed);
+    if ('candidates' in resolved) {
+      return NextResponse.json({ error: ambiguousNumberMessage(resolved.candidates), code: 'ambiguous_number', candidates: resolved.candidates }, { status: 409 });
+    }
+    const id = resolved.query;
+    if (id.kind === 'mc') mc = id.value;
+    else if (id.kind === 'dot') dot = id.value;
   }
 
   const meta = me.user_metadata || {};
