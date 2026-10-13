@@ -1,4 +1,4 @@
-import { NEW_FEATURES_ON } from './features';
+import { COI_CHECK_ON } from './features';
 
 export type PlanId = 'free' | 'carrier' | 'team' | 'fleet';
 
@@ -26,7 +26,7 @@ export type Plan = {
 };
 
 // COI lines appear on the pricing cards only once the feature launches.
-const coi = (line: string): string[] => (NEW_FEATURES_ON ? [line] : []);
+const coi = (line: string): string[] => (COI_CHECK_ON ? [line] : []);
 
 export const PLANS: Record<PlanId, Plan> = {
   free: {

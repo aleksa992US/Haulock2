@@ -52,9 +52,11 @@ Copy `.env.example` to `.env.local` and fill in as you build out backend feature
 
 ## Forward-to-scan (scan@haulock.com) and COI checks
 
-Both are hidden on the live site until launch: set `NEXT_PUBLIC_NEW_FEATURES=on` to show them
-to everyone (plan cards, Verify → COI check tab, dashboard COI card, scan@ card, and the two
-API routes). Admins always see and can use them, so they can be tested on production first.
+Each has its own launch switch (Vercel env, then redeploy); admins always see and can use both:
+- `NEXT_PUBLIC_COI_CHECK=on` — homepage COI section, Verify → COI check tab, dashboard COI card,
+  COI plan lines and FAQ, `/api/coi/check`.
+- `NEXT_PUBLIC_FORWARD_TO_SCAN=on` — scan@ strip and card, forward-to-scan FAQ,
+  `/api/inbound/email` (otherwise only admins' forwards are processed).
 
 **COI check** (`/api/coi/check`, Verify → COI check) reads a certificate of insurance with
 Document AI + Claude and compares it with FMCSA's public insurance filings (dataset
