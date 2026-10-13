@@ -14,7 +14,7 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
 import { PLANS, getPlan, formatLimit } from '@/lib/plans';
 import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
-import { NEW_FEATURES_ON } from '@/lib/features';
+import { COI_CHECK_ON, SCAN_EMAIL_ON } from '@/lib/features';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 
@@ -518,7 +518,7 @@ function Landing({ navigate, user }: any) {
                 'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, and 24-month inspections.',
                 'Lookalike-domain detection on every carrier email so you spot the impersonator using a real MC.',
                 'Chameleon-network detection on shared phones and addresses, plus FMCSA enforcement cross-reference.',
-                ...(NEW_FEATURES_ON ? ['COI check: compare a carrier’s certificate of insurance with what its insurer filed with FMCSA.'] : []),
+                ...(COI_CHECK_ON ? ['COI check: compare a carrier’s certificate of insurance with what its insurer filed with FMCSA.'] : []),
               ]}
               cta="Start verifying carriers"
               onClick={() => navigate('signup')}
@@ -731,7 +731,7 @@ function Landing({ navigate, user }: any) {
         </div>
       </section>
 
-      {NEW_FEATURES_ON && (
+      {COI_CHECK_ON && (
         <section id="coi-check" className="py-24 px-6 bg-[#F5F3EE] border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
           <div className="max-w-7xl mx-auto">
             <div className="grid lg:grid-cols-2 gap-16 items-start">
@@ -831,6 +831,7 @@ function Landing({ navigate, user }: any) {
             </div>
 
             {/* Forward-to-scan */}
+            {SCAN_EMAIL_ON && (
             <div className="mt-16 bg-[#0B1E3F] rounded-3xl p-8 md:p-10 text-white flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-xl bg-[#FF6B35] flex items-center justify-center flex-shrink-0">
@@ -846,6 +847,7 @@ function Landing({ navigate, user }: any) {
                 Start free <ArrowRight className="w-4 h-4" />
               </button>
             </div>
+            )}
           </div>
         </section>
       )}
@@ -859,7 +861,7 @@ function Landing({ navigate, user }: any) {
               Built on official data. <span className="serif italic text-[#FF6B35]">Your files aren&apos;t kept.</span>
             </h2>
             <p className="text-white/70 text-lg max-w-2xl">
-              Every report comes from FMCSA and the other sources at the time you run it, with the date shown. Rate cons and PDFs you upload are read in memory and discarded when the scan finishes. Your history keeps the verdict, not the file.{NEW_FEATURES_ON && ' Forwarded emails are the exception: our email provider keeps a copy under its own retention policy.'}
+              Every report comes from FMCSA and the other sources at the time you run it, with the date shown. Rate cons and PDFs you upload are read in memory and discarded when the scan finishes. Your history keeps the verdict, not the file.{SCAN_EMAIL_ON && ' Forwarded emails are the exception: our email provider keeps a copy under its own retention policy.'}
             </p>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
@@ -976,15 +978,17 @@ function Landing({ navigate, user }: any) {
               { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scored in about 3 seconds.' },
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
               { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
-              { q: 'Does it work for freight brokers?', a: `Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.${NEW_FEATURES_ON ? ' On paid plans, brokers can also check a carrier’s certificate of insurance against its FMCSA filings.' : ''}` },
+              { q: 'Does it work for freight brokers?', a: `Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.${COI_CHECK_ON ? ' On paid plans, brokers can also check a carrier’s certificate of insurance against its FMCSA filings.' : ''}` },
               { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, and any web-reputation hits from trusted sources. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
               { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
-              ...(NEW_FEATURES_ON ? [
-                { q: 'Can Haulock check a carrier’s certificate of insurance (COI)?', a: 'Yes, on paid plans. Upload the COI (or forward it to us) and Haulock reads the policies, dates, and limits, then compares them with the filings the carrier’s insurer made with FMCSA: is the auto liability policy on file, is a cancellation pending, is the limit at least the FMCSA minimum, and was the PDF edited after it was created. You get match, verify, or mismatch with the source of every finding. No tool can prove a COI is genuine — on verify or mismatch, call the insurer using a number you look up yourself before you book.' },
+              ...(COI_CHECK_ON ? [
+                { q: 'Can Haulock check a carrier’s certificate of insurance (COI)?', a: `Yes, on paid plans. Upload the COI${SCAN_EMAIL_ON ? ' (or forward it to us)' : ''} and Haulock reads the policies, dates, and limits, then compares them with the filings the carrier’s insurer made with FMCSA: is the auto liability policy on file, is a cancellation pending, is the limit at least the FMCSA minimum, and was the PDF edited after it was created. You get match, verify, or mismatch with the source of every finding. No tool can prove a COI is genuine — on verify or mismatch, call the insurer using a number you look up yourself before you book.` },
+              ] : []),
+              ...(SCAN_EMAIL_ON ? [
                 { q: 'Can I forward a rate con or COI by email?', a: `Yes. Forward the email to ${SCAN_EMAIL} from the address on your Haulock account and the verdict comes back in the same thread, usually within a minute. Paid plans get the full report, saved to your history; free accounts get a short preview of rate cons.` },
               ] : []),
             ].map((faq, i) => <FaqItem key={i} {...faq} />)}
@@ -7509,8 +7513,8 @@ function Dashboard({ navigate, user }: any) {
   const recent = all.slice(0, 5);
   const scamAlerts = all.filter((l) => l.verdict === 'high').slice(0, 3);
   const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, watchlist: 0 };
-  const showNewFeatures = NEW_FEATURES_ON || Boolean(usage?.isAdmin);
-  const showCoiCard = showNewFeatures && (Boolean(usage?.isAdmin) || plan.limits.coiChecks !== 0);
+  const showCoi = COI_CHECK_ON || Boolean(usage?.isAdmin);
+  const showCoiCard = showCoi && (Boolean(usage?.isAdmin) || plan.limits.coiChecks !== 0);
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
@@ -7657,10 +7661,10 @@ function VerifyTool({ navigate }: any) {
     } catch {}
     return 'quick';
   });
-  const newFeatures = useNewFeatures();
+  const launch = useLaunchFlags();
   useEffect(() => {
-    if (newFeatures.ready && !newFeatures.on && tab === 'coi') setTab('quick');
-  }, [newFeatures.ready, newFeatures.on, tab]);
+    if (launch.ready && !launch.coi && tab === 'coi') setTab('quick');
+  }, [launch.ready, launch.coi, tab]);
   const [input, setInput] = useState('');
   // Identifier-type selector. MC and DOT are separate registries that
   // frequently collide on the same number — e.g. MC-1162901 (Leader
@@ -7844,7 +7848,7 @@ function VerifyTool({ navigate }: any) {
           // actually need it. Keep the route alive so existing deep-links
           // (and the underlying PageSlot) don't 404.
           // { id: 'bulk', label: 'Bulk verify' },
-        ] as const).filter((t) => t.id !== 'coi' || newFeatures.on).map((t) => {
+        ] as const).filter((t) => t.id !== 'coi' || launch.coi).map((t) => {
           const active = tab === t.id;
           return (
             <button
@@ -8028,8 +8032,8 @@ function VerifyTool({ navigate }: any) {
         </div>
       )}
       {tab === 'forensics' && <PdfForensicsPanel />}
-      {newFeatures.on && tab === 'coi' && <CoiCheckPanel navigate={navigate} />}
-      {newFeatures.on && (tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
+      {launch.coi && tab === 'coi' && <CoiCheckPanel navigate={navigate} />}
+      {launch.scanEmail && (tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
       {tab === 'bulk' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           <div className="flex items-start gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl mb-8">
@@ -8054,11 +8058,11 @@ function VerifyTool({ navigate }: any) {
 
 // ---------- Forward-to-scan + COI check ----------
 
-// Hidden on the live site until launch (see lib/features.ts); admins see them.
-function useNewFeatures(): { on: boolean; ready: boolean } {
+// Each feature is hidden on the live site until its switch is on (lib/features.ts); admins see both.
+function useLaunchFlags(): { coi: boolean; scanEmail: boolean; ready: boolean } {
   const usage = useCachedFetch<{ isAdmin?: boolean }>('usage', '/api/usage');
-  if (NEW_FEATURES_ON) return { on: true, ready: true };
-  return { on: Boolean(usage.data?.isAdmin), ready: usage.data != null };
+  const admin = Boolean(usage.data?.isAdmin);
+  return { coi: COI_CHECK_ON || admin, scanEmail: SCAN_EMAIL_ON || admin, ready: COI_CHECK_ON || usage.data != null };
 }
 
 const SCAN_EMAIL = process.env.NEXT_PUBLIC_SCAN_EMAIL || 'scan@haulock.com';

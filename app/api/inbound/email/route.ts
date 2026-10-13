@@ -3,7 +3,7 @@ import { getResendClient } from '@/lib/email';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { emailAddress, processInboundEmail } from '@/lib/inbound-scan';
 import { isAdmin } from '@/lib/admin';
-import { NEW_FEATURES_ON } from '@/lib/features';
+import { SCAN_EMAIL_ON } from '@/lib/features';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
   // Not launched yet: only admins' forwards get processed (lib/features.ts).
   // 200 so Resend doesn't retry.
   const from = emailAddress(event.data?.from);
-  if (!NEW_FEATURES_ON && !(await isAdmin(from))) return NextResponse.json({ ignored: 'not_launched' });
+  if (!SCAN_EMAIL_ON && !(await isAdmin(from))) return NextResponse.json({ ignored: 'not_launched' });
 
   // Claim the email once. Resend retries webhooks that time out; the unique
   // email_id makes those retries no-ops while the first run finishes.
