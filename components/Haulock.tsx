@@ -522,8 +522,13 @@ function Landing({ navigate, user }: any) {
                 'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, and 24-month inspections.',
                 'Lookalike-domain detection on every carrier email so you spot the impersonator using a real MC.',
                 'Chameleon-network detection on shared phones and addresses, plus FMCSA enforcement cross-reference.',
-                ...(COI_CHECK_ON ? ['COI check: compare a carrier’s certificate of insurance with what its insurer filed with FMCSA.'] : []),
               ]}
+              highlight={COI_CHECK_ON ? {
+                label: 'COI check',
+                text: 'Upload a carrier’s certificate of insurance and see whether it matches what the insurer filed with FMCSA.',
+                link: 'See how it works',
+                onClick: () => document.getElementById('coi-check')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+              } : undefined}
               cta="Start verifying carriers"
               onClick={() => navigate('signup')}
             />
@@ -2072,7 +2077,7 @@ function BigStat({ value, label }: any) {
   );
 }
 
-function RoleCard({ icon: Icon, accent, role, tagline, points, cta, onClick }: {
+function RoleCard({ icon: Icon, accent, role, tagline, points, cta, onClick, highlight }: {
   icon: any;
   accent: string;
   role: string;
@@ -2080,6 +2085,8 @@ function RoleCard({ icon: Icon, accent, role, tagline, points, cta, onClick }: {
   points: string[];
   cta: string;
   onClick: () => void;
+  // A new feature called out in its own box (e.g. the COI check on Brokers).
+  highlight?: { label: string; text: string; link: string; onClick: () => void };
 }) {
   return (
     <div className="bg-white border border-[#0B1E3F]/10 rounded-2xl p-7 card-shadow flex flex-col text-[#0B1E3F] hover:border-[#0B1E3F]/25 transition">
@@ -2101,6 +2108,16 @@ function RoleCard({ icon: Icon, accent, role, tagline, points, cta, onClick }: {
           </li>
         ))}
       </ul>
+      {highlight && (
+        <button onClick={highlight.onClick} className="text-left mb-6 p-4 rounded-xl border border-[#FF6B35]/35 bg-[#FF6B35]/[0.06] hover:bg-[#FF6B35]/10 transition">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#FF6B35] text-white font-bold">New</span>
+            <span className="text-sm font-semibold text-[#0B1E3F]">{highlight.label}</span>
+          </div>
+          <div className="text-sm leading-relaxed text-[#0B1E3F]/75">{highlight.text}</div>
+          <div className="text-sm font-medium text-[#FF6B35] mt-2 inline-flex items-center gap-1">{highlight.link} <ArrowRight className="w-3.5 h-3.5" /></div>
+        </button>
+      )}
       <button
         onClick={onClick}
         className="w-full px-5 py-2.5 rounded-full text-sm font-semibold text-white transition flex items-center justify-center gap-2 hover:opacity-90"
@@ -2241,6 +2258,11 @@ function Nav({ navigate, user }: any) {
         <div className="hidden md:flex items-center gap-8 text-sm text-[#0B1E3F]/70">
           <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} className="hover:text-[#0B1E3F]">Home</button>
           <button onClick={() => scrollTo('product')} className="hover:text-[#0B1E3F]">What we check</button>
+          {COI_CHECK_ON && (
+            <button onClick={() => scrollTo('coi-check')} className="hover:text-[#0B1E3F] flex items-center gap-1.5">
+              COI check <span className="text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#FF6B35]/15 text-[#FF6B35] font-bold">New</span>
+            </button>
+          )}
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
           <button onClick={() => navigate('blog')} className="hover:text-[#0B1E3F]">Blog</button>
         </div>
