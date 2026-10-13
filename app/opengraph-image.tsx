@@ -79,7 +79,7 @@ export default async function Image() {
               lineHeight: 1.35,
             }}
           >
-            FMCSA · Website · Social profiles · Google Business · Domain WHOIS — cross-checked in 2.1 seconds.
+            FMCSA · Website · Social profiles · Google Business · Domain WHOIS — cross-checked on every lookup.
           </div>
         </div>
         <div
