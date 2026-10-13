@@ -22,6 +22,7 @@ declare global {
 // every button; add them for state transitions that mean something for
 // the business (signup, conversion, paid action, retention signal).
 export type EventName =
+  | 'demo_opened'
   | 'signup_complete'
   | 'login'
   | 'logout'
