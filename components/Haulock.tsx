@@ -445,7 +445,7 @@ function Landing({ navigate, user }: any) {
             </div>
             <div className="fade-up fade-up-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-[#0B1E3F]/60">
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> Official FMCSA data</div>
-              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 4,200+ carriers & brokers</div>
+              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 14 data sources per lookup</div>
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> No credit card</div>
             </div>
           </div>
@@ -556,10 +556,10 @@ function Landing({ navigate, user }: any) {
       <section className="py-20 px-6 bg-[#F5F3EE] text-[#0B1E3F] border-t border-[#0B1E3F]/10">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <BigStat value="$47M" label="prevented fraud losses" />
-            <BigStat value="4,247" label="carriers, brokers & drivers" />
-            <BigStat value="287K" label="verifications / month" />
-            <BigStat value="94%" label="fraud detection rate" />
+            <BigStat value="14" label="data sources per lookup" />
+            <BigStat value="FMCSA" label="official federal data" />
+            <BigStat value="1 verdict" label="in plain English" />
+            <BigStat value="3 free" label="lookups every month" />
           </div>
         </div>
       </section>
@@ -999,7 +999,7 @@ function Landing({ navigate, user }: any) {
             Don&apos;t get caught hauling for a ghost.
           </h2>
           <p className="text-xl text-[#0B1E3F]/60 mb-12 max-w-xl mx-auto">
-            Join 4,200+ carriers and brokers who verify every counterparty before booking.
+            Verify every counterparty before you book. Your first 3 lookups each month are free.
           </p>
           <button onClick={() => navigate('signup')} className="group px-10 py-5 bg-[#0B1E3F] text-white text-lg font-medium rounded-full hover:bg-[#0B1E3F]/90 transition inline-flex items-center gap-2 card-shadow-lg">
             Check any broker or carrier free <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition" />
@@ -2360,7 +2360,7 @@ function Footer({ navigate }: any) {
             <button onClick={() => go('landing')} aria-label="Haulock home" className="hover:opacity-80 transition w-fit">
               <Logo white />
             </button>
-            <div className="text-sm text-white/70 mt-4 max-w-xs">Know who&apos;s on the other end of every rate con. Trusted by 4,200+ carriers.</div>
+            <div className="text-sm text-white/70 mt-4 max-w-xs">Know who&apos;s on the other end of every rate con.</div>
           </div>
           {cols.map((col, i) => (
             <div key={i}>
@@ -2791,7 +2791,7 @@ function AuthShell({ title, subtitle, children, navigate }: any) {
           <div className="flex items-center gap-1 mb-4">
             {[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-[#FF6B35] text-[#FF6B35]" />)}
           </div>
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Trusted by 4,200+ carriers</div>
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Built for carriers and brokers</div>
           <div className="text-3xl md:text-4xl serif italic leading-tight mb-6 text-white">
             &ldquo;{testimonial.quote}&rdquo;
           </div>
@@ -3176,7 +3176,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
             Built for carriers who have been burned.
           </h1>
           <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
-            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and a 14-source web-reputation scan. Trusted by 4,200 carriers and brokers across the lower 48.
+            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and 14 data sources cross-checked on every lookup.
           </p>
         </div>
       </section>
@@ -3214,7 +3214,6 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
 
           <LegalH2>The data behind the badge</LegalH2>
           <LegalUl>
-            <li><strong>4,200+</strong> verified carriers and brokers in the community network</li>
             <li><strong>14</strong> data sources cross-checked per scan</li>
             <li><strong>5 years</strong> of FMCSA snapshot history archived</li>
             <li><strong>$0</strong> required to run your first lookup</li>
