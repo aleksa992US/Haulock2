@@ -168,3 +168,100 @@ export async function analyzeRateCon(ocrText: string): Promise<RateConExtraction
     notes: parsed.notes ?? null,
   };
 }
+
+// ---------- Certificate of insurance (COI) extraction ----------
+
+export type CoiCoverage = 'auto_liability' | 'cargo' | 'general_liability' | 'workers_comp' | 'umbrella' | 'other';
+
+export type CoiPolicy = {
+  coverage: CoiCoverage;
+  insurer_name: string | null;
+  naic: string | null;
+  policy_number: string | null;
+  effective_date: string | null; // YYYY-MM-DD
+  expiration_date: string | null; // YYYY-MM-DD
+  limit_amount: number | null; // USD — combined single / each occurrence / cargo limit
+};
+
+export type CoiExtraction = {
+  is_coi: boolean;
+  insured_name: string | null;
+  insured_address: string | null;
+  insured_mc: string | null;
+  insured_dot: string | null;
+  producer_name: string | null;
+  producer_phone: string | null;
+  producer_email: string | null;
+  certificate_date: string | null; // YYYY-MM-DD
+  certificate_holder: string | null;
+  policies: CoiPolicy[];
+  // Things in the document's own text that don't add up. Factual, not accusations.
+  irregularities: string[];
+};
+
+const COI_PROMPT = `You read OCR text from a trucking company's certificate of insurance (usually an ACORD 25 "Certificate of Liability Insurance") and return structured data.
+
+ACORD 25 layout: PRODUCER (the insurance agency) top-left with contact name, phone, email; INSURED (the trucking company) below it; INSURER A–F with NAIC numbers on the right; a COVERAGES table where each row has an insurer letter, the coverage type, POLICY NUMBER, POLICY EFF and POLICY EXP dates and LIMITS; DESCRIPTION OF OPERATIONS; CERTIFICATE HOLDER at the bottom; the certificate DATE top-right.
+
+Rules:
+- Map each coverage row to its insurer through the INSURER letter (A–F).
+- coverage: "AUTOMOBILE LIABILITY" → auto_liability; "MOTOR TRUCK CARGO" or cargo in OTHER/description → cargo; "COMMERCIAL GENERAL LIABILITY" → general_liability; "WORKERS COMPENSATION" → workers_comp; "UMBRELLA"/"EXCESS LIAB" → umbrella; anything else → other.
+- limit_amount: auto → COMBINED SINGLE LIMIT (or BODILY INJURY per accident if no CSL); general liability → EACH OCCURRENCE; cargo → the cargo limit; umbrella → EACH OCCURRENCE. Pure number in USD, no $ or commas.
+- Dates as YYYY-MM-DD (ACORD uses MM/DD/YYYY).
+- insured_mc / insured_dot only if printed as text (often in DESCRIPTION OF OPERATIONS, e.g. "MC# 123456", "USDOT 1234567"). Digits only.
+- is_coi = false if this is not an insurance certificate at all.
+- irregularities: short factual notes about things in the TEXT that don't add up, for example: expiration before effective date; policy term longer than ~13 months; certificate dated in the future; the same policy number listed for different insurers; insurer named without an NAIC number; producer email on a free webmail domain (gmail, yahoo, outlook, hotmail, aol, icloud, proton); misspelled well-known insurer names; limits that conflict between rows. Do not speculate about intent and never use the words fraud, fake or scam. Empty array if nothing stands out.
+
+Return ONLY a JSON object, no prose, no code fences:
+{"is_coi": boolean, "insured_name": string|null, "insured_address": string|null, "insured_mc": string|null, "insured_dot": string|null, "producer_name": string|null, "producer_phone": string|null, "producer_email": string|null, "certificate_date": string|null, "certificate_holder": string|null, "policies": [{"coverage": string, "insurer_name": string|null, "naic": string|null, "policy_number": string|null, "effective_date": string|null, "expiration_date": string|null, "limit_amount": number|null}], "irregularities": string[]}`;
+
+const COVERAGES: CoiCoverage[] = ['auto_liability', 'cargo', 'general_liability', 'workers_comp', 'umbrella', 'other'];
+
+export async function analyzeCoi(ocrText: string): Promise<CoiExtraction> {
+  const client = getClient();
+  if (!client) throw new Error('ANTHROPIC_API_KEY is not set');
+  const trimmed = ocrText.length > 20000 ? ocrText.slice(0, 20000) : ocrText;
+
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 1500,
+    system: COI_PROMPT,
+    messages: [{ role: 'user', content: `Extract this certificate of insurance and return the JSON:\n\n---\n${trimmed}\n---` }],
+  });
+
+  const textBlock = resp.content.find((b: any) => b.type === 'text') as any;
+  if (!textBlock?.text) throw new Error('Claude returned no text content');
+  const raw = textBlock.text.trim();
+  const jsonStr = raw.startsWith('{') ? raw : raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    throw new Error('Claude returned invalid JSON');
+  }
+  const str = (v: any) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+  return {
+    is_coi: parsed.is_coi !== false,
+    insured_name: str(parsed.insured_name),
+    insured_address: str(parsed.insured_address),
+    insured_mc: str(parsed.insured_mc),
+    insured_dot: str(parsed.insured_dot),
+    producer_name: str(parsed.producer_name),
+    producer_phone: str(parsed.producer_phone),
+    producer_email: str(parsed.producer_email),
+    certificate_date: str(parsed.certificate_date),
+    certificate_holder: str(parsed.certificate_holder),
+    policies: Array.isArray(parsed.policies)
+      ? parsed.policies.map((p: any) => ({
+          coverage: COVERAGES.includes(p?.coverage) ? p.coverage : 'other',
+          insurer_name: str(p?.insurer_name),
+          naic: str(p?.naic),
+          policy_number: str(p?.policy_number),
+          effective_date: str(p?.effective_date),
+          expiration_date: str(p?.expiration_date),
+          limit_amount: typeof p?.limit_amount === 'number' ? p.limit_amount : null,
+        }))
+      : [],
+    irregularities: Array.isArray(parsed.irregularities) ? parsed.irregularities.map(String).slice(0, 8) : [],
+  };
+}

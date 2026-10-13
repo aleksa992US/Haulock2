@@ -1243,7 +1243,7 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
     { key: 'lookalike',  label: 'Lookalike-domain check',     desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',                 chip: 'Levenshtein ≤ 2',            icon: AlertTriangle, angle: 244, radius: 70, activateAt:  7250 },
     { key: 'chameleon',  label: 'Cross-reference scan',       desc: 'Phone or address shared with another flagged FMCSA record',               chip: 'FMCSA Socrata · Haulock DB', icon: Eye,           angle: 270, radius: 92, activateAt:  8000 },
     { key: 'reputation', label: 'Web fraud reputation',       desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',       chip: '5 fraud queries',            icon: Search,        angle: 296, radius: 70, activateAt:  8750 },
-    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Aliases · sister entities · co-cited MC / DOT numbers in coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 321, radius: 92, activateAt:  9500 },
+    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Other companies and MC / DOT numbers named in news coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 321, radius: 92, activateAt:  9500 },
     { key: 'archive',    label: 'Haulock Day-1 archive',      desc: '5-year FMCSA snapshot history · email-shared MC cross-reference',         chip: 'Haulock archive',            icon: Database,      angle: 347, radius: 70, activateAt: 10250 },
   ];
   // The bar fills toward 95% and parks there until the API result arrives.
@@ -1258,12 +1258,6 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
   const easedPct = 1 - Math.pow(1 - linearPct, 1.6); // sub-linear ease-out
   const progressPct = Math.min(95, Math.round(easedPct * 95));
   const completedCount = sources.filter((s) => elapsed >= s.activateAt).length;
-
-  const polar = (angleDeg: number, radiusPct: number) => {
-    const rad = (angleDeg - 90) * (Math.PI / 180);
-    const r = (radiusPct / 100) * 90;
-    return { x: 100 + r * Math.cos(rad), y: 100 + r * Math.sin(rad) };
-  };
 
   return (
     <div className="bg-white rounded-3xl border border-[#0B1E3F]/10 card-shadow text-[#0B1E3F] text-left w-full overflow-hidden">
@@ -1290,6 +1284,13 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
         .radar-ping  { transform-origin: center; animation: radar-ping 2.8s ease-out infinite; }
         .blip        { transform-origin: center; animation: blip-pop 0.55s ease-out forwards, blip-glow 1.8s ease-in-out infinite; }
         .blip-spooky { transform-origin: center; animation: blip-pop 0.55s ease-out forwards, blip-glow-spooky 1.2s ease-in-out infinite; }
+        @keyframes count-pulse {
+          0%   { transform: scale(1); }
+          40%  { transform: scale(1.12); }
+          100% { transform: scale(1); }
+        }
+        .node-pop    { transform-box: fill-box; transform-origin: center; animation: blip-pop 0.55s ease-out forwards; }
+        .count-pulse { transform-box: fill-box; transform-origin: center; animation: count-pulse 0.6s ease-out 1; }
       `}</style>
 
       {(() => {
@@ -1333,71 +1334,171 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
         );
       })()}
 
-      {/* Body — radar (left) + sources (right). Left-aligned, full-width. */}
-      <div className="grid lg:grid-cols-5 gap-8 lg:gap-12 px-8 md:px-10 py-10">
-        {/* Radar */}
-        <div className="lg:col-span-2 flex items-start justify-start">
-          <div className="relative aspect-square w-full max-w-md">
-            <svg viewBox="0 0 200 200" className="w-full h-full">
-              <defs>
-                <radialGradient id="radar-bg" cx="50%" cy="50%" r="50%">
-                  <stop offset="0%" stopColor="#16A34A" stopOpacity="0.06" />
-                  <stop offset="100%" stopColor="#0B1E3F" stopOpacity="0" />
-                </radialGradient>
-                <linearGradient id="sweep-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#16A34A" stopOpacity="0" />
-                  <stop offset="100%" stopColor="#16A34A" stopOpacity="0.6" />
-                </linearGradient>
-              </defs>
+      {/* Body — the 14-source radar (same design as the promo reels) on a dark
+          panel, then the per-source detail list below it. */}
+      <div className="px-4 md:px-10 pt-6 md:pt-8 pb-10">
+        {(() => {
+          const spookyKeys = result ? sources.filter((s) => isSourceSpooky(s.key, result)).map((s) => s.key) : [];
+          const complete = completedCount === sources.length;
+          // viewBox 1000×640: ring centred at (500, 320). Labels sit just
+          // outside the ring and are hidden on phones (the list below has them).
+          const CX = 500, CY = 320, R = 210, LABEL_R = 246;
+          // Short names for the radar; the list below keeps the full ones.
+          const RADAR_LABEL: Record<string, string> = {
+            fmcsa: 'FMCSA SAFER', 'fmcsa-li': 'Insurance & bond', 'fmcsa-name': 'MC name lookup', sms: 'SMS · BASICs',
+            places: 'Google Places', gsb: 'Safe Browsing', domain: 'WHOIS · DNS', social: 'Social media', web: 'Web presence',
+            lookalike: 'Lookalike domains', chameleon: 'Cross-reference', reputation: 'Fraud reputation', entities: 'Linked entities',
+            archive: '5-yr archive',
+          };
+          const at = (angleDeg: number, r: number) => {
+            const rad = (angleDeg - 90) * (Math.PI / 180);
+            return { x: CX + r * Math.cos(rad), y: CY + r * Math.sin(rad) };
+          };
+          return (
+            <div
+              className="relative rounded-2xl overflow-hidden"
+              style={{
+                background: 'radial-gradient(70% 70% at 50% 45%, #0B1E3F 0%, #06122A 70%)',
+              }}
+            >
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(rgba(245,243,238,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(245,243,238,0.035) 1px, transparent 1px)',
+                  backgroundSize: '36px 36px',
+                }}
+              />
+              <svg viewBox="0 0 1000 640" className="relative w-full max-w-[920px] mx-auto h-auto block">
+                <defs>
+                  <radialGradient id="radar-glow">
+                    <stop offset="0%" stopColor="#FF6B35" stopOpacity="0.35" />
+                    <stop offset="100%" stopColor="#FF6B35" stopOpacity="0" />
+                  </radialGradient>
+                </defs>
+                <circle cx={CX} cy={CY} r={R + 40} fill="url(#radar-glow)" opacity={complete ? 0.9 : 0.5} />
+                {[0.35, 0.68, 1].map((k) => (
+                  <circle key={k} cx={CX} cy={CY} r={R * k} fill="none" stroke="#F5F3EE" strokeOpacity="0.14" strokeWidth="1.5" />
+                ))}
 
-              <circle cx="100" cy="100" r="90" fill="url(#radar-bg)" />
+                <g className="radar-sweep" style={{ transformOrigin: `${CX}px ${CY}px` }}>
+                  <path
+                    d={`M ${CX} ${CY} L ${CX} ${CY - R} A ${R} ${R} 0 0 1 ${at(28, R).x} ${at(28, R).y} Z`}
+                    fill="#FF6B35"
+                    fillOpacity="0.16"
+                  />
+                  <line x1={CX} y1={CY} x2={CX} y2={CY - R} stroke="#FF6B35" strokeWidth="2.5" />
+                </g>
 
-              {[28, 50, 72, 90].map((r) => (
-                <circle key={r} cx="100" cy="100" r={r} fill="none" stroke="#0B1E3F" strokeOpacity="0.12" strokeWidth="0.5" />
-              ))}
-              <line x1="10"  y1="100" x2="190" y2="100" stroke="#0B1E3F" strokeOpacity="0.08" strokeWidth="0.4" />
-              <line x1="100" y1="10"  x2="100" y2="190" stroke="#0B1E3F" strokeOpacity="0.08" strokeWidth="0.4" />
-              <line x1="36"  y1="36"  x2="164" y2="164" stroke="#0B1E3F" strokeOpacity="0.05" strokeWidth="0.4" />
-              <line x1="164" y1="36"  x2="36"  y2="164" stroke="#0B1E3F" strokeOpacity="0.05" strokeWidth="0.4" />
+                {sources.map((s) => {
+                  const active = elapsed >= s.activateAt;
+                  const spooky = active && spookyKeys.includes(s.key);
+                  const p = at(s.angle, R);
+                  const color = spooky ? '#DC2626' : '#FF6B35';
+                  return (
+                    <g key={s.key}>
+                      <line
+                        x1={CX}
+                        y1={CY}
+                        x2={p.x}
+                        y2={p.y}
+                        stroke={active ? color : '#F5F3EE'}
+                        strokeOpacity={active ? 0.55 : 0.08}
+                        strokeWidth={active ? 2 : 1.2}
+                      />
+                      {active ? (
+                        <g className="node-pop">
+                          <circle cx={p.x} cy={p.y} r="15" fill={color} stroke={spooky ? '#FCA5A5' : '#FFD2BF'} strokeWidth="3" />
+                          {spooky ? (
+                            <text x={p.x} y={p.y + 6} textAnchor="middle" fontSize="18" fontWeight="700" fill="#fff">!</text>
+                          ) : (
+                            <path d={`M ${p.x - 6} ${p.y} l 4 4.5 l 8 -9`} fill="none" stroke="#fff" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+                          )}
+                        </g>
+                      ) : (
+                        <circle cx={p.x} cy={p.y} r="10" fill="#06122A" stroke="#F5F3EE" strokeOpacity="0.2" strokeWidth="2" />
+                      )}
+                    </g>
+                  );
+                })}
 
-              <circle cx="100" cy="100" r="90" fill="none" stroke="#0B1E3F" strokeOpacity="0.2" strokeWidth="1" />
+                <g className="hidden sm:inline">
+                  {sources.map((s) => {
+                    const active = elapsed >= s.activateAt;
+                    const spooky = active && spookyKeys.includes(s.key);
+                    const p = at(s.angle, LABEL_R);
+                    const cos = Math.cos((s.angle - 90) * (Math.PI / 180));
+                    const sin = Math.sin((s.angle - 90) * (Math.PI / 180));
+                    const anchor = Math.abs(cos) < 0.1 ? 'middle' : cos > 0 ? 'start' : 'end';
+                    const dy = Math.abs(cos) < 0.1 ? (sin > 0 ? 22 : -8) : Math.abs(cos) < 0.3 ? (sin > 0 ? 16 : -2) : 7;
+                    return (
+                      <text
+                        key={s.key}
+                        x={p.x + (anchor === 'start' ? 4 : anchor === 'end' ? -4 : 0)}
+                        y={p.y + dy}
+                        textAnchor={anchor}
+                        fontSize="21"
+                        fontWeight="500"
+                        style={{ fontFamily: "'Instrument Sans', system-ui, sans-serif" }}
+                        fill={spooky ? '#F87171' : active ? '#F5F3EE' : 'rgba(245,243,238,0.28)'}
+                      >
+                        {RADAR_LABEL[s.key] ?? s.label}
+                      </text>
+                    );
+                  })}
+                </g>
 
-              <g className="radar-ping">
-                <circle cx="100" cy="100" r="84" fill="none" stroke="#16A34A" strokeOpacity="0.5" strokeWidth="0.8" />
-              </g>
-              <g className="radar-ping" style={{ animationDelay: '1.4s' }}>
-                <circle cx="100" cy="100" r="84" fill="none" stroke="#16A34A" strokeOpacity="0.5" strokeWidth="0.8" />
-              </g>
+                <text
+                  x={CX}
+                  y={CY + 30}
+                  textAnchor="middle"
+                  fontSize="128"
+                  fontStyle="italic"
+                  className={complete ? 'count-pulse' : undefined}
+                  style={{ fontFamily: "'Instrument Serif', Georgia, serif", transformOrigin: `${CX}px ${CY}px` }}
+                  fill={spookyKeys.length > 0 ? '#F87171' : complete ? '#FF6B35' : '#F5F3EE'}
+                >
+                  {completedCount}
+                </text>
+                <text
+                  x={CX}
+                  y={CY + 72}
+                  textAnchor="middle"
+                  fontSize="17"
+                  letterSpacing="4"
+                  fontWeight="600"
+                  style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                  fill="#F5F3EE"
+                >
+                  DATA SOURCES
+                </text>
+              </svg>
 
-              <g className="radar-sweep">
-                <path d="M 100 100 L 100 10 A 90 90 0 0 1 175 60 Z" fill="url(#sweep-grad)" />
-                <line x1="100" y1="100" x2="100" y2="10" stroke="#16A34A" strokeOpacity="0.9" strokeWidth="1.2" />
-              </g>
+              <div className="relative pb-6 -mt-2 flex flex-col items-center gap-4">
+                <div
+                  className={`mono text-[11px] sm:text-xs uppercase tracking-[0.3em] ${
+                    spookyKeys.length > 0 ? 'text-[#F87171] font-semibold' : complete ? 'text-[#4ADE80]' : 'text-[#F5F3EE]/55'
+                  }`}
+                >
+                  {spookyKeys.length > 0
+                    ? `⚠ ${spookyKeys.length} red flag${spookyKeys.length === 1 ? '' : 's'} · ${completedCount} / 14 checked`
+                    : complete
+                      ? `✓ ${completedCount} / 14 cross-checked`
+                      : `Cross-checking ${completedCount} / 14…`}
+                </div>
+                <div className="flex items-center gap-3 mono text-[10px] sm:text-[11px] uppercase tracking-[0.25em]">
+                  <span className="px-2 py-1 rounded bg-[#FF6B35] text-white font-semibold">Live</span>
+                  <span className="text-[#F5F3EE]">14 data sources in parallel</span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
-              {sources.map((s) => {
-                const pos = polar(s.angle, s.radius);
-                const active = elapsed >= s.activateAt;
-                if (!active) return null;
-                const spooky = isSourceSpooky(s.key, result);
-                const fillColor = spooky ? '#DC2626' : '#16A34A';
-                return (
-                  <g key={s.key} className={spooky ? 'blip-spooky' : 'blip'} style={{ transformOrigin: `${pos.x}px ${pos.y}px` }}>
-                    <circle cx={pos.x} cy={pos.y} r={spooky ? 7 : 6} fill={fillColor} fillOpacity="0.22" />
-                    <circle cx={pos.x} cy={pos.y} r={spooky ? 3.5 : 3} fill={fillColor} />
-                  </g>
-                );
-              })}
-
-              <circle cx="100" cy="100" r="3" fill="#0B1E3F" />
-              <circle cx="100" cy="100" r="6" fill="none" stroke="#0B1E3F" strokeOpacity="0.3" strokeWidth="0.5" />
-            </svg>
-          </div>
-        </div>
-
-        {/* Sources list — 1 column on small, 2 columns on desktop. */}
-        <div className="lg:col-span-3">
+        {/* Sources list — detail for each check, under the radar. */}
+        <div className="mt-8">
           <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-4">Cross-checking 14 sources in parallel</div>
-          <div className="grid sm:grid-cols-2 gap-2">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {sources.map((s) => {
               const active = elapsed >= s.activateAt;
               const spooky = isSourceSpooky(s.key, result);
@@ -4847,7 +4948,8 @@ function ProfileTab({ user }: any) {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || 'Failed to save');
-      setInfo('Saved. Your score is being refreshed in the header.');
+      const savedAs = data?.mc ? `MC-${data.mc}` : data?.dot ? `USDOT ${data.dot}` : 'your ID';
+      setInfo(`Saved as ${savedAs}. Your score is being refreshed in the header.`);
       invalidateCache('own-score');
       // Force the local Supabase session JWT to refresh so user_metadata picks up the change.
       const sb = getSupabase();
@@ -6807,6 +6909,8 @@ function HeaderSearch({ navigate }: { navigate: any }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bare number that matches an MC and a USDOT for two different companies.
+  const [choices, setChoices] = useState<{ query: string; name: string; kind: 'mc' | 'dot' }[] | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -6821,15 +6925,17 @@ function HeaderSearch({ navigate }: { navigate: any }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const q = input.trim();
+  const run = async (q: string) => {
     if (!q) return;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setChoices(null);
     try {
       const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 409 && Array.isArray(data?.candidates)) {
+          setChoices(data.candidates);
+          return;
+        }
         if (res.status === 402) throw new Error(data?.error || 'Monthly lookup limit reached.');
         throw new Error(data?.error || `Lookup failed (${res.status})`);
       }
@@ -6848,6 +6954,11 @@ function HeaderSearch({ navigate }: { navigate: any }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    run(input.trim());
   };
 
   return (
@@ -6875,6 +6986,22 @@ function HeaderSearch({ navigate }: { navigate: any }) {
       {error && (
         <div className="absolute left-0 right-0 top-full mt-1 px-3 py-2 bg-white border border-[#DC2626]/30 rounded-lg text-xs text-[#DC2626] shadow-md z-30">
           {error}
+        </div>
+      )}
+      {choices && (
+        <div className="absolute left-0 right-0 top-full mt-1 p-2 bg-white border border-[#0B1E3F]/15 rounded-lg shadow-md z-30">
+          <div className="px-2 pt-1 pb-2 text-xs text-[#0B1E3F]/60">This number belongs to two different companies. Which one?</div>
+          {choices.map((c) => (
+            <button
+              key={c.query}
+              type="button"
+              onClick={() => { setInput(c.query); run(c.query); }}
+              className="w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm text-[#0B1E3F] hover:bg-[#0B1E3F]/5"
+            >
+              <span className="mono text-xs px-1.5 py-0.5 rounded bg-[#0B1E3F]/5">{c.kind === 'mc' ? 'MC' : 'USDOT'}</span>
+              <span className="truncate">{c.name}</span>
+            </button>
+          ))}
         </div>
       )}
     </form>
@@ -7266,9 +7393,10 @@ function Dashboard({ navigate, user }: any) {
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Welcome</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Hello, {user.name.split(' ')[0]}.</h1>
       </div>
-      <div className="grid md:grid-cols-4 gap-4">
+      <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4">
         <UsageCard label="Lookups this month" value={u.fmcsaLookups} limit={usage?.isAdmin ? null : plan.limits.fmcsaLookups} icon={Search} color="#0B1E3F" />
         <UsageCard label="Rate con scans" value={u.rateConScans} limit={usage?.isAdmin ? null : plan.limits.rateConScans} icon={FileText} color="#0B1E3F" />
+        <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />
         <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
         <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
       </div>
@@ -7582,6 +7710,7 @@ function VerifyTool({ navigate }: any) {
           // with a green pill so a driver visiting the verify page knows
           // immediately which tab applies to their workflow.
           { id: 'forensics', label: 'PDF forensics', tag: 'For drivers' },
+          { id: 'coi', label: 'COI check', tag: 'For brokers' },
           // Bulk verify is shipped but hidden from the tab strip until we
           // actually need it. Keep the route alive so existing deep-links
           // (and the underlying PageSlot) don't 404.
@@ -7598,7 +7727,7 @@ function VerifyTool({ navigate }: any) {
               {('tag' in t) && t.tag && (
                 <span
                   className={`text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold ${active ? 'bg-white/20 text-white' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}
-                  title="Drivers and owner-operators use this to check if a dispatcher edited a rate con before forwarding it."
+                  title={t.id === 'coi' ? 'Brokers use this to check a carrier’s certificate of insurance against FMCSA filings.' : 'Drivers and owner-operators use this to check if a dispatcher edited a rate con before forwarding it.'}
                 >
                   {t.tag}
                 </span>
@@ -7770,6 +7899,8 @@ function VerifyTool({ navigate }: any) {
         </div>
       )}
       {tab === 'forensics' && <PdfForensicsPanel />}
+      {tab === 'coi' && <CoiCheckPanel />}
+      {(tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
       {tab === 'bulk' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           <div className="flex items-start gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl mb-8">
@@ -7788,6 +7919,246 @@ function VerifyTool({ navigate }: any) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------- Forward-to-scan + COI check ----------
+
+const SCAN_EMAIL = process.env.NEXT_PUBLIC_SCAN_EMAIL || 'scan@haulock.com';
+
+function ForwardToScanCard() {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(SCAN_EMAIL);
+      setCopied(true);
+      track('scan_email_copied');
+      setTimeout(() => setCopied(false), 1800);
+    } catch {}
+  };
+  return (
+    <div className="flex flex-col md:flex-row md:items-center gap-4 p-5 bg-[#0B1E3F] text-white rounded-2xl">
+      <div className="w-11 h-11 rounded-xl bg-[#FF6B35] flex items-center justify-center flex-shrink-0">
+        <Mail className="w-5 h-5 text-white" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold">Or just forward it to <span className="mono">{SCAN_EMAIL}</span></div>
+        <div className="text-sm text-white/70 mt-0.5">Forward any rate con or insurance certificate from the email on your Haulock account. We reply in the same thread with a verdict, usually within a minute.</div>
+      </div>
+      <button onClick={copy} className="px-4 py-2 rounded-full bg-white text-[#0B1E3F] text-sm font-medium flex items-center justify-center gap-2 hover:bg-white/90 transition flex-shrink-0">
+        <Copy className="w-4 h-4" /> {copied ? 'Copied' : 'Copy address'}
+      </button>
+    </div>
+  );
+}
+
+function CoiCheckPanel() {
+  const [file, setFile] = useState<File | null>(null);
+  const [mc, setMc] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [drag, setDrag] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const run = async (f: File) => {
+    setFile(f); setLoading(true); setError(null); setResult(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const mcDigits = mc.replace(/[^0-9]/g, '');
+      if (mcDigits) fd.append('mc', mcDigits);
+      const r = await fetch('/api/coi/check', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        if (r.status === 402) throw new Error(j?.error || 'Monthly COI check limit reached. Upgrade your plan.');
+        throw new Error(j?.error || `Check failed (${r.status})`);
+      }
+      invalidateCache('lookups:200', 'usage', 'alerts');
+      track('coi_checked', { verdict: j?.verdict || 'unknown', score: typeof j?.score === 'number' ? j.score : 0, carrier_resolved: Boolean(j?.mc || j?.dot) });
+      setResult(j);
+    } catch (err: any) {
+      setError(err?.message || 'Check failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-start gap-4 p-4 bg-[#0B1E3F]/[0.04] border border-[#0B1E3F]/10 rounded-xl mb-6">
+        <ShieldCheck className="w-5 h-5 text-[#0B1E3F] flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-[#0B1E3F]">
+          <div className="font-medium mb-0.5">Insurance certificate (COI) check</div>
+          <div className="text-[#0B1E3F]/70">We read the COI, compare the auto liability policy with what the insurer filed with FMCSA, look for pending cancellations, expired dates and low limits, and check whether the PDF was edited.</div>
+        </div>
+      </div>
+
+      {!result && (
+        <>
+          <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">
+            Carrier MC number <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional — we read it from the COI when it&rsquo;s printed)</span>
+          </label>
+          <div className="flex items-stretch bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl overflow-hidden mb-5 max-w-sm focus-within:border-[#0B1E3F] transition">
+            <span className="px-3 flex items-center mono text-sm text-[#0B1E3F]/60 border-r border-[#0B1E3F]/10 bg-white">MC-</span>
+            <input value={mc} onChange={(e) => setMc(e.target.value)} disabled={loading} inputMode="numeric" placeholder="123456" className="flex-1 bg-transparent px-3 py-3 outline-none mono text-[#0B1E3F]" />
+          </div>
+
+          <label
+            onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f && !loading) run(f); }}
+            className={`block border-2 border-dashed rounded-2xl p-12 text-center transition cursor-pointer ${drag ? 'border-[#FF6B35] bg-[#FF6B35]/5' : 'border-[#0B1E3F]/20 hover:border-[#FF6B35] hover:bg-[#FF6B35]/5'}`}
+          >
+            <input type="file" accept="application/pdf,image/png,image/jpeg" className="hidden" disabled={loading} onChange={(e) => { const f = e.target.files?.[0]; if (f) run(f); }} />
+            <div className="w-16 h-16 bg-[#0B1E3F]/5 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              {loading ? <div className="w-6 h-6 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <ShieldCheck className="w-8 h-8 text-[#0B1E3F]/50" />}
+            </div>
+            <div className="text-lg font-medium text-[#0B1E3F] mb-2">
+              {loading ? 'Reading the certificate and checking FMCSA filings…' : file ? file.name : 'Drop the carrier’s certificate of insurance here'}
+            </div>
+            <div className="text-sm text-[#0B1E3F]/60 mb-6">{loading ? 'Usually 10–20 seconds.' : 'ACORD 25 PDF works best — PDFs also get the edit check.'}</div>
+            {!loading && <span className="inline-block px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Choose file</span>}
+            <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 10MB</div>
+          </label>
+        </>
+      )}
+
+      {error && <div className="mt-4 text-sm text-[#DC2626]">{error}</div>}
+
+      {result && (
+        <div className="space-y-6">
+          <CoiResultBody report={result} />
+          <button onClick={() => { setResult(null); setFile(null); }} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Check another certificate</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Full COI result page, opened from History / Alerts.
+function CoiReportView({ report, navigate }: any) {
+  return (
+    <div className="space-y-6 text-[#0B1E3F]">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Insurance certificate check</div>
+          <h1 className="text-4xl serif italic">{report.name}</h1>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => navigate('history')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5">Back to history</button>
+          <button onClick={() => navigate('verify', { tab: 'coi' })} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Check another COI</button>
+        </div>
+      </div>
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow">
+        <CoiResultBody report={report} />
+      </div>
+    </div>
+  );
+}
+
+function CoiResultBody({ report }: { report: any }) {
+  const r = report || {};
+  const tone =
+    r.verdict === 'mismatch' ? { text: 'text-[#DC2626]', bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30' }
+    : r.verdict === 'verify' ? { text: 'text-[#D97706]', bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30' }
+    : { text: 'text-[#16A34A]', bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30' };
+  const fmtDate = (iso?: string | null) => {
+    if (!iso) return '—';
+    const d = new Date(`${String(iso).slice(0, 10)}T12:00:00Z`);
+    return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  };
+  const fmtUsd = (n?: number | null) => (n == null ? '—' : n >= 1_000_000 ? `$${(n / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })}M` : `$${Math.round(n / 1000).toLocaleString('en-US')}K`);
+  const checks: any[] = Array.isArray(r.checks) ? r.checks : [];
+  const fails = checks.filter((c) => c.status === 'fail').length;
+  const warns = checks.filter((c) => c.status === 'warn').length;
+  const policies: any[] = Array.isArray(r.extraction?.policies) ? r.extraction.policies : [];
+  const auto = policies.filter((p) => p.coverage === 'auto_liability');
+  const others = policies.filter((p) => p.coverage !== 'auto_liability');
+  const filings: any[] = Array.isArray(r.filings) ? r.filings : [];
+  const bipd = filings.filter((f) => /^BIPD/i.test(f.coverage) || f.formCode === '91X');
+  const coverageLabel: Record<string, string> = { cargo: 'Cargo', general_liability: 'General liability', workers_comp: 'Workers comp', umbrella: 'Umbrella / excess', other: 'Other' };
+  const icon = (status: string) =>
+    status === 'fail' ? <XCircle className="w-5 h-5 text-[#DC2626] flex-shrink-0 mt-0.5" />
+    : status === 'warn' ? <AlertTriangle className="w-5 h-5 text-[#D97706] flex-shrink-0 mt-0.5" />
+    : status === 'pass' ? <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
+    : <Shield className="w-5 h-5 text-[#0B1E3F]/50 flex-shrink-0 mt-0.5" />;
+
+  return (
+    <div className="space-y-6 text-[#0B1E3F]">
+      <div className={`p-5 rounded-2xl border ${tone.bg} ${tone.border}`}>
+        <div className={`text-xs mono uppercase tracking-wider ${tone.text} mb-1`}>{r.verdictLabel}</div>
+        <div className="text-2xl font-semibold">{r.name}</div>
+        <div className="text-sm text-[#0B1E3F]/60 mt-1 mono">
+          {[r.mc && `MC-${r.mc}`, r.dot && `DOT-${r.dot}`].filter(Boolean).join(' · ') || 'Carrier not identified'}
+          {r.filename ? ` · ${r.filename}` : ''}
+        </div>
+        <div className="text-sm text-[#0B1E3F]/70 mt-2">
+          {fails > 0 ? `${fails} thing${fails === 1 ? '' : 's'} don’t match` : 'Nothing contradicts FMCSA'}{warns > 0 ? ` · ${warns} to confirm` : ''} · checked against FMCSA data updated {fmtDate(r.dataAsOf)}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {checks.map((c, i) => (
+          <div key={i} className="flex items-start gap-3 p-4 bg-[#0B1E3F]/[0.03] border border-[#0B1E3F]/10 rounded-xl">
+            {icon(c.status)}
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-sm">{c.title}</div>
+              <div className="text-sm text-[#0B1E3F]/70 mt-0.5">{c.detail}</div>
+              <div className="mt-1.5 inline-block text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#0B1E3F]/8 text-[#0B1E3F]/55">{c.source}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="p-5 rounded-xl border border-[#0B1E3F]/10">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Auto liability on the certificate</div>
+          {auto.length === 0 ? <div className="text-sm text-[#0B1E3F]/60">None listed.</div> : auto.map((p, i) => (
+            <div key={i} className="text-sm space-y-1 mb-3 last:mb-0">
+              <div className="font-semibold">{p.insurer_name || 'Insurer not shown'}</div>
+              <div className="mono text-[#0B1E3F]/70">Policy {p.policy_number || '—'}</div>
+              <div className="text-[#0B1E3F]/70">{fmtDate(p.effective_date)} → {fmtDate(p.expiration_date)} · {fmtUsd(p.limit_amount)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="p-5 rounded-xl border border-[#0B1E3F]/10">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Filed with FMCSA (liability)</div>
+          {bipd.length === 0 ? <div className="text-sm text-[#0B1E3F]/60">{r.carrier ? 'No liability filing on record.' : 'Add the carrier’s MC number to compare.'}</div> : bipd.map((f, i) => (
+            <div key={i} className="text-sm space-y-1 mb-3 last:mb-0">
+              <div className="font-semibold">{f.insurer || 'Unknown insurer'}</div>
+              <div className="mono text-[#0B1E3F]/70">Policy {f.policyNumber || '—'} · {f.coverage}</div>
+              <div className="text-[#0B1E3F]/70">{f.maxCoverageK != null ? fmtUsd(f.maxCoverageK * 1000) : '—'}{f.cancelEffectiveDate && f.cancelEffectiveDate !== f.effectiveDate ? ` · cancellation ${fmtDate(f.cancelEffectiveDate)}` : ''}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {(others.length > 0 || r.extraction?.producer_name) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          {others.length > 0 && (
+            <div className="p-5 rounded-xl border border-[#0B1E3F]/10">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Other coverage on the certificate</div>
+              {others.map((p, i) => (
+                <div key={i} className="text-sm mb-2 last:mb-0">
+                  <span className="font-semibold">{coverageLabel[p.coverage] || 'Other'}</span>
+                  <span className="text-[#0B1E3F]/70"> · {p.insurer_name || '—'} · {fmtUsd(p.limit_amount)} · exp. {fmtDate(p.expiration_date)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {r.extraction?.producer_name && (
+            <div className="p-5 rounded-xl border border-[#0B1E3F]/10">
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Agent on the certificate</div>
+              <div className="text-sm font-semibold">{r.extraction.producer_name}</div>
+              <div className="text-sm text-[#0B1E3F]/70">{[r.extraction.producer_phone, r.extraction.producer_email].filter(Boolean).join(' · ') || '—'}</div>
+              <div className="text-xs text-[#0B1E3F]/55 mt-2">To confirm coverage, call the insurer using a number from its own website rather than the contact details printed here.</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="p-4 bg-[#0B1E3F]/[0.03] rounded-xl text-xs text-[#0B1E3F]/60 leading-relaxed">{r.disclaimer}</div>
     </div>
   );
 }
@@ -7943,7 +8314,14 @@ function entityBadge(r: any): { label: string; bg: string; color: string; icon: 
   return { label: 'No authority', bg: '#DC2626', color: '#ffffff', icon: '⚠' };
 }
 
+// COI checks are saved to history like any other scan; route them to their
+// own view so the carrier report never receives a COI payload.
 function Report({ report, navigate }: any) {
+  if (report?.kind === 'coi') return <CoiReportView report={report} navigate={navigate} />;
+  return <CarrierReport report={report} navigate={navigate} />;
+}
+
+function CarrierReport({ report, navigate }: any) {
   if (!report) {
     return (
       <div className="py-20 px-6 text-center text-[#0B1E3F]">
@@ -8552,7 +8930,7 @@ function Report({ report, navigate }: any) {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Cross-references & shared identifiers</h2>
-              <div className="text-sm text-[#0B1E3F]/60 mt-1">Aliases, sister-entities, and shared phone/address links — auto-detected from FMCSA and trusted-source web coverage.</div>
+              <div className="text-sm text-[#0B1E3F]/60 mt-1">FMCSA records sharing this phone or address, and other companies named in news and industry coverage. A shared mention is not proof of a relationship.</div>
             </div>
             <span className="px-3 py-1.5 bg-[#FF6B35]/10 text-[#FF6B35] rounded-full text-xs mono uppercase tracking-wider font-semibold">
               {(r.linkedEntities?.length || 0) + (r.chameleonLinks?.length || 0)} links
@@ -8587,7 +8965,7 @@ function Report({ report, navigate }: any) {
 
           {r.linkedEntities && r.linkedEntities.length > 0 && (
             <div>
-              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Aliases & sister-entities (from web coverage)</div>
+              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Other companies named in the same coverage</div>
               <div className="grid sm:grid-cols-2 gap-2">
                 {r.linkedEntities.map((entity: any, i: number) => {
                   const display = entity.kind === 'mc' ? `MC-${entity.value}` : entity.kind === 'dot' ? `DOT-${entity.value}` : entity.value;
@@ -8808,7 +9186,15 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
     safetyEventGroup?: string;
     subpageFetched?: boolean;
   };
-  const basics = (sms?.basics || {}) as Record<string, BasicShape | undefined>;
+  // Reports saved before the parser fix carry FMCSA's intervention threshold
+  // (e.g. 80% for Hazmat) as a "percentile" on BASICs with no measure. FMCSA
+  // only ranks carriers that have a measure, so drop those.
+  const basics = Object.fromEntries(
+    Object.entries((sms?.basics || {}) as Record<string, BasicShape | undefined>).map(([k, b]) => [
+      k,
+      b && b.percentile != null && !(b.measure > 0) ? { ...b, percentile: undefined } : b,
+    ]),
+  ) as Record<string, BasicShape | undefined>;
   const inspections = sms?.inspections || null;
   const crashes = sms?.crashes || null;
   const overview = sms?.carrier || {};
@@ -10218,6 +10604,7 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
   // for the same carrier should still light up because the user did at
   // some point feed us a rate con.
   const hasRateCon = l.source === 'ratecon' || group.rows.some((r: any) => r.source === 'ratecon');
+  const hasCoi = l.source === 'coi' || group.rows.some((r: any) => r.source === 'coi');
   return (
     <div className="text-[#0B1E3F]">
       <div className="flex items-center gap-4 p-4 md:p-5 hover:bg-[#0B1E3F]/5 transition">
@@ -10231,6 +10618,14 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
                 title="This carrier was scanned from a PDF rate confirmation upload."
               >
                 <FileText className="w-3 h-3" /> Rate con
+              </span>
+            )}
+            {hasCoi && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#0B1E3F]/8 text-[#0B1E3F] text-[10px] mono uppercase tracking-wider font-bold flex-shrink-0"
+                title="An insurance certificate (COI) for this carrier was checked against FMCSA filings."
+              >
+                <ShieldCheck className="w-3 h-3" /> COI
               </span>
             )}
           </div>
@@ -10272,6 +10667,7 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
                     <div className="text-xs text-[#0B1E3F]/60 truncate">
                       {timeAgo(row.created_at)}
                       {row.source === 'ratecon' && ' · rate con'}
+                      {row.source === 'coi' && ' · COI check'}
                       {row.email_query && ` · ${row.email_query}`}
                     </div>
                   </div>

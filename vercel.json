@@ -21,6 +21,12 @@
     },
     "app/api/cron/free-user-nurture/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/coi/check/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/inbound/email/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [

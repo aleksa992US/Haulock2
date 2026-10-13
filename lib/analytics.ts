@@ -28,6 +28,8 @@ export type EventName =
   | 'verify_completed'
   | 'rate_con_uploaded'
   | 'pdf_forensics_scanned'
+  | 'coi_checked'
+  | 'scan_email_copied'
   | 'report_shared_email'
   | 'report_exported_pdf'
   | 'watchlist_added'

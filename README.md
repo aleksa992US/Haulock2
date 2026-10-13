@@ -50,6 +50,34 @@ Copy `.env.example` to `.env.local` and fill in as you build out backend feature
 - **FMCSA API** — register at https://mobile.fmcsa.dot.gov/QCDevsite (approval takes a few days)
 - **Stripe** — grab keys from https://dashboard.stripe.com/apikeys
 
+## Forward-to-scan (scan@haulock.com) and COI checks
+
+**COI check** (`/api/coi/check`, Verify → COI check) reads a certificate of insurance with
+Document AI + Claude and compares it with FMCSA's public insurance filings (dataset
+`qh9u-swkp` on data.transportation.gov) and the PDF metadata. No new keys needed; optional
+`FMCSA_INSURANCE_DATASET_ID` overrides the dataset. Monthly limits: `coiChecks` in `lib/plans.ts`.
+
+**Forward-to-scan** (`/api/inbound/email`) replies to forwarded rate cons and COIs. Setup:
+
+1. Run the `inbound_scans` table from `supabase/schema.sql` in the Supabase SQL editor.
+2. Resend → Receiving: add a receiving domain. If haulock.com mail already runs on another
+   provider (e.g. Google Workspace), use a subdomain such as `in.haulock.com` and forward
+   `scan@haulock.com` to `scan@in.haulock.com` from your mail provider.
+3. Resend → Webhooks: add `https://haulock.com/api/inbound/email` with the `email.received`
+   event; copy its signing secret.
+4. Env vars:
+   - `RESEND_INBOUND_WEBHOOK_SECRET` — the webhook signing secret (required)
+   - `INBOUND_SCAN_ADDRESS` — address shown in replies (default `scan@haulock.com`)
+   - `INBOUND_SCAN_ADDRESSES` — optional comma list; only emails to these are processed
+   - `INBOUND_PREVIEW_MONTHLY` — free/unknown senders' preview replies per month (default 3)
+   - `INBOUND_DAILY_CAP` — max emails per sender per day before ignoring (default 25)
+   - `NEXT_PUBLIC_SCAN_EMAIL` — address shown in the app (default `scan@haulock.com`)
+
+Paid plans get full replies and the result saved to history (counts against rate con / COI
+limits); free and unknown senders get a preview. Replies carry `Auto-Submitted` and
+`X-Haulock-Scan` headers, and auto-replies, mailing lists and our own domain are ignored, so
+mail loops can't start.
+
 ## Project structure
 
 ```

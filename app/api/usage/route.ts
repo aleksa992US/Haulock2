@@ -29,10 +29,11 @@ export async function GET() {
     }
   }
 
-  const [quick, scans, forensics, watchlist] = await Promise.all([
+  const [quick, scans, forensics, coi, watchlist] = await Promise.all([
     supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'quick').gte('created_at', since),
     supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'ratecon').gte('created_at', since),
     supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'forensics').gte('created_at', since),
+    supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'coi').gte('created_at', since),
     supabase.from('watchlist').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds),
   ]);
 
@@ -44,6 +45,7 @@ export async function GET() {
       fmcsaLookups: quick.count ?? 0,
       rateConScans: scans.count ?? 0,
       pdfForensics: forensics.count ?? 0,
+      coiChecks: coi.count ?? 0,
       watchlist: watchlist.count ?? 0,
     },
     periodStart: since,

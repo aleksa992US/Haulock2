@@ -237,15 +237,16 @@ function parseBasicSubpage(html: string): Partial<SmsBasic> | null {
     if (Number.isFinite(m)) out.measure = m;
   }
 
-  // Percentile, e.g. "Hazardous Materials Compliance 80% 80% 80%". The
-  // first integer percent we see in the BASIC chart is the carrier's rank
-  // for the relevant Safety Event Group. We capture only the first.
-  const pctRe = /(?:Percentile\s*[:\s]*)?(\d{1,3})\s*%\s*(?:Percentile)?/i;
+  // Percentile. The chart reads "Measure: <m> Percentile: <p>% Intervention
+  // Threshold". When FMCSA has no measure or percentile for the carrier both
+  // are blank, so the next number is the threshold ("Percentile: 80%
+  // Intervention Threshold") — that is not the carrier's rank. FMCSA only
+  // ranks carriers that have a measure, so require one too.
   // Restrict to the area before the FMCSA template footer to avoid false
   // matches in the boilerplate.
   const head = flat.slice(0, 8000);
-  const pctMatch = head.match(/Percentile\s*[:\s]*(\d{1,3})/i);
-  if (pctMatch) {
+  const pctMatch = head.match(/Percentile\s*:?\s*(\d{1,3})\s*%(?!\s*Intervention\s*Threshold)/i);
+  if (pctMatch && out.measure != null && out.measure > 0) {
     const p = parseInt(pctMatch[1], 10);
     if (Number.isFinite(p) && p >= 0 && p <= 100) out.percentile = p;
   }

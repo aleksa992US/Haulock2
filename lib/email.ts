@@ -3,6 +3,10 @@ import { createHmac } from 'crypto';
 
 let cached: Resend | null = null;
 
+export function getResendClient(): Resend | null {
+  return getResend();
+}
+
 function getResend(): Resend | null {
   if (cached) return cached;
   const key = process.env.RESEND_API_KEY;
@@ -71,12 +75,14 @@ export type SendArgs = {
   html: string;
   replyTo?: string;
   attachments?: SendAttachment[];
+  // Extra headers, e.g. In-Reply-To / References to thread a reply.
+  headers?: Record<string, string>;
   // `kind` tags the send so the admin newsletter dashboard can show counts
   // per type per recipient. Optional — old call sites stay legal.
-  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'other';
+  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'other';
 };
 
-export async function sendEmail({ to, subject, html, replyTo, attachments, kind }: SendArgs) {
+export async function sendEmail({ to, subject, html, replyTo, attachments, headers: extraHeaders, kind }: SendArgs) {
   const resend = getResend();
   if (!resend) throw new Error('RESEND_API_KEY is not set');
   const from = process.env.RESEND_FROM || 'Haulock <onboarding@resend.dev>';
@@ -91,7 +97,7 @@ export async function sendEmail({ to, subject, html, replyTo, attachments, kind 
   // recipient). Multi-recipient transactional sends are rare in this app
   // and we don't want a single token to opt out an unrelated person.
   const recipients = Array.isArray(to) ? to : [to];
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(extraHeaders || {}) };
   if (recipients.length === 1) {
     const url = unsubscribeUrl(recipients[0]);
     headers['List-Unsubscribe'] = `<${url}>`;
@@ -141,9 +147,12 @@ type LayoutArgs = {
   // at the signed unsubscribe URL for this address. We pass the email
   // through (not the URL) so the layout can build a stable footer.
   unsubEmail?: string;
+  // Replaces the "you have an account" footer line, e.g. for replies to
+  // people who emailed us without an account.
+  reason?: string;
 };
 
-function baseLayout({ preview, body, unsubEmail }: LayoutArgs): string {
+function baseLayout({ preview, body, unsubEmail, reason }: LayoutArgs): string {
   const unsubBlock = unsubEmail
     ? `<br><a href="${unsubscribeUrl(unsubEmail)}" style="color:rgba(11,30,63,0.55);text-decoration:underline;">Unsubscribe</a>`
     : '';
@@ -179,7 +188,7 @@ function baseLayout({ preview, body, unsubEmail }: LayoutArgs): string {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;margin-top:24px;">
       <tr><td align="center" style="padding:16px 24px;font-size:12px;color:rgba(11,30,63,0.5);line-height:1.7;">
         Haulock · Built for carriers who&rsquo;ve been burned.<br>
-        You&rsquo;re receiving this because you have an account at <a href="https://haulock.com" style="color:rgba(11,30,63,0.7);text-decoration:underline;">haulock.com</a>.${unsubBlock}
+        ${reason ?? `You&rsquo;re receiving this because you have an account at <a href="https://haulock.com" style="color:rgba(11,30,63,0.7);text-decoration:underline;">haulock.com</a>.`}${unsubBlock}
       </td></tr>
     </table>
   </td></tr>
@@ -1005,5 +1014,112 @@ ${divider()}
   return {
     subject: `Your ${amount} Haulock affiliate payout`,
     html: baseLayout({ preview: `${amount} just left our account — code ${args.code}.`, body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// ---------- Forward-to-scan replies (scan@haulock.com) ----------
+
+export type InboundScanResult = {
+  kind: 'ratecon' | 'coi' | 'mc';
+  filename?: string;
+  // Company the check is about and its identifiers line.
+  headline: string;
+  idLine?: string;
+  tone: 'good' | 'warn' | 'bad';
+  verdictLabel: string;
+  score?: number;
+  findings: { tone: 'good' | 'warn' | 'bad' | 'info'; title: string; desc: string }[];
+  disclaimer: string;
+};
+
+export type InboundReplyMode =
+  | { mode: 'full' }
+  | { mode: 'preview'; remaining: number }
+  | { mode: 'limit'; reason: string; upgrade: boolean }
+  | { mode: 'nothing' }
+  | { mode: 'error' };
+
+const TONE_COLOR = { good: '#16A34A', warn: '#D97706', bad: '#DC2626', info: 'rgba(11,30,63,0.45)' } as const;
+const TONE_BG = { good: 'rgba(22,163,74,0.07)', warn: 'rgba(245,158,11,0.08)', bad: 'rgba(220,38,38,0.06)' } as const;
+const KIND_LABEL = { ratecon: 'Rate con · broker check', coi: 'Insurance certificate (COI) check', mc: 'MC / DOT check' } as const;
+
+function scanCard(r: InboundScanResult, maxFindings: number): string {
+  const shown = r.findings.slice(0, maxFindings);
+  const hidden = r.findings.length - shown.length;
+  const rows = shown.map((f) => `
+      <tr><td style="padding:8px 0;border-top:1px solid rgba(11,30,63,0.06);">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+          <td style="width:10px;vertical-align:top;padding-top:6px;"><div style="width:6px;height:6px;border-radius:50%;background:${TONE_COLOR[f.tone]};"></div></td>
+          <td style="padding-left:10px;">
+            <div style="font-size:14px;font-weight:600;color:#0B1E3F;">${escapeHtml(f.title)}</div>
+            <div style="font-size:13px;color:rgba(11,30,63,0.65);line-height:1.5;">${escapeHtml(f.desc)}</div>
+          </td>
+        </tr></table>
+      </td></tr>`).join('');
+  return `
+<div style="background:${TONE_BG[r.tone]};border:1px solid ${TONE_COLOR[r.tone]}33;border-radius:12px;padding:20px;margin:0 0 20px 0;">
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:6px;">${KIND_LABEL[r.kind]}${r.filename ? ` · ${escapeHtml(r.filename)}` : ''}</div>
+  <div style="font-size:20px;font-weight:600;color:#0B1E3F;margin-bottom:2px;">${escapeHtml(r.headline)}</div>
+  ${r.idLine ? `<div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);margin-bottom:12px;">${escapeHtml(r.idLine)}</div>` : ''}
+  <div style="display:inline-block;padding:5px 12px;background:${TONE_COLOR[r.tone]};color:#ffffff;border-radius:6px;font-size:13px;font-weight:600;margin-bottom:${shown.length ? '12px' : '0'};">${escapeHtml(r.verdictLabel)}${r.score != null ? ` · ${r.score}/100` : ''}</div>
+  ${shown.length ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">${rows}</table>` : ''}
+  ${hidden > 0 ? `<div style="font-size:13px;color:rgba(11,30,63,0.6);margin-top:8px;">+ ${hidden} more finding${hidden === 1 ? '' : 's'} in the full report</div>` : ''}
+</div>`;
+}
+
+export function inboundScanReplyTemplate(args: {
+  results: InboundScanResult[];
+  reply: InboundReplyMode;
+  siteUrl: string;
+  scanAddress: string;
+  hasAccount: boolean;
+}): { html: string; preview: string } {
+  const { results, reply, siteUrl, scanAddress, hasAccount } = args;
+  const signup = `${siteUrl}/signup?ref=email-scan`;
+  let body = '';
+  let preview = '';
+
+  if (reply.mode === 'full' || reply.mode === 'preview') {
+    const worst = results.some((r) => r.tone === 'bad') ? 'bad' : results.some((r) => r.tone === 'warn') ? 'warn' : 'good';
+    const lead = worst === 'bad' ? 'We found things that don’t check out.' : worst === 'warn' ? 'A few things to confirm before you book.' : 'Nothing stood out in our checks.';
+    preview = `${results[0]?.verdictLabel || 'Your Haulock check'} — ${results[0]?.headline || ''}`;
+    body += h1(`Your Haulock check is ${italicAccent('ready.')}`);
+    body += p(lead);
+    body += results.map((r) => scanCard(r, reply.mode === 'full' ? 6 : 1)).join('');
+    if (reply.mode === 'full') {
+      body += button(`${siteUrl}/history`, 'Open in your Haulock history →');
+    } else {
+      body += p(`This is a preview. Full email reports, with every finding and the complete FMCSA record, are included on paid plans.${hasAccount ? '' : ' A free account lets you run broker lookups and COI checks in the app.'}${reply.remaining > 0 ? ` You have ${reply.remaining} free email check${reply.remaining === 1 ? '' : 's'} left this month.` : ''}`);
+      body += button(hasAccount ? `${siteUrl}/plan` : signup, hasAccount ? 'See plans →' : 'Create a free account →');
+    }
+    body += divider();
+    body += results
+      .map((r) => r.disclaimer)
+      .filter((d, i, arr) => arr.indexOf(d) === i)
+      .map((d) => `<div style="font-size:12px;color:rgba(11,30,63,0.55);line-height:1.6;margin-bottom:8px;">${escapeHtml(d)}</div>`)
+      .join('');
+  } else if (reply.mode === 'limit') {
+    preview = 'You’ve reached your email check limit for this month';
+    body += h1(`You’ve used this month’s ${italicAccent('email checks.')}`);
+    body += p(escapeHtml(reply.reason));
+    body += button(reply.upgrade ? `${siteUrl}/plan` : signup, reply.upgrade ? 'Upgrade your plan →' : 'Create a free account →');
+  } else if (reply.mode === 'nothing') {
+    preview = 'Attach the rate con or COI and send it again';
+    body += h1(`We didn’t find anything ${italicAccent('to check.')}`);
+    body += p(`Forward the email with the <strong>rate confirmation</strong> or <strong>certificate of insurance (COI)</strong> attached as a PDF, or include the MC or DOT number in your message, and send it to <strong>${escapeHtml(scanAddress)}</strong> again.`);
+  } else {
+    preview = 'We couldn’t finish this check';
+    body += h1(`We couldn’t finish ${italicAccent('this check.')}`);
+    body += p('Something went wrong reading your attachment. Try again in a few minutes, or upload it at haulock.com. If it keeps happening, reply to contact@haulock.com.');
+  }
+
+  body += `<div style="font-size:12px;color:rgba(11,30,63,0.5);line-height:1.6;margin-top:16px;">Haulock doesn’t keep your attachments. ${hasAccount ? 'The result is saved to your Haulock history.' : ''}</div>`;
+  return {
+    preview,
+    html: baseLayout({
+      preview,
+      body,
+      reason: `You’re receiving this because you emailed <a href="mailto:${scanAddress}" style="color:rgba(11,30,63,0.7);text-decoration:underline;">${scanAddress}</a>.`,
+    }),
   };
 }
