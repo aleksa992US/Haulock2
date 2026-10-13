@@ -94,6 +94,12 @@ function nameTokens(s: string | null | undefined, noise = ENTITY_NOISE): Set<str
 
 // True when the two names share their significant words. FMCSA truncates
 // insurer names at 45 characters, so a prefix overlap counts.
+// An FMCSA liability filing from the certificate's insurer, if any.
+function sameInsurer(p: CoiPolicy, filings: InsuranceFiling[]): InsuranceFiling | undefined {
+  if (!p.insurer_name) return undefined;
+  return filings.find((f) => namesAgree(p.insurer_name, f.insurer));
+}
+
 function namesAgree(a: string | null | undefined, b: string | null | undefined, noise = ENTITY_NOISE): boolean {
   const ta = nameTokens(a, noise);
   const tb = nameTokens(b, noise);
@@ -283,6 +289,17 @@ export function compareCoi(
         }
       } else if (selfInsured) {
         add('info', 'Carrier is self-insured with FMCSA', `FMCSA lists self-insurance for ${carrierLabel}; the certificate lists ${p.insurer_name || 'an insurer'} policy ${p.policy_number || '(no number)'}. Large carriers often carry excess policies on top of self-insurance.`, FMCSA_SRC);
+      } else if (sameInsurer(p, bipdFilings)) {
+        // Same insurer, different number: usually a renewal. FMCSA filings stay
+        // in force until cancelled, so the original policy number often stays
+        // on record after the policy is renewed under a new one.
+        const f = sameInsurer(p, bipdFilings)!;
+        add('warn', 'Policy number differs from the FMCSA filing',
+          `The certificate lists ${p.insurer_name} policy ${p.policy_number || '(no number shown)'}; FMCSA shows ${f.insurer}${f.policyNumber ? ` policy ${f.policyNumber}` : ''} on file. Often a renewal under a new number — confirm with the insurer that this policy is the one in force.`,
+          FMCSA_SRC);
+        if (pendingCancellation(f)) {
+          add('fail', 'Cancellation pending on FMCSA', `FMCSA shows ${f.insurer}${f.policyNumber ? ` policy ${f.policyNumber}` : ''} with a cancellation effective ${fmtDate(f.cancelEffectiveDate)}. Confirm the policy is still in force before dispatching.`, FMCSA_SRC);
+        }
       } else {
         add('fail', 'Auto liability policy not found in FMCSA filings',
           `The certificate lists ${p.insurer_name || 'an insurer'} policy ${p.policy_number || '(no number shown)'}, which isn't among the filings FMCSA lists for ${carrierLabel}. FMCSA shows: ${fmcsaListing(bipdFilings) || 'no matching policies'}.`,
@@ -334,8 +351,10 @@ export function compareCoi(
 
   // 7) PDF metadata.
   if (forensics) {
+    // A warning, not a mismatch: agents routinely edit certificates after
+    // issuing them (adding the certificate holder, for one).
     if (forensics.verdict === 'likely_tampered') {
-      add('fail', 'PDF was modified after it was created', forensics.flags.filter((f) => f.sev !== 'info').slice(0, 2).map((f) => f.title).join(' · ') || 'The file metadata shows edits after creation.', PDF_SRC);
+      add('warn', 'PDF was modified after it was created', `${forensics.flags.filter((f) => f.sev !== 'info').slice(0, 2).map((f) => f.title).join(' · ') || 'The file metadata shows edits after creation.'} Agents often edit certificates to add the certificate holder — ask the agent to email the certificate to you directly.`, PDF_SRC);
     } else if (forensics.verdict === 'suspicious') {
       add('warn', 'PDF metadata has irregularities', forensics.flags.filter((f) => f.sev !== 'info').slice(0, 2).map((f) => f.title).join(' · ') || 'Some metadata looks unusual.', PDF_SRC);
     } else {
