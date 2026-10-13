@@ -222,6 +222,7 @@ export async function processInboundEmail(emailId: string): Promise<InboundOutco
   const results: InboundScanResult[] = [];
   const docTypes: string[] = [];
   let limited = 0;
+  let notInPlan = false;
   const svc = getServiceSupabase();
   // Only paid plans get results saved to history; free and unknown senders
   // get the email preview only.
@@ -244,6 +245,12 @@ export async function processInboundEmail(emailId: string): Promise<InboundOutco
 
       if (isCoi) {
         docTypes.push('coi');
+        if (!paid && !admin) {
+          limited += 1;
+          notInPlan = true;
+          results.push({ kind: 'coi', filename, headline: 'COI checks are on paid plans', tone: 'warn', verdictLabel: 'Not checked', findings: [{ tone: 'info', title: 'Upgrade to check certificates', desc: 'COI checks are included on the Carrier, Team and Fleet plans.' }], disclaimer: RATECON_DISCLAIMER });
+          continue;
+        }
         if (await overCap('coi', plan?.limits.coiChecks)) {
           limited += 1;
           results.push({ kind: 'coi', filename, headline: 'Monthly COI check limit reached', tone: 'warn', verdictLabel: 'Not checked', findings: [{ tone: 'info', title: 'Upgrade for more COI checks', desc: `Your plan includes ${plan?.limits.coiChecks} COI checks a month.` }], disclaimer: RATECON_DISCLAIMER });
@@ -317,7 +324,7 @@ export async function processInboundEmail(emailId: string): Promise<InboundOutco
   const checked = results.filter((r) => r.verdictLabel !== 'Not checked');
   let mode: InboundReplyMode;
   if (checked.length === 0 && limited > 0) {
-    mode = { mode: 'limit', reason: 'Your plan’s monthly allowance for these checks is used up.', upgrade: true };
+    mode = { mode: 'limit', reason: notInPlan ? 'COI checks are included on paid plans.' : 'Your plan’s monthly allowance for these checks is used up.', upgrade: true };
   } else if (checked.length === 0) {
     mode = { mode: 'error' };
   } else {

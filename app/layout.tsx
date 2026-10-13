@@ -13,7 +13,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 const TITLE = 'Haulock: Verify any broker or carrier. Stop freight fraud.';
 const DESCRIPTION =
   'Haulock verifies freight brokers and carriers in seconds using official data from the Federal Motor Carrier Safety Administration (FMCSA). Cross-checks FMCSA SAFER, company website, social profiles, Google Business address, and domain records to catch double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.';
-const SHORT_DESC = 'Official FMCSA data plus website, social, and domain checks. Verify any broker or carrier in 2.1 seconds.';
+const SHORT_DESC = 'Official FMCSA data plus website, social, and domain checks. Verify any broker or carrier before you book.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -217,7 +217,7 @@ const jsonLd = {
           acceptedAnswer: {
             '@type': 'Answer',
             text:
-              'FMCSA for authority, insurance, and safety history. WHOIS and DNS for domain age and email infrastructure. Google Places for address verification. Public social networks for company footprint. Plus a community-reported fraud network with 4,200+ verified carriers and brokers.',
+              'FMCSA for authority, insurance, and safety history. WHOIS and DNS for domain age and email infrastructure. Google Places for address verification. Public social networks for company footprint. Plus an archive of historical FMCSA snapshots.',
           },
         },
         {
@@ -235,7 +235,7 @@ const jsonLd = {
           acceptedAnswer: {
             '@type': 'Answer',
             text:
-              'Most lookups complete in about 2.1 seconds, cross-checking 14 data sources in parallel.',
+              'A full lookup cross-checks 14 data sources in parallel and usually finishes in under half a minute; repeat lookups are faster.',
           },
         },
       ],

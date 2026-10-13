@@ -445,7 +445,7 @@ function Landing({ navigate, user }: any) {
             </div>
             <div className="fade-up fade-up-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-[#0B1E3F]/60">
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> Official FMCSA data</div>
-              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 4,200+ carriers & brokers</div>
+              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 14 data sources per lookup</div>
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> No credit card</div>
             </div>
           </div>
@@ -518,6 +518,7 @@ function Landing({ navigate, user }: any) {
                 'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, and 24-month inspections.',
                 'Lookalike-domain detection on every carrier email so you spot the impersonator using a real MC.',
                 'Chameleon-network detection on shared phones and addresses, plus FMCSA enforcement cross-reference.',
+                ...(NEW_FEATURES_ON ? ['COI check: compare a carrier’s certificate of insurance with what its insurer filed with FMCSA.'] : []),
               ]}
               cta="Start verifying carriers"
               onClick={() => navigate('signup')}
@@ -528,7 +529,7 @@ function Landing({ navigate, user }: any) {
               role="Carriers"
               tagline="Verify brokers before you hook the trailer."
               points={[
-                'MC, DOT, surety bond, address, and website cross-checked in 2.1 seconds.',
+                'MC, DOT, surety bond, address, and website cross-checked in one lookup.',
                 'Drop the rate confirmation PDF: AI extracts the broker, scores it for fraud language, flags spoofed identities.',
                 'Watchlist auto-rescans every 24 hours and emails you the moment something changes.',
               ]}
@@ -555,10 +556,10 @@ function Landing({ navigate, user }: any) {
       <section className="py-20 px-6 bg-[#F5F3EE] text-[#0B1E3F] border-t border-[#0B1E3F]/10">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <BigStat value="$47M" label="prevented fraud losses" />
-            <BigStat value="4,247" label="carriers, brokers & drivers" />
-            <BigStat value="287K" label="verifications / month" />
-            <BigStat value="94%" label="fraud detection rate" />
+            <BigStat value="14" label="data sources per lookup" />
+            <BigStat value="FMCSA" label="official federal data" />
+            <BigStat value="1 verdict" label="in plain English" />
+            <BigStat value="3 free" label="lookups every month" />
           </div>
         </div>
       </section>
@@ -569,7 +570,7 @@ function Landing({ navigate, user }: any) {
           <div className="mb-16 max-w-3xl">
             <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— In the wild</div>
             <h2 className="text-4xl md:text-6xl leading-[1.05] mb-6 text-white">
-              A real rate con. A real scam. <span className="serif italic text-[#FF6B35]">Caught in 2.1 seconds.</span>
+              A real rate con. A real scam. <span className="serif italic text-[#FF6B35]">Caught before the load moved.</span>
             </h2>
             <p className="text-white/70 text-lg max-w-2xl">
               This is what Haulock catches that the naked eye misses. Legit letterhead, real-looking MC, but four red flags buried in the data.
@@ -593,11 +594,11 @@ function Landing({ navigate, user }: any) {
             </h2>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
-            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Paste an MC, DOT, or company name. Get authority status, age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="2.1s" statLabel="avg. lookup time" />
+            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Paste an MC, DOT, or company name. Get authority status, age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="Live" statLabel="from FMCSA" />
             <FeatureCard icon={Globe} iconBg="#FF6B35" title="Website & domain check" desc="We find the counterparty's real website, check WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
             <FeatureCard icon={Users} iconBg="#16A34A" title="Social media footprint" desc="Scans Facebook, LinkedIn, Twitter/X, Instagram, YouTube, and TikTok for the company's presence. Real companies leave a trail. Ghost identities don't." stat="6" statLabel="platforms matched" />
             <FeatureCard icon={MapPin} iconBg="#0B1E3F" title="Google Business address" desc="Cross-checks the FMCSA-registered address against Google Places. Flags UPS Store mailboxes, residential homes, and addresses shared by unrelated businesses." stat="Places" statLabel="real-world match" />
-            <FeatureCard icon={FileText} iconBg="#FF6B35" title="Rate con analyzer" desc="Drop a PDF. We extract the broker, verify the email domain against the registered MC, and flag spoofed letterheads and impersonated identities automatically." stat="94%" statLabel="fraud detection rate" />
+            <FeatureCard icon={FileText} iconBg="#FF6B35" title="Rate con analyzer" desc="Drop a PDF. We extract the broker, verify the email domain against the registered MC, and flag spoofed letterheads and impersonated identities automatically." stat="AI" statLabel="broker & email extraction" />
             <FeatureCard icon={Eye} iconBg="#16A34A" title="Web reputation scan" desc="Searches FreightWaves, Land Line, TruckersReport, BBB, Reddit, and government enforcement sites for fraud, scam, or lawsuit mentions tied to the carrier or broker." stat="50+" statLabel="trusted sources" />
           </div>
         </div>
@@ -608,7 +609,7 @@ function Landing({ navigate, user }: any) {
           <div className="grid lg:grid-cols-2 gap-16 items-start">
             <div className="lg:sticky lg:top-24 text-[#0B1E3F]">
               <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— How it works</div>
-              <h2 className="text-4xl md:text-5xl serif italic leading-tight text-[#0B1E3F] mb-6">Rate con to verdict in three seconds.</h2>
+              <h2 className="text-4xl md:text-5xl serif italic leading-tight text-[#0B1E3F] mb-6">Rate con to verdict before you sign.</h2>
               <p className="text-[#0B1E3F]/60 text-lg">Haulock pulls from 14 data sources at once. No screens to navigate, no spreadsheets to cross-reference.</p>
             </div>
             <div className="space-y-4">
@@ -730,43 +731,162 @@ function Landing({ navigate, user }: any) {
         </div>
       </section>
 
+      {NEW_FEATURES_ON && (
+        <section id="coi-check" className="py-24 px-6 bg-[#F5F3EE] border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
+          <div className="max-w-7xl mx-auto">
+            <div className="grid lg:grid-cols-2 gap-16 items-start">
+              <div className="lg:sticky lg:top-24">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#0B1E3F]/10 text-[#0B1E3F] text-xs mono uppercase tracking-[0.2em] rounded-full mb-5">
+                  For brokers · paid plans
+                </div>
+                <h2 className="text-4xl md:text-5xl leading-[1.05] mb-6 text-[#0B1E3F]">
+                  For brokers: <span className="serif italic">check the COI</span> before you book.
+                </h2>
+                <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
+                  A certificate of insurance is easy to fake and easy to outlive — a policy can be cancelled the day after the certificate is printed. Haulock reads the COI and compares it with the filings the carrier&apos;s insurer made with FMCSA:
+                </p>
+                <ul className="space-y-3 mb-6 text-[#0B1E3F]/80">
+                  {[
+                    'Is the auto liability policy on file with FMCSA, from the same insurer?',
+                    'Is a cancellation pending on that filing?',
+                    'Are the dates current, and is the limit at least the FMCSA minimum?',
+                    'Was the PDF edited after it was created?',
+                  ].map((t) => (
+                    <li key={t} className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#FF6B35] flex-shrink-0 mt-2" /><span>{t}</span></li>
+                  ))}
+                </ul>
+                <p className="text-[#0B1E3F]/70 text-lg mb-8 leading-relaxed">
+                  You get <strong className="text-[#0B1E3F]">match</strong>, <strong className="text-[#0B1E3F]">verify</strong>, or <strong className="text-[#0B1E3F]">mismatch</strong>, with the source of every finding. On verify or mismatch, call the insurer — on a number you look up yourself — before you book.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
+                    Start checking COIs <ArrowRight className="w-4 h-4" />
+                  </button>
+                  <div className="text-xs text-[#0B1E3F]/55 self-center">Carrier {PLANS.carrier.limits.coiChecks}/month · Team {PLANS.team.limits.coiChecks}/month · Fleet unlimited</div>
+                </div>
+              </div>
+
+              {/* COI result mockup */}
+              <div className="bg-white rounded-3xl p-7 card-shadow-lg border border-[#0B1E3F]/10">
+                <div className="flex items-center justify-between pb-4 mb-4 border-b border-[#0B1E3F]/10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-9 h-9 bg-[#0B1E3F]/10 rounded-lg flex items-center justify-center">
+                      <ShieldCheck className="w-5 h-5 text-[#0B1E3F]" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-[#0B1E3F]">coi-acme-trucking.pdf</div>
+                      <div className="text-[11px] mono text-[#0B1E3F]/50">ACORD 25 · 1 page · example</div>
+                    </div>
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#DC2626]/10 rounded-full text-xs mono uppercase tracking-wider font-semibold text-[#DC2626]">
+                    Mismatch
+                  </div>
+                </div>
+                <div className="space-y-2.5 mb-5">
+                  <div className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/15 rounded-lg">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#DC2626]" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-[#0B1E3F]">Cancellation pending on FMCSA</div>
+                      <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Auto liability filing · cancellation effective in 12 days</div>
+                    </div>
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/40">FMCSA</div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 bg-[#F59E0B]/5 border border-[#F59E0B]/15 rounded-lg">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#F59E0B]" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-[#0B1E3F]">Policy number differs from the FMCSA filing</div>
+                      <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Same insurer — often a renewal. Confirm with the insurer.</div>
+                    </div>
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/40">FMCSA</div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 bg-[#16A34A]/5 border border-[#16A34A]/15 rounded-lg">
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#16A34A]" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-[#0B1E3F]">Insured company matches the FMCSA record</div>
+                      <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Acme Trucking LLC · MC-441•••</div>
+                    </div>
+                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/40">COI</div>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-[#0B1E3F]/10 grid grid-cols-2 gap-2 text-[11px] mono">
+                  <div>
+                    <div className="text-[#0B1E3F]/50 uppercase tracking-wider">Auto liability on COI</div>
+                    <div className="text-[#0B1E3F]">$1,000,000</div>
+                  </div>
+                  <div>
+                    <div className="text-[#0B1E3F]/50 uppercase tracking-wider">FMCSA minimum</div>
+                    <div className="text-[#0B1E3F]">$750,000</div>
+                  </div>
+                  <div>
+                    <div className="text-[#0B1E3F]/50 uppercase tracking-wider">Expires</div>
+                    <div className="text-[#0B1E3F]">in 7 months</div>
+                  </div>
+                  <div>
+                    <div className="text-[#0B1E3F]/50 uppercase tracking-wider">PDF metadata</div>
+                    <div className="text-[#16A34A]">No signs of editing</div>
+                  </div>
+                </div>
+                <div className="mt-4 text-xs text-[#0B1E3F]/60">Before you accept: call the insurer on a number you look up yourself.</div>
+              </div>
+            </div>
+
+            {/* Forward-to-scan */}
+            <div className="mt-16 bg-[#0B1E3F] rounded-3xl p-8 md:p-10 text-white flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl bg-[#FF6B35] flex items-center justify-center flex-shrink-0">
+                  <Mail className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="mono text-xs uppercase tracking-[0.2em] text-[#FF6B35] mb-2">— Forward to scan</div>
+                  <div className="text-2xl md:text-3xl font-semibold mb-2">Or just forward it to <span className="mono text-[#FF6B35]">{SCAN_EMAIL}</span></div>
+                  <p className="text-white/70 max-w-2xl">Forward a rate con or a COI from the email on your Haulock account. The verdict comes back in the same thread, usually within a minute. Full reports on paid plans; free accounts get a short preview of rate cons.</p>
+                </div>
+              </div>
+              <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-white text-[#0B1E3F] rounded-full font-medium hover:bg-white/90 transition inline-flex items-center justify-center gap-2 flex-shrink-0">
+                Start free <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="py-24 px-6 bg-[#0B1E3F] relative overflow-hidden">
         <div className="absolute inset-0 grid-bg-dark opacity-40" />
         <div className="relative max-w-7xl mx-auto">
           <div className="mb-16 max-w-3xl">
             <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Trust & security</div>
             <h2 className="text-4xl md:text-6xl leading-[1.05] text-white mb-6">
-              Built on official data. <span className="serif italic text-[#FF6B35]">Zero retention.</span>
+              Built on official data. <span className="serif italic text-[#FF6B35]">Your files aren&apos;t kept.</span>
             </h2>
             <p className="text-white/70 text-lg max-w-2xl">
-              Every lookup hits the source of truth. Every rate con you upload is processed in memory and gone within seconds. Your documents never live on our disks.
+              Every report comes from FMCSA and the other sources at the time you run it, with the date shown. Rate cons and PDFs you upload are read in memory and discarded when the scan finishes. Your history keeps the verdict, not the file.{NEW_FEATURES_ON && ' Forwarded emails are the exception: our email provider keeps a copy under its own retention policy.'}
             </p>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
             {[
               {
                 icon: Database,
-                tag: 'Official FMCSA API',
-                title: 'Pulled live, never guessed.',
-                desc: 'Authority status, insurance, and inspection history come straight from the FMCSA — the federal source brokers and DOT auditors use. No scraped caches, no stale snapshots.',
-                stat: 'Live',
-                statLabel: 'sub-second pulls',
+                tag: 'Official FMCSA data',
+                title: 'From the federal source.',
+                desc: 'Authority status, insurance, and inspection history come from FMCSA — the federal source brokers and DOT auditors use. Every report shows when it was run, and Scan again pulls fresh data.',
+                stat: 'FMCSA',
+                statLabel: 'official source',
               },
               {
                 icon: Zap,
                 tag: 'AI rate-con analyzer',
                 title: 'Reads the PDF like a dispatcher would.',
                 desc: 'Our model extracts the broker, MC, and contact details from any rate con. Then it cross-checks the email domain against the registered MC and flags spoofed identities automatically.',
-                stat: '94%',
-                statLabel: 'fraud detection rate',
+                stat: '14',
+                statLabel: 'sources per scan',
               },
               {
                 icon: Lock,
-                tag: 'Zero retention',
-                title: 'Your rate cons are never stored.',
-                desc: 'PDFs are processed in memory and discarded within 60 seconds. We never write them to disk, never sell them, and never train models on your documents. Ever.',
-                stat: '0 bytes',
-                statLabel: 'stored after scan',
+                tag: 'Files not kept',
+                title: 'Your uploads aren’t stored.',
+                desc: 'Uploaded PDFs are read in memory — by us and by our OCR and AI providers, only to produce your result — and discarded when the scan finishes. We never write them to our disks, never sell them, and never use them to train AI models.',
+                stat: '0 files',
+                statLabel: 'kept after an upload',
               },
             ].map((p, i) => (
               <div key={i} className="bg-white/[0.04] border border-white/10 rounded-2xl p-7 hover:border-white/20 transition flex flex-col">
@@ -786,17 +906,17 @@ function Landing({ navigate, user }: any) {
             ))}
           </div>
           <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-white/60">
-            <span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-[#16A34A]" /> SOC 2 Type II</span>
-            <span className="flex items-center gap-2"><Lock className="w-4 h-4 text-[#16A34A]" /> TLS 1.3 in transit</span>
-            <span className="flex items-center gap-2"><Eye className="w-4 h-4 text-[#16A34A]" /> No third-party trackers</span>
-            <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> FMCSA authorized</span>
+            <span className="flex items-center gap-2"><Lock className="w-4 h-4 text-[#16A34A]" /> TLS encryption in transit</span>
+            <span className="flex items-center gap-2"><Database className="w-4 h-4 text-[#16A34A]" /> Official FMCSA data</span>
+            <span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-[#16A34A]" /> Card payments handled by Stripe</span>
+            <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> Uploaded files not stored</span>
           </div>
         </div>
       </section>
 
       <section className="border-y border-[#0B1E3F]/10 bg-white py-8 text-[#0B1E3F]">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#0B1E3F]/50 mb-5 text-center">— 14 data sources, cross-checked in 2.1 seconds</div>
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#0B1E3F]/50 mb-5 text-center">— 14 data sources, cross-checked on every lookup</div>
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-3">
             {[
               'FMCSA SAFER', 'L&I authority status', 'MCS-150 filings', 'Insurance filings', 'Crash & inspection history',
@@ -856,13 +976,17 @@ function Landing({ navigate, user }: any) {
               { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scored in about 3 seconds.' },
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
               { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
-              { q: 'Does it work for freight brokers?', a: 'Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.' },
+              { q: 'Does it work for freight brokers?', a: `Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.${NEW_FEATURES_ON ? ' On paid plans, brokers can also check a carrier’s certificate of insurance against its FMCSA filings.' : ''}` },
               { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, and any web-reputation hits from trusted sources. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
               { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
+              ...(NEW_FEATURES_ON ? [
+                { q: 'Can Haulock check a carrier’s certificate of insurance (COI)?', a: 'Yes, on paid plans. Upload the COI (or forward it to us) and Haulock reads the policies, dates, and limits, then compares them with the filings the carrier’s insurer made with FMCSA: is the auto liability policy on file, is a cancellation pending, is the limit at least the FMCSA minimum, and was the PDF edited after it was created. You get match, verify, or mismatch with the source of every finding. No tool can prove a COI is genuine — on verify or mismatch, call the insurer using a number you look up yourself before you book.' },
+                { q: 'Can I forward a rate con or COI by email?', a: `Yes. Forward the email to ${SCAN_EMAIL} from the address on your Haulock account and the verdict comes back in the same thread, usually within a minute. Paid plans get the full report, saved to your history; free accounts get a short preview of rate cons.` },
+              ] : []),
             ].map((faq, i) => <FaqItem key={i} {...faq} />)}
           </div>
         </div>
@@ -875,7 +999,7 @@ function Landing({ navigate, user }: any) {
             Don&apos;t get caught hauling for a ghost.
           </h2>
           <p className="text-xl text-[#0B1E3F]/60 mb-12 max-w-xl mx-auto">
-            Join 4,200+ carriers and brokers who verify every counterparty before booking.
+            Verify every counterparty before you book. Your first 3 lookups each month are free.
           </p>
           <button onClick={() => navigate('signup')} className="group px-10 py-5 bg-[#0B1E3F] text-white text-lg font-medium rounded-full hover:bg-[#0B1E3F]/90 transition inline-flex items-center gap-2 card-shadow-lg">
             Check any broker or carrier free <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition" />
@@ -922,7 +1046,7 @@ const HERO_SCENARIOS: Array<{
     communityAlert: 'Web reputation: 4 fraud mentions in trade press · FMCSA enforcement match',
   },
   {
-    name: 'Summit Logistics Group',
+    name: 'Kestrelon Freight Group',
     mc: 'MC-921•••', dot: 'DOT-4012•••', score: 91,
     entity: 'BROKER',
     badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
@@ -978,7 +1102,7 @@ const HERO_SCENARIOS: Array<{
     communityAlert: 'Clean across all 14 sources · 12-year authority',
   },
   {
-    name: 'Pinnacle Freight Logistics LLC',
+    name: 'Braxtone Logistics LLC',
     mc: 'MC-845•••', dot: 'DOT-3271•••', score: 76,
     entity: 'BROKER',
     badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
@@ -1020,21 +1144,21 @@ const HERO_SCENARIOS: Array<{
     communityAlert: 'No web reputation hits · short operating history',
   },
   {
-    name: 'Heartland Express Logistics',
+    name: 'Ironvale Freight Lines LLC',
     mc: 'MC-441•••', dot: 'DOT-1226•••', score: 88,
     entity: 'BROKER+CARRIER',
     badgeLabel: 'HIGH RISK', badgeColor: '#DC2626',
-    verdictTitle: 'Do not book', verdictLine: '5 critical red flags · Confirmed double-brokering', verdictTone: 'danger',
+    verdictTitle: 'Do not book', verdictLine: '5 critical red flags · Double-brokering pattern', verdictTone: 'danger',
     flags: [
-      { s: 'critical', t: 'Listed on FreightValidate watchlist', i: Flag },
+      { s: 'critical', t: 'Email domain registered 9 days ago', i: Flag },
       { s: 'critical', t: 'DBA changed 3× in last 6 months', i: AlertTriangle },
       { s: 'critical', t: 'VOIP phone · address is mailbox center', i: Phone },
     ],
     scanTime: '2.3s', dataSources: 14,
-    communityAlert: 'Web reputation: 6 fraud mentions · FreightValidate listed',
+    communityAlert: 'Web reputation: 6 fraud mentions in industry press',
   },
   {
-    name: 'Cardinal Freight Solutions',
+    name: 'Quillmont Freight Solutions',
     mc: 'MC-203•••', dot: 'DOT-0764•••', score: 12,
     entity: 'BROKER',
     badgeLabel: 'VERIFIED', badgeColor: '#16A34A',
@@ -1139,7 +1263,7 @@ function HeroDashboardMockup() {
           ))}
         </div>
         <div className="mt-5 pt-4 border-t border-[#0B1E3F]/10 flex items-center justify-between text-xs mono text-[#0B1E3F]/50">
-          <span className="flex items-center gap-1.5"><Clock className="w-3 h-3" /> Scanned in {s.scanTime}</span>
+          <span className="flex items-center gap-1.5"><Clock className="w-3 h-3" /> Example report</span>
           <span>{s.dataSources} data sources</span>
         </div>
       </div>
@@ -2236,7 +2360,7 @@ function Footer({ navigate }: any) {
             <button onClick={() => go('landing')} aria-label="Haulock home" className="hover:opacity-80 transition w-fit">
               <Logo white />
             </button>
-            <div className="text-sm text-white/70 mt-4 max-w-xs">Know who&apos;s on the other end of every rate con. Trusted by 4,200+ carriers.</div>
+            <div className="text-sm text-white/70 mt-4 max-w-xs">Know who&apos;s on the other end of every rate con.</div>
           </div>
           {cols.map((col, i) => (
             <div key={i}>
@@ -2275,9 +2399,9 @@ function Footer({ navigate }: any) {
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pt-8">
           <div className="text-sm text-white/50">© 2026 Haulock, Inc. All rights reserved.</div>
           <div className="flex items-center gap-4 text-xs mono text-white/50">
-            <span className="flex items-center gap-2"><ShieldCheck className="w-3.5 h-3.5" /> SOC 2 Type II</span>
+            <span className="flex items-center gap-2"><ShieldCheck className="w-3.5 h-3.5" /> Official FMCSA data</span>
             <span>·</span>
-            <span>FMCSA authorized</span>
+            <span>Not affiliated with FMCSA or USDOT</span>
           </div>
         </div>
       </div>
@@ -2667,7 +2791,7 @@ function AuthShell({ title, subtitle, children, navigate }: any) {
           <div className="flex items-center gap-1 mb-4">
             {[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-[#FF6B35] text-[#FF6B35]" />)}
           </div>
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Trusted by 4,200+ carriers</div>
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Built for carriers and brokers</div>
           <div className="text-3xl md:text-4xl serif italic leading-tight mb-6 text-white">
             &ldquo;{testimonial.quote}&rdquo;
           </div>
@@ -2680,7 +2804,7 @@ function AuthShell({ title, subtitle, children, navigate }: any) {
           </div>
         </div>
         <div className="relative z-10 text-xs mono text-white/60 flex items-center gap-3">
-          <ShieldCheck className="w-4 h-4" /> SOC 2 Type II · FMCSA authorized
+          <ShieldCheck className="w-4 h-4" /> Official FMCSA data · Payments by Stripe
         </div>
       </div>
       <div className="md:w-1/2 flex items-center justify-center p-8 md:p-16 bg-[#F5F3EE] relative text-[#0B1E3F]">
@@ -3052,7 +3176,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
             Built for carriers who have been burned.
           </h1>
           <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
-            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and a 14-source web-reputation scan. Trusted by 4,200 carriers and brokers across the lower 48.
+            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and 14 data sources cross-checked on every lookup.
           </p>
         </div>
       </section>
@@ -3090,8 +3214,6 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
 
           <LegalH2>The data behind the badge</LegalH2>
           <LegalUl>
-            <li><strong>4,200+</strong> verified carriers and brokers in the community network</li>
-            <li><strong>~2.1 second</strong> average lookup time</li>
             <li><strong>14</strong> data sources cross-checked per scan</li>
             <li><strong>5 years</strong> of FMCSA snapshot history archived</li>
             <li><strong>$0</strong> required to run your first lookup</li>
@@ -7388,6 +7510,7 @@ function Dashboard({ navigate, user }: any) {
   const scamAlerts = all.filter((l) => l.verdict === 'high').slice(0, 3);
   const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, watchlist: 0 };
   const showNewFeatures = NEW_FEATURES_ON || Boolean(usage?.isAdmin);
+  const showCoiCard = showNewFeatures && (Boolean(usage?.isAdmin) || plan.limits.coiChecks !== 0);
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
@@ -7395,17 +7518,17 @@ function Dashboard({ navigate, user }: any) {
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Welcome</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Hello, {user.name.split(' ')[0]}.</h1>
       </div>
-      <div className={`grid gap-4 ${showNewFeatures ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
+      <div className={`grid gap-4 ${showCoiCard ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
         <UsageCard label="Lookups this month" value={u.fmcsaLookups} limit={usage?.isAdmin ? null : plan.limits.fmcsaLookups} icon={Search} color="#0B1E3F" />
         <UsageCard label="Rate con scans" value={u.rateConScans} limit={usage?.isAdmin ? null : plan.limits.rateConScans} icon={FileText} color="#0B1E3F" />
-        {showNewFeatures && <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />}
+        {showCoiCard && <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />}
         <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
         <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
       </div>
       {plan.id === 'free' && (
         <div className="flex items-center justify-between gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl">
           <div className="text-sm text-[#0B1E3F]">
-            You&rsquo;re on the <strong>Free</strong> plan — {plan.limits.fmcsaLookups} lookups and {plan.limits.rateConScans} rate con scan per month. Upgrade to Carrier for unlimited lookups and 25 rate con scans.
+            You&rsquo;re on the <strong>Free</strong> plan — {plan.limits.fmcsaLookups} lookups and {plan.limits.pdfForensics} PDF checks a month. Upgrade to Carrier for unlimited lookups and {PLANS.carrier.limits.rateConScans} rate con scans a month.
           </div>
           <button onClick={() => navigate('plan')} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 whitespace-nowrap">Upgrade</button>
         </div>
@@ -7905,7 +8028,7 @@ function VerifyTool({ navigate }: any) {
         </div>
       )}
       {tab === 'forensics' && <PdfForensicsPanel />}
-      {newFeatures.on && tab === 'coi' && <CoiCheckPanel />}
+      {newFeatures.on && tab === 'coi' && <CoiCheckPanel navigate={navigate} />}
       {newFeatures.on && (tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
       {tab === 'bulk' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
@@ -7966,7 +8089,9 @@ function ForwardToScanCard() {
   );
 }
 
-function CoiCheckPanel() {
+function CoiCheckPanel({ navigate }: { navigate: any }) {
+  const usage = useCachedFetch<any>('usage', '/api/usage');
+  const notInPlan = usage.data && !usage.data.isAdmin && usage.data.plan?.limits?.coiChecks === 0;
   const [file, setFile] = useState<File | null>(null);
   const [mc, setMc] = useState('');
   const [loading, setLoading] = useState(false);
@@ -7996,6 +8121,16 @@ function CoiCheckPanel() {
       setLoading(false);
     }
   };
+
+  if (notInPlan) {
+    return (
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+        <div className="font-semibold text-lg mb-1">COI checks are on paid plans</div>
+        <p className="text-sm text-[#0B1E3F]/70 mb-5 max-w-xl">Check a carrier&rsquo;s certificate of insurance against the filings its insurer made with FMCSA. Carrier includes {PLANS.carrier.limits.coiChecks} COI checks a month, Team {PLANS.team.limits.coiChecks}, and Fleet unlimited.</p>
+        <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-medium hover:bg-[#FF6B35]/90">See plans</button>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
