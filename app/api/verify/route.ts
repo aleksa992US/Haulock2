@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { lookupCarrier, parseQuery, NotFoundByNameError } from '@/lib/fmcsa';
+import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, NotFoundByNameError } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { monthStart } from '@/lib/plans';
@@ -28,8 +28,17 @@ export async function GET(req: Request) {
   // Optional sender domain or email — used for lookalike-domain detection
   // against the carrier's actual FMCSA-listed website.
   const queriedEmail = searchParams.get('email') ?? '';
-  const parsed = parseQuery(q);
-  if (!parsed) return NextResponse.json({ error: 'Missing or empty query' }, { status: 400 });
+  const raw = parseQuery(q);
+  if (!raw) return NextResponse.json({ error: 'Missing or empty query' }, { status: 400 });
+  // Bare digits can be an MC or a USDOT number for two different companies.
+  const resolved = await resolveQuery(raw);
+  if ('candidates' in resolved) {
+    return NextResponse.json(
+      { error: ambiguousNumberMessage(resolved.candidates), code: 'ambiguous_number', candidates: resolved.candidates },
+      { status: 409 },
+    );
+  }
+  const parsed = resolved.query;
 
   const supabase = getServerSupabase();
   let user: any = null;
@@ -68,8 +77,10 @@ export async function GET(req: Request) {
       // a fresh scan. V10: linked-entity extractor rejects 2-word matches
       // without a hard corporate suffix (LLC/INC/CORP) and risk flag now
       // requires 2+ citations AND 2+ sources for company-shaped aliases
-      // before contributing to the risk score.
-      const SCHEMA_VERSION = 10;
+      // before contributing to the risk score. V11: linked entities only
+      // from trusted-source hits (no directory listings), and no hazmat
+      // percentile read from FMCSA's intervention-threshold label.
+      const SCHEMA_VERSION = 11;
       const hasMatchingSchemaVersion = row.schemaVersion === SCHEMA_VERSION;
       const isCurrentSchema = hasSources && hasChameleonCheck && hasWebReputation && hasLinkedEntities && hasFmcsaArchive && hasFmcsaSms && hasMatchingSchemaVersion;
       console.log('[verify] user-cache hit', { q, hasSources, hasChameleonCheck, hasWebReputation, hasLinkedEntities, hasFmcsaArchive, hasFmcsaSms, hasMatchingSchemaVersion, savedAt: cached[0].created_at });
@@ -483,46 +494,36 @@ export async function GET(req: Request) {
     }
   }
 
-  // Extract aliases / sister-entities / co-cited MC numbers from the same
-  // Brave hits we already pulled. Catches networks like
-  // Super Ego ↔ Gray Falcon United ↔ JHI Transport ↔ Sky Blue Leasing
-  // automatically — the article that mentions one usually mentions all.
-  // We use the WIDER `extractionHits` set (not just trusted-source ones)
-  // because alias-network coverage frequently lives on industry blogs and
-  // forums that aren't in our trusted-source allow-list, but the alias
-  // mentions in those articles are still real signal.
+  // Extract aliases / sister-entities / co-cited MC numbers from the
+  // trusted-source hits (industry press, regulators, forums) we already
+  // pulled. Catches networks like Super Ego ↔ Gray Falcon United ↔ JHI
+  // Transport ↔ Sky Blue Leasing — the article that mentions one usually
+  // mentions all. The wider `extractionHits` set is NOT used: it is mostly
+  // carrier directories that list unrelated companies side by side, which
+  // tied legitimate carriers to strangers.
   const linkedEntities = extractLinkedEntities(
-    (webReputation as any).extractionHits || webReputation.hits,
+    webReputation.hits,
     carrier.name,
     carrier.mc,
     carrier.dot,
   );
   if (linkedEntities.length > 0) carrier.linkedEntities = linkedEntities;
 
-  // Linked-entity flag — only fires for entities that look like real
-  // signal, not random extractor noise. We require at least one of:
-  //   - a hard MC / DOT identifier (verifiable, never noise), OR
-  //   - a company name cited 2+ times across 2+ sources (one mention on
-  //     one LinkedIn page is not a chameleon-network signal).
-  // The panel still shows weaker entities for transparency, but they no
-  // longer subtract from the risk score on their own.
-  const scoreableEntities = linkedEntities.filter((e) => {
-    if (e.kind === 'mc' || e.kind === 'dot') return true;
-    return (e.citations >= 2) && (e.sources.length >= 2);
-  });
+  // Linked-entity flag — only for entities cited 2+ times across 2+
+  // trusted sources. One page naming another number is not evidence of a
+  // relationship. The panel still lists weaker entities for transparency.
+  const scoreableEntities = linkedEntities.filter((e) => e.citations >= 2 && e.sources.length >= 2);
   if (scoreableEntities.length > 0) {
     const top = scoreableEntities.slice(0, 3);
-    const sev: 'critical' | 'warning' = scoreableEntities.length >= 3 ? 'critical' : 'warning';
-    const pts = scoreableEntities.length >= 3 ? 30 : 15;
     carrier.flags = [
       ...(carrier.flags || []),
       {
-        sev,
-        title: `Linked entities mentioned in coverage (${scoreableEntities.length})`,
-        desc: `Trusted-source articles about ${carrier.name} also reference: ${top.map((e) => e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value).join(', ')}${scoreableEntities.length > 3 ? `, +${scoreableEntities.length - 3} more` : ''}. Often a sign of a broader fraud / chameleon-MC network — verify each link before booking.`,
-        pts,
-        details: top.map((e) => `• ${e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value} — cited ${e.citations}× across ${e.sources.length} source${e.sources.length === 1 ? '' : 's'}`).join('\n'),
-        recommendation: 'Treat these aliases as the same entity. Run a separate Haulock scan on each MC/DOT before booking.',
+        sev: 'warning',
+        title: `Other companies named in coverage (${scoreableEntities.length})`,
+        desc: `News and industry coverage that mentions ${carrier.name} also names: ${top.map((e) => e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value).join(', ')}${scoreableEntities.length > 3 ? `, +${scoreableEntities.length - 3} more` : ''}. Being named in the same coverage does not by itself mean the companies are related.`,
+        pts: 15,
+        details: top.map((e) => `• ${e.kind === 'mc' ? `MC-${e.value}` : e.kind === 'dot' ? `DOT-${e.value}` : e.value} — named ${e.citations}× across ${e.sources.length} sources (${e.sources.slice(0, 3).join(', ')})`).join('\n'),
+        recommendation: 'Read the cited coverage, and run a separate Haulock scan on any MC/DOT that matters to this load.',
       },
     ];
   }
@@ -753,7 +754,7 @@ export async function GET(req: Request) {
   // Stamp the schema version so the user-cache check can identify rows
   // generated by this version of the verify route. Bump whenever the
   // payload shape changes meaningfully.
-  scored.schemaVersion = 10;
+  scored.schemaVersion = 11;
   const verdictLabel = scored.verdict === 'high' ? 'HIGH RISK' : scored.verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   console.log(`[verify] ─── RESULT · score ${scored.score}/100 · ${verdictLabel} · ${scored.flags?.length ?? 0} red flag${(scored.flags?.length ?? 0) === 1 ? '' : 's'} ───`);
   if (scored.flags && scored.flags.length > 0) {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
+import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { monthStart } from '@/lib/plans';
@@ -47,13 +47,22 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = searchParams.get('q') ?? '';
   const force = searchParams.get('force') === '1';
-  const parsed = parseQuery(q);
-  if (!parsed) {
+  const raw = parseQuery(q);
+  if (!raw) {
     return NextResponse.json(
       { error: 'Missing or empty query parameter `q`' },
       { status: 400, headers: corsHeaders() },
     );
   }
+  // Bare digits can be an MC or a USDOT number for two different companies.
+  const resolvedQuery = await resolveQuery(raw);
+  if ('candidates' in resolvedQuery) {
+    return NextResponse.json(
+      { error: ambiguousNumberMessage(resolvedQuery.candidates), code: 'ambiguous_number', candidates: resolvedQuery.candidates },
+      { status: 409, headers: corsHeaders() },
+    );
+  }
+  const parsed = resolvedQuery.query;
 
   const svc = getServiceSupabase();
   if (!svc) {
