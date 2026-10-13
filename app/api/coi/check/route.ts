@@ -7,6 +7,7 @@ import { ocrForScan, PipelineError } from '@/lib/rate-con-pipeline';
 import { runCoiCheckFromText } from '@/lib/coi-check';
 import { countMonthlyLookups } from '@/lib/usage';
 import { isAdmin } from '@/lib/admin';
+import { PLANS } from '@/lib/plans';
 import { NEW_FEATURES_ON } from '@/lib/features';
 
 export const runtime = 'nodejs';
@@ -31,6 +32,12 @@ export async function POST(req: Request) {
   const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
   const plan = ctx.effectivePlan;
   const cap = plan.limits.coiChecks;
+  if (cap === 0 && !(await isAdmin(user.email))) {
+    return NextResponse.json({
+      error: `COI checks are included on paid plans. The Carrier plan includes ${PLANS.carrier.limits.coiChecks} a month.`,
+      code: 'not_in_plan', plan: plan.id, limit: 0, used: 0,
+    }, { status: 402 });
+  }
   if (cap != null && !(await isAdmin(user.email))) {
     const used = await countMonthlyLookups(user.id, ctx, 'coi');
     if (used >= cap) {

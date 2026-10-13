@@ -7388,6 +7388,7 @@ function Dashboard({ navigate, user }: any) {
   const scamAlerts = all.filter((l) => l.verdict === 'high').slice(0, 3);
   const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, watchlist: 0 };
   const showNewFeatures = NEW_FEATURES_ON || Boolean(usage?.isAdmin);
+  const showCoiCard = showNewFeatures && (Boolean(usage?.isAdmin) || plan.limits.coiChecks !== 0);
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
@@ -7395,10 +7396,10 @@ function Dashboard({ navigate, user }: any) {
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Welcome</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Hello, {user.name.split(' ')[0]}.</h1>
       </div>
-      <div className={`grid gap-4 ${showNewFeatures ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
+      <div className={`grid gap-4 ${showCoiCard ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
         <UsageCard label="Lookups this month" value={u.fmcsaLookups} limit={usage?.isAdmin ? null : plan.limits.fmcsaLookups} icon={Search} color="#0B1E3F" />
         <UsageCard label="Rate con scans" value={u.rateConScans} limit={usage?.isAdmin ? null : plan.limits.rateConScans} icon={FileText} color="#0B1E3F" />
-        {showNewFeatures && <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />}
+        {showCoiCard && <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />}
         <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
         <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
       </div>
@@ -7905,7 +7906,7 @@ function VerifyTool({ navigate }: any) {
         </div>
       )}
       {tab === 'forensics' && <PdfForensicsPanel />}
-      {newFeatures.on && tab === 'coi' && <CoiCheckPanel />}
+      {newFeatures.on && tab === 'coi' && <CoiCheckPanel navigate={navigate} />}
       {newFeatures.on && (tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
       {tab === 'bulk' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
@@ -7966,7 +7967,9 @@ function ForwardToScanCard() {
   );
 }
 
-function CoiCheckPanel() {
+function CoiCheckPanel({ navigate }: { navigate: any }) {
+  const usage = useCachedFetch<any>('usage', '/api/usage');
+  const notInPlan = usage.data && !usage.data.isAdmin && usage.data.plan?.limits?.coiChecks === 0;
   const [file, setFile] = useState<File | null>(null);
   const [mc, setMc] = useState('');
   const [loading, setLoading] = useState(false);
@@ -7996,6 +7999,16 @@ function CoiCheckPanel() {
       setLoading(false);
     }
   };
+
+  if (notInPlan) {
+    return (
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+        <div className="font-semibold text-lg mb-1">COI checks are on paid plans</div>
+        <p className="text-sm text-[#0B1E3F]/70 mb-5 max-w-xl">Check a carrier&rsquo;s certificate of insurance against the filings its insurer made with FMCSA. Carrier includes {PLANS.carrier.limits.coiChecks} COI checks a month, Team {PLANS.team.limits.coiChecks}, and Fleet unlimited.</p>
+        <button onClick={() => navigate('plan')} className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-medium hover:bg-[#FF6B35]/90">See plans</button>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
