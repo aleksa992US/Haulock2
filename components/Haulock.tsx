@@ -20,7 +20,7 @@ import { COI_CHECK_ON, SCAN_EMAIL_ON } from '@/lib/features';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 
-const APP_ROUTES = ['dashboard', 'verify', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'support', 'earnings'];
+const APP_ROUTES = ['dashboard', 'verify', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'sales', 'support', 'earnings'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
 const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about', 'affiliate'];
 const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
@@ -329,6 +329,7 @@ export default function Haulock() {
           <PageSlot routeId="plan" current={route}><Plan user={user} setPlan={setPlan} /></PageSlot>
           <PageSlot routeId="history" current={route}><SearchHistory navigate={navigate} /></PageSlot>
           <PageSlot routeId="admin" current={route}><AdminPage navigate={navigate} /></PageSlot>
+          <PageSlot routeId="sales" current={route}><SalesPage /></PageSlot>
           <PageSlot routeId="earnings" current={route}><EarningsPage user={user} /></PageSlot>
         </AppShell>
       )}
@@ -2396,7 +2397,7 @@ function Footer({ navigate }: any) {
   type Col = { t: string; items: { label: string; route?: string; data?: any; href?: string }[] };
   const cols: Col[] = [
     { t: 'Product', items: [
-      { label: 'Broker verify',      route: 'verify',  data: { tab: 'quick' } },
+      { label: 'Verify broker / carrier', route: 'verify', data: { tab: 'quick' } },
       { label: 'Rate con analyzer',  route: 'verify',  data: { tab: 'ratecon' } },
       { label: 'API',                href: '/docs/api' },
     ] },
@@ -6642,6 +6643,359 @@ function Stat({ label, value, sub }: { label: string; value: any; sub?: string |
   );
 }
 
+// ─── Sales (admin only) ─────────────────────────────────────────────────
+// Every non-admin user sorted into an auto-computed funnel segment (from
+// /api/admin/sales), with a suggested next step and a pre-written email
+// per segment. Manual stage / notes / follow-up live in sales_leads.
+
+type SalesSegment = 'paying' | 'checkout' | 'limit' | 'unconfirmed' | 'new' | 'active' | 'never_used' | 'dormant';
+type SalesFilter = 'hot' | 'free' | 'followup' | SalesSegment;
+
+const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action: string; subject: string; body: (name: string) => string }> = {
+  checkout: {
+    label: 'Started checkout', tone: 'bg-[#DC2626]/10 text-[#DC2626]',
+    action: 'Hottest lead. They picked a plan but didn’t pay — offer help and the NEW20 code (20% off).',
+    subject: 'Need a hand finishing your Haulock signup?',
+    body: (n) => `Hi ${n},\n\nI saw you started signing up for a Haulock plan but didn't finish. Did something get in the way, or do you have a question I can answer?\n\nIf it helps, code NEW20 takes 20% off: https://haulock.com/pricing\n\nThanks,`,
+  },
+  limit: {
+    label: 'Hit free limit', tone: 'bg-[#FF6B35]/15 text-[#C2410C]',
+    action: 'Used all free lookups this month — they clearly need it. Pitch the Carrier plan.',
+    subject: 'You’ve used your free Haulock lookups',
+    body: (n) => `Hi ${n},\n\nYou've used all of your free lookups this month, so it looks like Haulock is earning its keep. The Carrier plan gives you far more lookups plus rate con scans, so you can check every broker before you book.\n\nPlans: https://haulock.com/pricing\n\nHappy to answer any questions.\n\nThanks,`,
+  },
+  unconfirmed: {
+    label: 'Email not confirmed', tone: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/70',
+    action: 'Never confirmed their email, so they can’t log in. Send a short personal nudge.',
+    subject: 'Finish setting up your Haulock account',
+    body: (n) => `Hi ${n},\n\nYou signed up for Haulock but haven't confirmed your email yet, so you can't log in. Look for our confirmation email (check spam too), or reply here and I'll sort it out.\n\nThanks,`,
+  },
+  new: {
+    label: 'New — not tried yet', tone: 'bg-[#2563EB]/10 text-[#2563EB]',
+    action: 'Signed up this week but hasn’t run a lookup. Show them how to check their first broker.',
+    subject: 'Check your first broker in 10 seconds',
+    body: (n) => `Hi ${n},\n\nWelcome to Haulock! The quickest way to see what it does: go to https://haulock.com/verify, pick MC or DOT, and type the number from your next rate con. You'll get a risk score and any red flags in seconds.\n\nAny questions, just reply.\n\nThanks,`,
+  },
+  active: {
+    label: 'Active free user', tone: 'bg-[#16A34A]/10 text-[#16A34A]',
+    action: 'Using it but still free. Check in, ask what they haul, and mention what paid plans add.',
+    subject: 'How’s Haulock working for you?',
+    body: (n) => `Hi ${n},\n\nThanks for using Haulock. Quick question: what kind of loads are you checking, and is there anything you wish it did? On a paid plan you also get rate con scans, a watchlist that alerts you when a broker changes, and many more lookups.\n\nThanks,`,
+  },
+  never_used: {
+    label: 'Never used it', tone: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/70',
+    action: 'Signed up a while ago and never ran a lookup. Re-introduce what it does with one example.',
+    subject: 'Still booking loads without checking the broker?',
+    body: (n) => `Hi ${n},\n\nYou signed up for Haulock a while back but haven't run a lookup yet. Double-brokering and fake MCs are still everywhere. Type any MC number at https://haulock.com/verify and you'll see in seconds if something's off. Your free lookups are waiting.\n\nThanks,`,
+  },
+  dormant: {
+    label: 'Gone quiet', tone: 'bg-[#F59E0B]/15 text-[#B45309]',
+    action: 'Used it before, nothing in 30+ days. Win-back: ask why, share something new.',
+    subject: 'We’ve added a few things since you last checked a broker',
+    body: (n) => `Hi ${n},\n\nIt's been a while since you used Haulock. We've added rate con scanning and PDF forensics since then, which catch edited or fake rate cons. Was there a reason you stopped? Your honest answer helps a lot.\n\nThanks,`,
+  },
+  paying: {
+    label: 'Paying', tone: 'bg-[#0B1E3F] text-white',
+    action: 'Customer. Ask for a review or referral, or offer a bigger plan if they’re near their limits.',
+    subject: 'Thanks for being a Haulock customer',
+    body: (n) => `Hi ${n},\n\nThanks for being a Haulock customer. Is everything working the way you need? If Haulock has saved you from a bad load, would you mind telling a friend or leaving us a quick review?\n\nThanks,`,
+  },
+};
+
+const SALES_STAGES: { id: string; label: string }[] = [
+  { id: 'new', label: 'Not contacted' },
+  { id: 'contacted', label: 'Contacted' },
+  { id: 'replied', label: 'Replied' },
+  { id: 'offer_sent', label: 'Offer sent' },
+  { id: 'won', label: 'Won' },
+  { id: 'lost', label: 'Lost' },
+];
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+function SalesPage() {
+  const [leads, setLeads] = useState<any[] | null>(null);
+  const [pipelineReady, setPipelineReady] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<SalesFilter>('hot');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const load = async () => {
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/sales');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      setLeads(data.leads || []);
+      setPipelineReady(Boolean(data.pipelineReady));
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load');
+      setLeads([]);
+    }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(1); }, [filter, search]);
+
+  // Optimistic local update, then persist. Reload on failure so the UI
+  // never shows a stage that didn't save.
+  const saveLead = async (id: string, body: any, local: any) => {
+    setLeads((ls) => (ls || []).map((l) => (l.id === id ? { ...l, ...local } : l)));
+    setSavingId(id); setError(null);
+    try {
+      const res = await fetch(`/api/admin/sales/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      const saved = data.lead || {};
+      setLeads((ls) => (ls || []).map((l) => (l.id === id ? {
+        ...l,
+        stage: saved.stage ?? l.stage,
+        lastContactedAt: saved.last_contacted_at ?? l.lastContactedAt,
+      } : l)));
+    } catch (e: any) {
+      setError(e?.message || 'Save failed');
+      load();
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const all = leads || [];
+  const today = todayISO();
+  const isHot = (l: any) => l.segment === 'checkout' || l.segment === 'limit';
+  const isDue = (l: any) => l.followUpAt && l.followUpAt <= today && l.stage !== 'won' && l.stage !== 'lost';
+
+  const counts: Record<string, number> = { hot: 0, free: 0, followup: 0 };
+  for (const l of all) {
+    counts[l.segment] = (counts[l.segment] || 0) + 1;
+    if (l.segment !== 'paying') counts.free += 1;
+    if (isHot(l)) counts.hot += 1;
+    if (isDue(l)) counts.followup += 1;
+  }
+
+  // Funnel: each step is a subset of the one before it.
+  const funnel = [
+    { label: 'Signed up', n: all.length },
+    { label: 'Confirmed email', n: all.filter((l) => l.confirmed).length },
+    { label: 'Ran a lookup', n: all.filter((l) => l.lookupsTotal > 0 || l.segment === 'paying').length },
+    { label: 'Showed buying intent', n: all.filter((l) => isHot(l) || l.segment === 'paying').length },
+    { label: 'Paying', n: counts.paying || 0 },
+  ];
+  const conversion = all.length ? ((counts.paying || 0) / all.length) * 100 : 0;
+
+  const q = search.trim().toLowerCase();
+  const shown = all.filter((l) => {
+    if (q && !(
+      (l.email || '').toLowerCase().includes(q)
+      || (l.name || '').toLowerCase().includes(q)
+      || (l.company || '').toLowerCase().includes(q)
+      || (l.mc || '').includes(q)
+    )) return false;
+    if (filter === 'hot') return isHot(l);
+    if (filter === 'free') return l.segment !== 'paying';
+    if (filter === 'followup') return isDue(l);
+    return l.segment === filter;
+  });
+  const PAGE_SIZE = 20;
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const pageItems = shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportCsv = () => {
+    const cols = ['email', 'name', 'company', 'mc', 'plan', 'segment', 'stage', 'lookupsTotal', 'lookupsThisMonth', 'createdAt', 'lastActiveAt', 'followUpAt', 'notes'];
+    const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [cols.join(','), ...shown.map((l) => cols.map((c) => esc(c === 'segment' ? SALES_SEGMENTS[l.segment as SalesSegment]?.label : l[c])).join(','))].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `haulock-sales-${filter}-${today}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const FILTERS: { id: SalesFilter; label: string }[] = [
+    { id: 'hot', label: 'Hot leads' },
+    { id: 'followup', label: 'Follow-up due' },
+    { id: 'free', label: 'All not subscribed' },
+    { id: 'checkout', label: SALES_SEGMENTS.checkout.label },
+    { id: 'limit', label: SALES_SEGMENTS.limit.label },
+    { id: 'active', label: SALES_SEGMENTS.active.label },
+    { id: 'new', label: SALES_SEGMENTS.new.label },
+    { id: 'never_used', label: SALES_SEGMENTS.never_used.label },
+    { id: 'dormant', label: SALES_SEGMENTS.dormant.label },
+    { id: 'unconfirmed', label: SALES_SEGMENTS.unconfirmed.label },
+    { id: 'paying', label: SALES_SEGMENTS.paying.label },
+  ];
+
+  return (
+    <div className="space-y-8 text-[#0B1E3F]">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Sales</div>
+          <h1 className="text-4xl serif italic text-[#0B1E3F]">Turn free users into customers.</h1>
+          <p className="text-[#0B1E3F]/60 mt-2 text-sm max-w-2xl">Everyone who signed up, sorted by how close they are to paying, with the next step and a ready-to-send email for each.</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={exportCsv} disabled={!shown.length} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 flex items-center gap-1.5 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Export CSV</button>
+          <button onClick={load} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5">Refresh</button>
+        </div>
+      </div>
+
+      {!pipelineReady && (
+        <div className="p-4 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-xl text-sm">
+          <strong>Stages, notes and follow-ups are off</strong> until the <span className="mono">sales_leads</span> table exists. Run the new block at the end of <span className="mono">supabase/schema.sql</span> in the Supabase SQL editor.
+        </div>
+      )}
+      {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Not subscribed</div><div className="text-2xl font-semibold mt-1">{leads == null ? '—' : counts.free}</div></div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Paying</div><div className="text-2xl font-semibold mt-1">{leads == null ? '—' : (counts.paying || 0)}</div></div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Conversion</div><div className="text-2xl font-semibold mt-1">{leads == null ? '—' : `${conversion.toFixed(1)}%`}</div></div>
+        <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Hot leads</div><div className="text-2xl font-semibold mt-1 text-[#DC2626]">{leads == null ? '—' : counts.hot}</div></div>
+      </div>
+
+      {/* Funnel — bar width is relative to signups; the small % is step-to-step. */}
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-4">Funnel</div>
+        <div className="space-y-2.5">
+          {funnel.map((s, i) => {
+            const pct = funnel[0].n ? (s.n / funnel[0].n) * 100 : 0;
+            const prev = i > 0 ? funnel[i - 1].n : null;
+            const step = prev ? Math.round((s.n / prev) * 100) : null;
+            return (
+              <div key={s.label} className="flex items-center gap-3 text-sm">
+                <div className="w-40 md:w-48 flex-shrink-0 text-[#0B1E3F]/75">{s.label}</div>
+                <div className="flex-1 h-6 bg-[#0B1E3F]/5 rounded-md overflow-hidden">
+                  <div className="h-full bg-[#0B1E3F] rounded-md transition-all" style={{ width: `${Math.max(pct, s.n ? 2 : 0)}%` }} />
+                </div>
+                <div className="w-24 text-right mono text-xs">
+                  <span className="font-semibold text-[#0B1E3F]">{s.n}</span>
+                  {step != null && <span className="text-[#0B1E3F]/45"> · {step}%</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by email, name, company, or MC…" className="w-full px-4 py-3 bg-transparent text-sm focus:outline-none placeholder:text-[#0B1E3F]/40 border-b border-[#0B1E3F]/5" />
+        <div className="flex flex-wrap items-center gap-1 px-4 py-3">
+          {FILTERS.filter((f) => f.id !== 'followup' || pipelineReady).map((f) => {
+            const active = filter === f.id;
+            return (
+              <button key={f.id} type="button" onClick={() => setFilter(f.id)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition flex items-center gap-1.5 ${active ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/65 hover:text-[#0B1E3F] hover:bg-[#0B1E3F]/5'}`}>
+                {f.label}
+                <span className={`text-[10px] mono ${active ? 'text-white/60' : 'text-[#0B1E3F]/45'}`}>{counts[f.id] || 0}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {leads == null && <div className="text-sm text-[#0B1E3F]/50">Loading…</div>}
+        {leads != null && shown.length === 0 && (
+          <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-10 text-center text-sm text-[#0B1E3F]/55">Nobody in this group right now.</div>
+        )}
+        {pageItems.map((l) => {
+          const seg = SALES_SEGMENTS[l.segment as SalesSegment];
+          const displayName = l.name || (l.email || '').split('@')[0];
+          const firstName = (l.name || '').split(' ')[0] || 'there';
+          const mailto = `mailto:${encodeURIComponent(l.email)}?subject=${encodeURIComponent(seg.subject)}&body=${encodeURIComponent(seg.body(firstName))}`;
+          const open = openId === l.id;
+          return (
+            <div key={l.id} className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+              <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold truncate">{displayName}</span>
+                    <span className={`text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${seg.tone}`}>{seg.label}</span>
+                    {isDue(l) && <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full font-bold bg-[#FF6B35] text-white">Follow-up due</span>}
+                  </div>
+                  <div className="text-sm text-[#0B1E3F]/60 truncate">{l.email}{l.company ? ` · ${l.company}` : ''}{l.mc ? ` · MC ${l.mc}` : ''}</div>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs mono text-[#0B1E3F]/55">
+                    <span>{l.planLabel}</span>
+                    <span>Signed up {timeAgo(l.createdAt)}</span>
+                    <span>Lookups: {l.lookupsThisMonth}{l.freeLimit != null && l.segment !== 'paying' ? `/${l.freeLimit}` : ''} this mo · {l.lookupsTotal} total</span>
+                    {l.lastActiveAt && <span>Last active {timeAgo(l.lastActiveAt)}</span>}
+                    {l.checkoutAt && <span className="text-[#DC2626]">Checkout {timeAgo(l.checkoutAt)}{l.checkoutPlan ? ` · ${l.checkoutPlan}` : ''}</span>}
+                    {l.lastContactedAt && <span>Contacted {timeAgo(l.lastContactedAt)}</span>}
+                  </div>
+                  <div className="mt-3 text-sm text-[#0B1E3F]/80 flex items-start gap-2">
+                    <Target className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-0.5" />
+                    <span>{seg.action}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap lg:flex-col gap-2 lg:w-48 flex-shrink-0">
+                  <a href={mailto}
+                    onClick={() => { if (pipelineReady) saveLead(l.id, { contacted: true }, { lastContactedAt: new Date().toISOString(), stage: l.stage === 'new' ? 'contacted' : l.stage }); }}
+                    className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 flex items-center justify-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5" /> Email
+                  </a>
+                  {pipelineReady && (
+                    <select value={l.stage} disabled={savingId === l.id}
+                      onChange={(e) => saveLead(l.id, { stage: e.target.value }, { stage: e.target.value })}
+                      className="px-3 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm focus:outline-none focus:border-[#0B1E3F]">
+                      {SALES_STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                    </select>
+                  )}
+                  {pipelineReady && (
+                    <button type="button" onClick={() => setOpenId(open ? null : l.id)} className="px-4 py-2 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5">
+                      {open ? 'Close notes' : l.notes ? 'Notes •' : 'Notes'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {open && pipelineReady && (
+                <SalesNotes lead={l} onSave={(body, local) => saveLead(l.id, body, local)} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-[#0B1E3F]/55">{shown.length} people · page {page} of {pageCount}</span>
+          <div className="flex gap-2">
+            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full disabled:opacity-40">Previous</button>
+            <button disabled={page >= pageCount} onClick={() => setPage((p) => p + 1)} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full disabled:opacity-40">Next</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SalesNotes({ lead, onSave }: { lead: any; onSave: (body: any, local: any) => void }) {
+  const [notes, setNotes] = useState(lead.notes || '');
+  const [followUp, setFollowUp] = useState(lead.followUpAt || '');
+  const dirty = notes !== (lead.notes || '') || followUp !== (lead.followUpAt || '');
+  return (
+    <div className="mt-4 pt-4 border-t border-[#0B1E3F]/10 grid md:grid-cols-[1fr_auto] gap-3">
+      <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Private notes — only admins see these."
+        className="w-full px-4 py-3 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/35" />
+      <div className="flex md:flex-col gap-2">
+        <label className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 flex flex-col gap-1">
+          Follow up on
+          <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} className="px-3 py-2 border border-[#0B1E3F]/15 bg-white rounded-lg text-sm normal-case tracking-normal" />
+        </label>
+        <button type="button" disabled={!dirty}
+          onClick={() => onSave({ notes, followUpAt: followUp || null }, { notes, followUpAt: followUp || null })}
+          className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-40 self-end">
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsletter' | 'support';
 
 type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
@@ -7477,7 +7831,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const isAffiliate = user?.role === 'affiliate';
   const navItems: any[] = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'verify', label: 'Verify broker', icon: Search },
+    { id: 'verify', label: 'Verify broker / carrier', icon: Search },
     { id: 'history', label: 'History', icon: Clock },
     { id: 'watchlist', label: 'Watchlist', icon: Eye },
     { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount > 0 ? alertCount : null },
@@ -7490,6 +7844,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
     // slot the operator sees as Admin. A user can be either, never both.
     ...(isAffiliate && !isAdmin ? [{ id: 'earnings', label: 'My earnings', icon: TrendingUp }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: ShieldCheck, badge: openTickets > 0 ? openTickets : null }] : []),
+    ...(isAdmin ? [{ id: 'sales', label: 'Sales', icon: Target }] : []),
   ];
 
   return (
@@ -7607,8 +7962,8 @@ function Dashboard({ navigate, user }: any) {
           ) : recent.length === 0 ? (
             <div className="py-12 text-center text-[#0B1E3F]/60">
               <Search className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/30" />
-              <div className="text-sm">No lookups yet. Verify your first broker to start building history.</div>
-              <button onClick={() => navigate('verify')} className="mt-4 px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker</button>
+              <div className="text-sm">No lookups yet. Verify your first broker or carrier to start building history.</div>
+              <button onClick={() => navigate('verify')} className="mt-4 px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
             </div>
           ) : (
             <div className="space-y-1">
@@ -7744,6 +8099,15 @@ function VerifyTool({ navigate }: any) {
   const [rcError, setRcError] = useState<string | null>(null);
   const [rcDrag, setRcDrag] = useState(false);
   const emailInputRef = React.useRef<HTMLInputElement | null>(null);
+  // The radar scan replaces the form, so if the user clicked Verify (or a
+  // sample) while scrolled down, it would start off-screen. Bring it into
+  // view as soon as a lookup begins.
+  const scanRef = React.useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (loading && tab === 'quick') {
+      scanRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [loading, tab]);
 
   // Common prefixes seen on broker rate-con emails. Click to pre-fill the
   // email field with `<prefix>@` and focus the cursor after the @ so the
@@ -7891,49 +8255,69 @@ function VerifyTool({ navigate }: any) {
   return (
     <div className="space-y-8 text-[#0B1E3F]">
       <div>
-        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Verify broker</div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Verify brokers &amp; carriers</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Who&apos;s on the other end?</h1>
+        <p className="mt-3 text-[#0B1E3F]/65 max-w-2xl leading-relaxed">
+          Check any freight broker or motor carrier before you book a load. Pick what you want to check below.
+        </p>
       </div>
-      <div className="flex gap-1 p-1 bg-[#0B1E3F]/5 rounded-full w-fit flex-wrap">
+      {/* Each check is a card with a one-line "what it does" so users can
+          tell the four tools apart without trying each one. */}
+      {/* Hidden while a lookup runs so the scan animation sits right under
+          the heading instead of below four cards. */}
+      {!(loading && tab === 'quick') && (
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${launch.coi ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         {([
-          { id: 'quick', label: 'Quick lookup' },
-          { id: 'ratecon', label: 'Rate con analyzer' },
+          { id: 'quick', label: 'Look up a company', desc: 'Broker or carrier — search by MC, DOT, or company name.', icon: Search },
+          { id: 'ratecon', label: 'Rate con analyzer', desc: 'Upload a rate con. We find the broker on it and check them.', icon: FileText },
           // PDF forensics is the primary feature for drivers — we tag it
-          // with a green pill so a driver visiting the verify page knows
-          // immediately which tab applies to their workflow.
-          { id: 'forensics', label: 'PDF forensics', tag: 'For drivers' },
-          { id: 'coi', label: 'COI check', tag: 'For brokers' },
-          // Bulk verify is shipped but hidden from the tab strip until we
+          // so a driver visiting the verify page knows immediately which
+          // card applies to their workflow.
+          { id: 'forensics', label: 'PDF forensics', desc: 'See if a rate con PDF was edited before it reached you.', icon: Shield, tag: 'For drivers' },
+          { id: 'coi', label: 'COI check', desc: 'Compare a carrier’s insurance certificate with FMCSA filings.', icon: ShieldCheck, tag: 'For brokers' },
+          // Bulk verify is shipped but hidden from the picker until we
           // actually need it. Keep the route alive so existing deep-links
           // (and the underlying PageSlot) don't 404.
           // { id: 'bulk', label: 'Bulk verify' },
         ] as const).filter((t) => t.id !== 'coi' || launch.coi).map((t) => {
           const active = tab === t.id;
+          const Icon = t.icon;
           return (
             <button
               key={t.id}
+              type="button"
               onClick={() => setTab(t.id)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition flex items-center gap-2 ${active ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}
+              aria-pressed={active}
+              className={`text-left p-4 rounded-2xl border transition flex items-start gap-3 ${active ? 'bg-[#0B1E3F] border-[#0B1E3F] text-white card-shadow' : 'bg-white border-[#0B1E3F]/10 text-[#0B1E3F] hover:border-[#0B1E3F]/40'}`}
             >
-              {t.label}
-              {('tag' in t) && t.tag && (
-                <span
-                  className={`text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold ${active ? 'bg-white/20 text-white' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}
-                  title={t.id === 'coi' ? 'Brokers use this to check a carrier’s certificate of insurance against FMCSA filings.' : 'Drivers and owner-operators use this to check if a dispatcher edited a rate con before forwarding it.'}
-                >
-                  {t.tag}
-                </span>
-              )}
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${active ? 'bg-white/15' : 'bg-[#0B1E3F]/5'}`}>
+                <Icon className={`w-4 h-4 ${active ? 'text-white' : 'text-[#0B1E3F]/70'}`} />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold">{t.label}</span>
+                  {('tag' in t) && t.tag && (
+                    <span className={`text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold ${active ? 'bg-white/20 text-white' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>
+                      {t.tag}
+                    </span>
+                  )}
+                </div>
+                <div className={`mt-1 text-xs leading-snug ${active ? 'text-white/75' : 'text-[#0B1E3F]/60'}`}>{t.desc}</div>
+              </div>
             </button>
           );
         })}
       </div>
+      )}
       {tab === 'quick' && (
         loading ? (
-          <VerifyScanProgress query={input} result={scanResult} />
+          // scroll-mt clears the sticky app header when scrolled into view.
+          <div ref={scanRef} className="scroll-mt-24">
+            <VerifyScanProgress query={input} result={scanResult} />
+          </div>
         ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 md:p-12 card-shadow text-[#0B1E3F]">
-          <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">MC number, DOT number, or company name</label>
+          <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">Broker or carrier — MC number, DOT number, or company name</label>
           <div className="flex flex-col md:flex-row gap-3">
             <div className={`flex-1 flex items-stretch bg-[#F5F3EE] border rounded-xl focus-within:border-[#0B1E3F] transition overflow-hidden ${kind ? 'border-[#0B1E3F]/15' : 'border-[#FF6B35]/40'}`}>
               <div
@@ -8540,7 +8924,7 @@ function CarrierReport({ report, navigate }: any) {
         <h1 className="text-2xl serif italic mb-2">No report to show yet</h1>
         <p className="text-[#0B1E3F]/60 mb-6 max-w-md mx-auto">Run a Verify lookup or open one from your History to see its report here.</p>
         <div className="flex items-center justify-center gap-2">
-          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker</button>
+          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
           <button onClick={() => navigate('history')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Open history</button>
         </div>
       </div>
@@ -10174,7 +10558,7 @@ function Watchlist({ navigate }: any) {
           <Eye className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
           <div className="text-lg font-medium text-[#0B1E3F] mb-2">Your watchlist is empty</div>
           <div className="text-sm mb-6">Click &ldquo;Watch&rdquo; on any broker&rsquo;s report to track them for changes.</div>
-          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker</button>
+          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow text-[#0B1E3F]">
@@ -10767,8 +11151,8 @@ function SearchHistory({ navigate }: any) {
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-16 text-center text-[#0B1E3F]/60 card-shadow">
           <Clock className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
           <div className="text-lg font-medium text-[#0B1E3F] mb-2">{items.length === 0 ? 'No history yet' : 'No matches'}</div>
-          <div className="text-sm mb-6">{items.length === 0 ? 'Every broker you verify will be saved here.' : 'Try a different search.'}</div>
-          {items.length === 0 && <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker</button>}
+          <div className="text-sm mb-6">{items.length === 0 ? 'Every broker or carrier you verify will be saved here.' : 'Try a different search.'}</div>
+          {items.length === 0 && <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>}
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow text-[#0B1E3F]">
@@ -11019,7 +11403,7 @@ function Alerts({ navigate }: any) {
           <Bell className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
           <div className="text-lg font-medium text-[#0B1E3F] mb-2">No alerts yet</div>
           <div className="text-sm mb-6">Alerts show up when a broker lookup returns HIGH or CAUTION in the past 7 days.</div>
-          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker</button>
+          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
         </div>
       ) : (
         <div className="space-y-3">

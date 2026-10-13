@@ -440,3 +440,18 @@ create table if not exists public.inbound_scans (
 create index if not exists inbound_scans_from_created_idx on public.inbound_scans (from_email, created_at desc);
 -- Server-only table: RLS on with no policies, so only the service role can read/write.
 alter table public.inbound_scans enable row level security;
+
+-- Admin Sales tab: one row per user the operator has worked in the sales
+-- pipeline — manual stage, private notes, follow-up date. Kept out of
+-- user_metadata on purpose so users can never read the notes.
+create table if not exists public.sales_leads (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  stage text not null default 'new',   -- new | contacted | replied | offer_sent | won | lost
+  notes text,
+  follow_up_at date,
+  last_contacted_at timestamptz,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+-- Server-only table: RLS on with no policies, so only the service role can read/write.
+alter table public.sales_leads enable row level security;
