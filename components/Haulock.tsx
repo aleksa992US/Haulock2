@@ -14,6 +14,7 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
 import { PLANS, getPlan, formatLimit } from '@/lib/plans';
 import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
+import { NEW_FEATURES_ON } from '@/lib/features';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 
@@ -7386,6 +7387,7 @@ function Dashboard({ navigate, user }: any) {
   const recent = all.slice(0, 5);
   const scamAlerts = all.filter((l) => l.verdict === 'high').slice(0, 3);
   const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, watchlist: 0 };
+  const showNewFeatures = NEW_FEATURES_ON || Boolean(usage?.isAdmin);
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
@@ -7393,10 +7395,10 @@ function Dashboard({ navigate, user }: any) {
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Welcome</div>
         <h1 className="text-4xl serif italic text-[#0B1E3F]">Hello, {user.name.split(' ')[0]}.</h1>
       </div>
-      <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className={`grid gap-4 ${showNewFeatures ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
         <UsageCard label="Lookups this month" value={u.fmcsaLookups} limit={usage?.isAdmin ? null : plan.limits.fmcsaLookups} icon={Search} color="#0B1E3F" />
         <UsageCard label="Rate con scans" value={u.rateConScans} limit={usage?.isAdmin ? null : plan.limits.rateConScans} icon={FileText} color="#0B1E3F" />
-        <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />
+        {showNewFeatures && <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />}
         <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
         <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
       </div>
@@ -7532,6 +7534,10 @@ function VerifyTool({ navigate }: any) {
     } catch {}
     return 'quick';
   });
+  const newFeatures = useNewFeatures();
+  useEffect(() => {
+    if (newFeatures.ready && !newFeatures.on && tab === 'coi') setTab('quick');
+  }, [newFeatures.ready, newFeatures.on, tab]);
   const [input, setInput] = useState('');
   // Identifier-type selector. MC and DOT are separate registries that
   // frequently collide on the same number — e.g. MC-1162901 (Leader
@@ -7715,7 +7721,7 @@ function VerifyTool({ navigate }: any) {
           // actually need it. Keep the route alive so existing deep-links
           // (and the underlying PageSlot) don't 404.
           // { id: 'bulk', label: 'Bulk verify' },
-        ] as const).map((t) => {
+        ] as const).filter((t) => t.id !== 'coi' || newFeatures.on).map((t) => {
           const active = tab === t.id;
           return (
             <button
@@ -7899,8 +7905,8 @@ function VerifyTool({ navigate }: any) {
         </div>
       )}
       {tab === 'forensics' && <PdfForensicsPanel />}
-      {tab === 'coi' && <CoiCheckPanel />}
-      {(tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
+      {newFeatures.on && tab === 'coi' && <CoiCheckPanel />}
+      {newFeatures.on && (tab === 'ratecon' || tab === 'coi') && <ForwardToScanCard />}
       {tab === 'bulk' && (
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           <div className="flex items-start gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl mb-8">
@@ -7924,6 +7930,13 @@ function VerifyTool({ navigate }: any) {
 }
 
 // ---------- Forward-to-scan + COI check ----------
+
+// Hidden on the live site until launch (see lib/features.ts); admins see them.
+function useNewFeatures(): { on: boolean; ready: boolean } {
+  const usage = useCachedFetch<{ isAdmin?: boolean }>('usage', '/api/usage');
+  if (NEW_FEATURES_ON) return { on: true, ready: true };
+  return { on: Boolean(usage.data?.isAdmin), ready: usage.data != null };
+}
 
 const SCAN_EMAIL = process.env.NEXT_PUBLIC_SCAN_EMAIL || 'scan@haulock.com';
 

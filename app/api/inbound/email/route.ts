@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getResendClient } from '@/lib/email';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { emailAddress, processInboundEmail } from '@/lib/inbound-scan';
+import { isAdmin } from '@/lib/admin';
+import { NEW_FEATURES_ON } from '@/lib/features';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,9 +46,13 @@ export async function POST(req: Request) {
   const to: string[] = (event.data?.to || []).map(emailAddress);
   if (allowed.length > 0 && !to.some((a) => allowed.includes(a))) return NextResponse.json({ ignored: 'address' });
 
+  // Not launched yet: only admins' forwards get processed (lib/features.ts).
+  // 200 so Resend doesn't retry.
+  const from = emailAddress(event.data?.from);
+  if (!NEW_FEATURES_ON && !(await isAdmin(from))) return NextResponse.json({ ignored: 'not_launched' });
+
   // Claim the email once. Resend retries webhooks that time out; the unique
   // email_id makes those retries no-ops while the first run finishes.
-  const from = emailAddress(event.data?.from);
   const { error: claimError } = await svc.from('inbound_scans').insert({ email_id: emailId, from_email: from, status: 'processing' });
   if (claimError) {
     if ((claimError as any).code === '23505') return NextResponse.json({ duplicate: true });

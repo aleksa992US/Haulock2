@@ -7,6 +7,7 @@ import { ocrForScan, PipelineError } from '@/lib/rate-con-pipeline';
 import { runCoiCheckFromText } from '@/lib/coi-check';
 import { countMonthlyLookups } from '@/lib/usage';
 import { isAdmin } from '@/lib/admin';
+import { NEW_FEATURES_ON } from '@/lib/features';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,8 @@ export async function POST(req: Request) {
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // Not launched yet: admins only (lib/features.ts).
+  if (!NEW_FEATURES_ON && !(await isAdmin(user.email))) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
   const plan = ctx.effectivePlan;
