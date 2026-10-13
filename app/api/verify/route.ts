@@ -716,8 +716,8 @@ export async function GET(req: Request) {
       name: 'Linked entities',
       ok: !carrier.linkedEntities || carrier.linkedEntities.length === 0,
       note: carrier.linkedEntities && carrier.linkedEntities.length > 0
-        ? `${carrier.linkedEntities.length} alias${carrier.linkedEntities.length === 1 ? '' : 'es'} / sister entit${carrier.linkedEntities.length === 1 ? 'y' : 'ies'} found`
-        : 'No aliases or sister entities found',
+        ? `${carrier.linkedEntities.length} other compan${carrier.linkedEntities.length === 1 ? 'y' : 'ies'} named in coverage`
+        : 'No other companies named in coverage',
     },
     {
       name: 'FMCSA SMS',
