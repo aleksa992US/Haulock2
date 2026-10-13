@@ -1,3 +1,5 @@
+import { NEW_FEATURES_ON } from './features';
+
 export type PlanId = 'free' | 'carrier' | 'team' | 'fleet';
 
 export type PlanLimits = {
@@ -23,6 +25,9 @@ export type Plan = {
   popular?: boolean;
 };
 
+// COI lines appear on the pricing cards only once the feature launches.
+const coi = (line: string): string[] => (NEW_FEATURES_ON ? [line] : []);
+
 export const PLANS: Record<PlanId, Plan> = {
   free: {
     id: 'free',
@@ -36,7 +41,7 @@ export const PLANS: Record<PlanId, Plan> = {
     features: [
       '3 broker / carrier lookups / month',
       '3 PDF tamper detections / month',
-      '2 insurance certificate (COI) checks / month',
+      ...coi('2 insurance certificate (COI) checks / month'),
       '1 watchlist entry',
       'Basic risk score',
       'Web reputation scan across 50+ trusted sources',
@@ -56,7 +61,7 @@ export const PLANS: Record<PlanId, Plan> = {
     features: [
       'Unlimited broker / carrier lookups',
       '15 rate con scans / month',
-      '15 COI checks / month',
+      ...coi('15 COI checks / month'),
       'Unlimited PDF tamper detection',
       'Up to 25 watchlist entries',
       'Full risk reports',
@@ -77,7 +82,7 @@ export const PLANS: Record<PlanId, Plan> = {
     features: [
       'Everything in Carrier',
       '75 rate con scans / month',
-      '75 COI checks / month',
+      ...coi('75 COI checks / month'),
       'Unlimited PDF tamper detection',
       'Up to 100 watchlist entries',
       '3 users (shared quota)',
@@ -97,7 +102,7 @@ export const PLANS: Record<PlanId, Plan> = {
     features: [
       'Everything in Team',
       '500 rate con scans / month',
-      'Unlimited COI checks',
+      ...coi('Unlimited COI checks'),
       'Unlimited PDF tamper detection',
       'Unlimited watchlist entries',
       '10 users',

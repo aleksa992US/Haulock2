@@ -52,6 +52,10 @@ Copy `.env.example` to `.env.local` and fill in as you build out backend feature
 
 ## Forward-to-scan (scan@haulock.com) and COI checks
 
+Both are hidden on the live site until launch: set `NEXT_PUBLIC_NEW_FEATURES=on` to show them
+to everyone (plan cards, Verify → COI check tab, dashboard COI card, scan@ card, and the two
+API routes). Admins always see and can use them, so they can be tested on production first.
+
 **COI check** (`/api/coi/check`, Verify → COI check) reads a certificate of insurance with
 Document AI + Claude and compares it with FMCSA's public insurance filings (dataset
 `qh9u-swkp` on data.transportation.gov) and the PDF metadata. No new keys needed; optional
