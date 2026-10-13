@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
+import { createPortal } from 'react-dom';
 import {
   Shield, Search, AlertTriangle, CheckCircle2, XCircle, TrendingUp, FileText, Bell,
   Users, Settings, LogOut, ChevronRight, ArrowRight, Lock, Zap, Database, Eye, EyeOff, Flag,
@@ -9,6 +10,7 @@ import {
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
   Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
   Truck, UserCheck, LifeBuoy, MessageSquare,
+  X,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
@@ -398,6 +400,7 @@ function formatCount(n: number): string {
 
 function Landing({ navigate, user }: any) {
   const live = useLandingStats();
+  const [demoOpen, setDemoOpen] = useState(false);
   // Footer / Nav can deep-link into a Landing section via
   // navigate('landing', { scrollTo: 'product' }). We pop the target id off
   // sessionStorage on mount and smooth-scroll to it once.
@@ -439,9 +442,10 @@ function Landing({ navigate, user }: any) {
               <button onClick={() => navigate('signup')} className="group px-7 py-4 bg-[#0B1E3F] text-white text-base font-medium rounded-full hover:bg-[#0B1E3F]/90 transition flex items-center justify-center gap-2 card-shadow-lg">
                 Check any broker or carrier free <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
               </button>
-              <button className="group px-7 py-4 border border-[#0B1E3F]/20 bg-white text-[#0B1E3F] text-base font-medium rounded-full hover:bg-[#0B1E3F]/5 transition flex items-center justify-center gap-2">
+              <button onClick={() => { setDemoOpen(true); track('demo_opened'); }} className="group px-7 py-4 border border-[#0B1E3F]/20 bg-white text-[#0B1E3F] text-base font-medium rounded-full hover:bg-[#0B1E3F]/5 transition flex items-center justify-center gap-2">
                 <PlayCircle className="w-4 h-4" /> Watch 60-sec demo
               </button>
+              {demoOpen && <DemoModal onClose={() => setDemoOpen(false)} />}
             </div>
             <div className="fade-up fade-up-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-[#0B1E3F]/60">
               <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> Official FMCSA data</div>
@@ -1176,6 +1180,39 @@ const HERO_SCENARIOS: Array<{
     communityAlert: 'Clean across all 14 sources · 18-year authority',
   },
 ];
+
+// Hero "Watch 60-sec demo": the carrier, broker and driver reels back to back
+// (promo-videos composition "demo", rendered to public/demo). Portaled to
+// <body> because the hero's fade-up animation (a transform) would otherwise
+// trap a fixed overlay inside it.
+function DemoModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[60] bg-[#040B1A]/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label="Haulock demo video">
+      <div className="relative" onClick={(e) => e.stopPropagation()}>
+        <video
+          src="/demo/haulock-demo.mp4"
+          poster="/demo/haulock-demo-poster.jpg"
+          controls
+          autoPlay
+          playsInline
+          className="block rounded-2xl shadow-2xl bg-black"
+          style={{ height: 'min(86vh, 860px)', aspectRatio: '9 / 16', maxWidth: 'calc(100vw - 32px)' }}
+        />
+        <button onClick={onClose} aria-label="Close demo" className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-white text-[#0B1E3F] shadow-lg flex items-center justify-center hover:bg-[#F5F3EE] transition">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 function HeroDashboardMockup() {
   // Marketing hero deliberately renders only hardcoded HERO_SCENARIOS — never
