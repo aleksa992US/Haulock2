@@ -81,11 +81,12 @@ export async function POST(req: Request) {
         score: result.score,
         verdict: result.verdict === 'likely_tampered' ? 'high' : result.verdict === 'suspicious' ? 'medium' : 'low',
         source: 'forensics',
-        data: { filename: file.name, ...result },
+        data: { kind: 'forensics', filename: file.name, ...result },
       });
     } catch { /* usage logging non-fatal */ }
 
     return NextResponse.json({
+      kind: 'forensics',
       ...result,
       filename: file.name,
     });

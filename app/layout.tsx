@@ -12,7 +12,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 
 const TITLE = 'Haulock: Verify any broker or carrier. Stop freight fraud.';
 const DESCRIPTION =
-  'Haulock verifies freight brokers and carriers in seconds using official data from the Federal Motor Carrier Safety Administration (FMCSA). Cross-checks FMCSA SAFER, company website, social profiles, Google Business address, and domain records to catch double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.';
+  'Haulock verifies freight brokers and carriers in seconds using official data from the Federal Motor Carrier Safety Administration (FMCSA). Cross-checks FMCSA SAFER, the officer names on the FMCSA filing, company website, social profiles, Google Business address, and domain records, and checks rate con PDFs for edits, to catch double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.';
 const SHORT_DESC = 'Official FMCSA data plus website, social, and domain checks. Verify any broker or carrier before you book.';
 
 export const metadata: Metadata = {
@@ -159,7 +159,7 @@ const jsonLd = {
         '@type': 'Offer',
         price: '0',
         priceCurrency: 'USD',
-        description: '5 free verifications per month. No credit card required.',
+        description: '3 free broker/carrier lookups and 3 PDF tamper checks per month. No credit card required.',
       },
       audience: [
         { '@type': 'Audience', audienceType: 'Freight Carriers' },
@@ -170,9 +170,10 @@ const jsonLd = {
       featureList: [
         'FMCSA SAFER verification',
         'L&I authority status',
-        'MCS-150 filings',
+        'MCS-150 filings: company officer names, phone, email, and last update',
         'Insurance filings',
         'Crash and inspection history',
+        'FMCSA authority, insurance, and identity-change history',
         'Company website detection',
         'Domain WHOIS and age check',
         'DNS (MX/SPF) verification',
@@ -181,7 +182,9 @@ const jsonLd = {
         'Social profile discovery (Facebook, LinkedIn, Twitter/X, Instagram, YouTube, TikTok)',
         'Disposable email detection',
         'Rate confirmation PDF analysis',
+        'PDF tamper detection: saved versions compared page by page, white-out boxes, typed-on-top and hidden text',
         'Web reputation scan across 50+ trusted news outlets',
+        'Daily FMCSA monitoring of your own company record with email alerts',
       ],
     },
     {
@@ -217,7 +220,7 @@ const jsonLd = {
           acceptedAnswer: {
             '@type': 'Answer',
             text:
-              'FMCSA for authority, insurance, and safety history. WHOIS and DNS for domain age and email infrastructure. Google Places for address verification. Public social networks for company footprint. Plus an archive of historical FMCSA snapshots.',
+              'FMCSA for authority, insurance, and safety history, plus FMCSA’s Company Census for the officer names and contact details on the MCS-150 filing. WHOIS and DNS for domain age and email infrastructure. Google Places for address verification. Public social networks for company footprint. Plus an archive of historical FMCSA snapshots.',
           },
         },
         {

@@ -33,7 +33,7 @@ export async function GET() {
   // lockstep with the list (no more "1 in nav, 4 in page" mismatch).
   const uniqueKeys = new Set<string>();
   for (const a of alerts) {
-    const k = a.mc ? `mc:${a.mc}` : a.dot ? `dot:${a.dot}` : `name:${(a.name || '').toLowerCase()}`;
+    const k = a.source === 'forensics' ? `pdf:${(a.query || '').toLowerCase()}` : a.mc ? `mc:${a.mc}` : a.dot ? `dot:${a.dot}` : `name:${(a.name || '').toLowerCase()}`;
     uniqueKeys.add(k);
   }
 

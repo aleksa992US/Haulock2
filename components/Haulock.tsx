@@ -897,7 +897,7 @@ function Landing({ navigate, user }: any) {
                 </div>
                 <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mt-2">Example · last 12 weeks</div>
               </div>
-              <p className="mt-4 text-xs text-[#0B1E3F]/55">Counts only: we never reveal who searched. Unlocks once you verify the company is yours, with a login email on your company&apos;s domain or a code we send to the email on your FMCSA filing. Searches on FMCSA&apos;s own site aren&apos;t visible to anyone.</p>
+              <p className="mt-4 text-xs text-[#0B1E3F]/55">Counts only: we never reveal who searched. Unlocks once you verify the company is yours: a login email on the same domain as your FMCSA filing email, or a code we send to that address. Searches on FMCSA&apos;s own site aren&apos;t visible to anyone.</p>
             </div>
             <div className="p-8 rounded-3xl border border-[#0B1E3F]/10 bg-[#F5F3EE]">
               <div className="w-11 h-11 rounded-xl bg-[#FF6B35] flex items-center justify-center mb-5"><Bell className="w-5 h-5 text-white" /></div>
@@ -1040,21 +1040,23 @@ function Landing({ navigate, user }: any) {
           </div>
           <div className="space-y-3">
             {[
-              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And our own historical snapshot archive going back five years.' },
+              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. FMCSA’s public Company Census for the officer names, phone, and email on the company’s MCS-150 filing. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And our own historical snapshot archive going back five years.' },
               { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools vet in one direction: brokers checking carriers. Haulock works both ways. Carriers verify brokers, brokers verify carriers, and either side can verify shippers. We also catch things those tools do not, like lookalike domains, chameleon-network shared phone numbers, AI-driven rate confirmation analysis, and identity-history snapshots that show when a carrier quietly changed their address or phone.' },
               { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scored in about 3 seconds.' },
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
-              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER (authority, address, MCS-150), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, snapshot history, our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
+              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER and Company Census (authority, address, MCS-150 officers and contact details), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, authority, insurance, and identity-change history (name, address, phone), our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
+              { q: 'Can I see who owns a carrier or broker?', a: 'Yes. Reports show the company officers listed on the FMCSA filing (the MCS-150, from FMCSA’s public Company Census), plus the phone and email on that filing and the date it was last updated. Before you book, call the number FMCSA has, not the one on the rate con, and ask for the owner by name. The names are only as current as the company’s last MCS-150 update, which we show next to them. If FMCSA has no names on file, the report says so.' },
               { q: 'Does it work for freight brokers?', a: `Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.${COI_CHECK_ON ? ' On paid plans, brokers can also check a carrier’s certificate of insurance against its FMCSA filings.' : ''}` },
-              { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, and any web-reputation hits from trusted sources. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
+              { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, the officer names on the FMCSA filing, and any web-reputation hits from trusted sources. Second, the PDF tamper check: drop the rate confirmation and we open the file, rebuild every saved version, and show exactly what text changed after it was made. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
+              { q: 'How does the PDF tamper check work?', a: 'We open the PDF itself, not just its metadata. When a PDF is edited and saved, the earlier version often stays inside the file, so we rebuild every saved version and compare them page by page, showing the exact text that changed (before → after). We also look for white-out boxes drawn over text with new text on top, text boxes typed on top of the page, invisible text, changes made after a digital signature, Acrobat “Edit Text” markers, the same font embedded twice, online editors like iLovePDF, Sejda, or Smallpdf, impossible dates, stripped metadata, and JavaScript. Changed spots are highlighted on a preview of your PDF. We also tell you what’s normal, like filled-in form fields, signatures, the text layer on a scan, or a re-save that changed nothing, so an honest document isn’t flagged. No AI and no broker lookup: the file itself is checked, and it isn’t stored. Free plan: 3 scans a month. Paid plans: unlimited.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
-              { q: 'Can I see who is checking my company?', a: 'On paid plans you can see how often your company is checked on Haulock: checks per week, and how many different accounts looked you up. We never show who searched, and nobody can see lookups made on FMCSA\u2019s own site, because FMCSA doesn\u2019t publish them. To protect other users, these counts unlock only after you verify the company is yours: your login email has to match the email on your FMCSA filing. Paid plans also monitor your own FMCSA record every day and email you if anything changes.' },
+              { q: 'Can I see who is checking my company?', a: 'On paid plans you can see how often your company is checked on Haulock: checks per week, and how many different accounts looked you up. We never show who searched, and nobody can see lookups made on FMCSA\u2019s own site, because FMCSA doesn\u2019t publish them. You also get a notice in the app when your company is checked. To protect other users, these counts unlock only after you verify the company is yours: either your login email is on the same company domain as the email on your FMCSA filing, or you enter a code we email to that address. Paid plans also monitor your own FMCSA record every day and email you if anything changes.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
               { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
               ...(COI_CHECK_ON ? [
-                { q: 'Can Haulock check a carrier’s certificate of insurance (COI)?', a: `Yes, on paid plans. Upload the COI${SCAN_EMAIL_ON ? ' (or forward it to us)' : ''} and Haulock reads the policies, dates, and limits, then compares them with the filings the carrier’s insurer made with FMCSA: is the auto liability policy on file, is a cancellation pending, is the limit at least the FMCSA minimum, and was the PDF edited after it was created. You get match, verify, or mismatch with the source of every finding. No tool can prove a COI is genuine — on verify or mismatch, call the insurer using a number you look up yourself before you book.` },
+                { q: 'Can Haulock check a carrier’s certificate of insurance (COI)?', a: `Yes, on paid plans. Upload the ACORD 25 certificate${SCAN_EMAIL_ON ? ' (or forward it to us)' : ''} and Haulock uses AI to read the insurers, policies, dates, and limits, then compares them with the filings the carrier’s insurer made with FMCSA: is the auto liability policy on file, is a cancellation pending, is the limit at least the FMCSA minimum, and was the PDF edited after it was created. You get match, verify, or mismatch with the source of every finding. No tool can prove a COI is genuine — on verify or mismatch, call the insurer using a number you look up yourself before you book.` },
               ] : []),
               ...(SCAN_EMAIL_ON ? [
                 { q: 'Can I forward a rate con or COI by email?', a: `Yes. Forward the email to ${SCAN_EMAIL} from the address on your Haulock account and the verdict comes back in the same thread, usually within a minute. Paid plans get the full report, saved to your history; free accounts get a short preview of rate cons.` },
@@ -3316,6 +3318,9 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
           </LegalP>
           <LegalP>
             We also analyze rate confirmation PDFs with Claude AI to extract the broker, the carrier, and the load, then cross-check the broker email domain against their FMCSA-registered website to catch lookalike domains. The whole scan finishes in about two seconds.
+          </LegalP>
+          <LegalP>
+            Reports also show the company officers on the FMCSA filing, with the phone and email FMCSA has, so you can call the number on record and ask for the owner by name. And the PDF tamper check opens any rate con or document, rebuilds every saved version inside the file, and shows exactly what text changed. That check uses no AI, and the file isn&apos;t stored.
           </LegalP>
 
           <LegalH2>What we believe</LegalH2>
@@ -9017,97 +9022,365 @@ function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedd
   );
 }
 
+// What a saved lookup row opens: forensics rows carry a file, not a company.
+function lookupReportData(row: any) {
+  return row?.source === 'forensics' ? { kind: 'forensics', filename: row.query, ...(row.data || {}) } : row?.data;
+}
+
+const LOOKUP_KIND: Record<string, { label: string; icon: any }> = {
+  quick: { label: 'Lookup', icon: Search },
+  ratecon: { label: 'Rate con', icon: FileText },
+  coi: { label: 'COI', icon: ShieldCheck },
+  forensics: { label: 'PDF check', icon: Shield },
+};
+
+function verdictPill(row: any): { label: string; cls: string } {
+  const v = row.verdict || (row.score >= 61 ? 'high' : row.score >= 31 ? 'medium' : 'low');
+  const cls = v === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : v === 'medium' ? 'bg-[#F59E0B]/15 text-[#B45309]' : 'bg-[#16A34A]/10 text-[#16A34A]';
+  if (row.source === 'forensics') return { label: v === 'high' ? 'Likely edited' : v === 'medium' ? 'Worth a look' : 'Clean', cls };
+  return { label: v === 'high' ? 'High risk' : v === 'medium' ? 'Caution' : 'Low risk', cls };
+}
+
 function Dashboard({ navigate, user }: any) {
   const lookupsRes = useCachedFetch<{ lookups: any[] }>('lookups:200', '/api/lookups?limit=200');
   const usageRes = useCachedFetch<any>('usage', '/api/usage');
+  const alertsRes = useCachedFetch<{ alerts: any[] }>('alerts', '/api/alerts');
+  const watchRes = useCachedFetch<{ watchlist: any[] }>('watchlist', '/api/watchlist');
+  const ownRes = useCachedFetch<any>('own-score', '/api/profile/own-score');
   const lookups = lookupsRes.data?.lookups ?? null;
   const usage = usageRes.data;
   const plan = getPlan(user?.plan || usage?.plan?.id);
+  const isAdmin = Boolean(usage?.isAdmin);
+  const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, pdfForensics: 0, coiChecks: 0, watchlist: 0 };
+  const showCoi = COI_CHECK_ON || isAdmin;
 
   const all = lookups || [];
-  const highCount = all.filter((l) => l.verdict === 'high').length;
-  const recent = all.slice(0, 5);
-  const scamAlerts = all.filter((l) => l.verdict === 'high').slice(0, 3);
-  const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, watchlist: 0 };
-  const showCoi = COI_CHECK_ON || Boolean(usage?.isAdmin);
-  const showCoiCard = showCoi && (Boolean(usage?.isAdmin) || plan.limits.coiChecks !== 0);
+  const now = new Date();
+  const monthStartMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const thisMonth = all.filter((l) => new Date(l.created_at).getTime() >= monthStartMs);
+  const verdictOf = (l: any) => l.verdict || (l.score >= 61 ? 'high' : l.score >= 31 ? 'medium' : 'low');
+  const mix = { low: 0, medium: 0, high: 0 } as Record<string, number>;
+  for (const l of thisMonth) mix[verdictOf(l)] = (mix[verdictOf(l)] || 0) + 1;
+  const flaggedMonth = mix.medium + mix.high;
+  const pdfsMonth = thisMonth.filter((l) => l.source === 'forensics').length;
+
+  // Checks per week, last 12 weeks (Monday start), oldest first.
+  const weekStart = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
+  const thisWeek = weekStart(Date.now());
+  const weeks = Array.from({ length: 12 }, (_, i) => ({ start: thisWeek - (11 - i) * 7 * 86400000, count: 0 }));
+  for (const l of all) {
+    const idx = 11 - Math.round((thisWeek - weekStart(new Date(l.created_at).getTime())) / (7 * 86400000));
+    if (idx >= 0 && idx < 12) weeks[idx].count += 1;
+  }
+  const maxWeek = Math.max(1, ...weeks.map((w) => w.count));
+  const [hoverWeek, setHoverWeek] = useState<number | null>(null);
+
+  // Needs attention: same grouping as the Alerts page and sidebar badge.
+  const attention = (() => {
+    const seen = new Set<string>();
+    const out: any[] = [];
+    for (const a of alertsRes.data?.alerts || []) {
+      const key = a.source === 'forensics' ? `pdf:${(a.query || '').toLowerCase()}` : a.mc ? `mc:${a.mc}` : a.dot ? `dot:${a.dot}` : `name:${(a.name || '').toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(a);
+    }
+    return out;
+  })();
+
+  const watch = watchRes.data?.watchlist || [];
+  const recentlyChanged = watch
+    .filter((w: any) => w.data?.fmcsaWatch?.lastChangeAt && Date.now() - new Date(w.data.fmcsaWatch.lastChangeAt).getTime() < 14 * 86400000)
+    .sort((a: any, b: any) => new Date(b.data.fmcsaWatch.lastChangeAt).getTime() - new Date(a.data.fmcsaWatch.lastChangeAt).getTime());
+
+  const own = ownRes.data;
+  const ownReport = own?.report;
+  const hasOwn = Boolean(own && (own.ownMc || own.ownDot));
+
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const firstName = String(user?.name || '').split(' ')[0] || 'there';
+  const subtitle = lookups == null
+    ? 'Loading your activity…'
+    : attention.length > 0
+      ? `${attention.length} ${attention.length === 1 ? 'company or file needs' : 'companies or files need'} a second look this week.`
+      : thisMonth.length > 0
+        ? `You’ve run ${thisMonth.length} check${thisMonth.length === 1 ? '' : 's'} this month. Nothing risky in the last 7 days.`
+        : 'Check a broker, carrier or PDF before you book the load.';
+
+  const quota = (used: number, limit: number | null | undefined) => {
+    if (isAdmin || limit == null) return { text: 'Unlimited', pct: null as number | null, locked: false };
+    if (limit === 0) return { text: 'Paid plans', pct: null, locked: true };
+    const left = Math.max(0, limit - used);
+    return { text: `${left} of ${limit} left this month`, pct: Math.min(100, (used / limit) * 100), locked: false };
+  };
+  const tools = [
+    { tab: 'quick', title: 'Verify a company', desc: 'Broker or carrier, by MC, DOT or name.', icon: Search, q: quota(u.fmcsaLookups, plan.limits.fmcsaLookups) },
+    { tab: 'ratecon', title: 'Scan a rate con', desc: 'We find the broker on it and check them.', icon: FileText, q: quota(u.rateConScans, plan.limits.rateConScans) },
+    { tab: 'forensics', title: 'Check a PDF for edits', desc: 'See what changed and where, on the page.', icon: ScanLine, q: quota(u.pdfForensics ?? 0, plan.limits.pdfForensics) },
+    ...(showCoi ? [{ tab: 'coi', title: 'Check a COI', desc: 'Certificate vs the carrier’s FMCSA filings.', icon: ShieldCheck, q: quota(u.coiChecks ?? 0, plan.limits.coiChecks) }] : []),
+  ];
 
   return (
-    <div className="space-y-8 text-[#0B1E3F]">
-      <div>
-        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Welcome</div>
-        <h1 className="text-4xl serif italic text-[#0B1E3F]">Hello, {user.name.split(' ')[0]}.</h1>
+    <div className="space-y-6 text-[#0B1E3F]">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">{now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+          <h1 className="text-4xl serif italic">{greeting}, {firstName}.</h1>
+          <p className={`mt-2 text-sm ${attention.length ? 'text-[#B45309] font-medium' : 'text-[#0B1E3F]/60'}`}>{subtitle}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {attention.length > 0 && (
+            <button onClick={() => navigate('alerts')} className="px-4 py-2.5 border border-[#F59E0B]/40 bg-[#F59E0B]/10 rounded-full text-sm font-medium text-[#B45309] hover:bg-[#F59E0B]/15 flex items-center gap-2"><Bell className="w-4 h-4" /> Review alerts</button>
+          )}
+          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 flex items-center gap-2 card-shadow"><Plus className="w-4 h-4" /> New check</button>
+        </div>
       </div>
-      <div className={`grid gap-4 ${showCoiCard ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-4'}`}>
-        <UsageCard label="Lookups this month" value={u.fmcsaLookups} limit={usage?.isAdmin ? null : plan.limits.fmcsaLookups} icon={Search} color="#0B1E3F" />
-        <UsageCard label="Rate con scans" value={u.rateConScans} limit={usage?.isAdmin ? null : plan.limits.rateConScans} icon={FileText} color="#0B1E3F" />
-        {showCoiCard && <UsageCard label="COI checks" value={(u as any).coiChecks ?? 0} limit={usage?.isAdmin ? null : plan.limits.coiChecks ?? null} icon={ShieldCheck} color="#0B1E3F" />}
-        <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
-        <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
+
+      {/* Tools */}
+      <div className={`grid gap-3 sm:grid-cols-2 ${tools.length === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+        {tools.map((t) => (
+          <button key={t.tab} onClick={() => navigate('verify', { tab: t.tab })} className="group text-left bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow hover:border-[#FF6B35]/50 hover:-translate-y-0.5 transition flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="w-10 h-10 rounded-xl bg-[#0B1E3F] flex items-center justify-center group-hover:bg-[#FF6B35] transition"><t.icon className="w-5 h-5 text-white" /></div>
+              <ArrowRight className="w-4 h-4 text-[#0B1E3F]/25 group-hover:text-[#FF6B35] group-hover:translate-x-0.5 transition" />
+            </div>
+            <div className="font-semibold">{t.title}</div>
+            <div className="text-xs text-[#0B1E3F]/60 mt-1 flex-1">{t.desc}</div>
+            <div className="mt-4">
+              <div className={`text-[11px] mono ${t.q.locked ? 'text-[#FF6B35]' : 'text-[#0B1E3F]/55'}`}>{t.q.locked && <Lock className="w-3 h-3 inline -mt-0.5 mr-1" />}{t.q.text}</div>
+              {t.q.pct != null && (
+                <div className="mt-1.5 h-1 rounded-full bg-[#0B1E3F]/8 overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${t.q.pct}%`, background: t.q.pct >= 100 ? '#DC2626' : '#0B1E3F' }} />
+                </div>
+              )}
+            </div>
+          </button>
+        ))}
       </div>
-      {plan.id === 'free' && (
-        <div className="flex items-center justify-between gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl">
-          <div className="text-sm text-[#0B1E3F]">
-            You&rsquo;re on the <strong>Free</strong> plan — {plan.limits.fmcsaLookups} lookups and {plan.limits.pdfForensics} PDF checks a month. Upgrade to Carrier for unlimited lookups and {PLANS.carrier.limits.rateConScans} rate con scans a month.
+
+      {plan.id === 'free' && !isAdmin && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-2xl">
+          <div className="text-sm">
+            You&rsquo;re on the <strong>Free</strong> plan: {plan.limits.fmcsaLookups} lookups and {plan.limits.pdfForensics} PDF checks a month. Carrier gets unlimited lookups and PDF checks, plus {PLANS.carrier.limits.rateConScans} rate con scans a month.
           </div>
-          <button onClick={() => navigate('plan')} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 whitespace-nowrap">Upgrade</button>
+          <button onClick={() => navigate('plan')} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 whitespace-nowrap self-start sm:self-auto">See plans</button>
         </div>
       )}
+
       <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F]">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold text-[#0B1E3F]">Recent lookups</h2>
-            <button onClick={() => navigate('verify')} className="text-sm text-[#0B1E3F]/60 hover:text-[#0B1E3F] flex items-center gap-1">New lookup <Plus className="w-3.5 h-3.5" /></button>
-          </div>
-          {lookups == null ? (
-            <div className="py-8 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
-          ) : recent.length === 0 ? (
-            <div className="py-12 text-center text-[#0B1E3F]/60">
-              <Search className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/30" />
-              <div className="text-sm">No lookups yet. Verify your first broker or carrier to start building history.</div>
-              <button onClick={() => navigate('verify')} className="mt-4 px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
+        <div className="lg:col-span-2 space-y-6">
+          {/* This month */}
+          <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-semibold">This month</h2>
+              <button onClick={() => navigate('history')} className="text-sm text-[#0B1E3F]/60 hover:text-[#0B1E3F] flex items-center gap-1">History <ChevronRight className="w-3.5 h-3.5" /></button>
             </div>
-          ) : (
-            <div className="space-y-1">
-              {recent.map((l: any) => (
-                <button key={l.id} onClick={() => navigate('report', l.data)} className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-[#0B1E3F]/5 transition text-left text-[#0B1E3F]">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center mono text-sm font-semibold ${l.verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : l.verdict === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{l.score}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-[#0B1E3F] truncate">{l.name}</div>
-                    <div className="text-xs mono text-[#0B1E3F]/50">{[l.mc && `MC-${l.mc}`, l.dot && `DOT-${l.dot}`].filter(Boolean).join(' · ') || 'No ID'} · {timeAgo(l.created_at)}</div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-[#0B1E3F]/30" />
-                </button>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { label: 'Checks run', value: lookups == null ? '—' : thisMonth.length },
+                { label: 'Flagged', value: lookups == null ? '—' : flaggedMonth, warn: flaggedMonth > 0 },
+                { label: 'PDFs checked', value: lookups == null ? '—' : pdfsMonth },
+                { label: 'Watching', value: watchRes.data ? watch.length : '—' },
+              ].map((x) => (
+                <div key={x.label} className="p-3.5 rounded-xl bg-[#0B1E3F]/[0.04]">
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{x.label}</div>
+                  <div className={`text-2xl font-semibold mt-1 ${x.warn ? 'text-[#B45309]' : ''}`}>{x.value}</div>
+                </div>
               ))}
             </div>
-          )}
-        </div>
-        <div className="bg-[#0B1E3F] text-white rounded-2xl p-6 relative overflow-hidden card-shadow">
-          <div className="absolute inset-0 grid-bg-dark opacity-50" />
-          <div className="relative">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-white">High-risk flags</h2>
-              <div className="w-8 h-8 rounded-lg bg-[#FF6B35]/20 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-[#FF6B35]" /></div>
+
+            {thisMonth.length > 0 && (
+              <div className="mt-5">
+                <div className="flex items-center justify-between text-xs text-[#0B1E3F]/60 mb-1.5">
+                  <span>Results this month</span>
+                  <span className="flex items-center gap-3">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#16A34A]" />{mix.low} clear</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#F59E0B]" />{mix.medium} caution</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#DC2626]" />{mix.high} high</span>
+                  </span>
+                </div>
+                <div className="flex h-2 rounded-full overflow-hidden gap-[2px] bg-white">
+                  {(['low', 'medium', 'high'] as const).filter((k) => mix[k] > 0).map((k) => (
+                    <div key={k} style={{ flexGrow: mix[k], background: k === 'low' ? '#16A34A' : k === 'medium' ? '#F59E0B' : '#DC2626' }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6">
+              <div className="flex items-baseline justify-between mb-2">
+                <div className="text-xs text-[#0B1E3F]/60">Checks per week</div>
+                <div className="text-xs mono text-[#0B1E3F]/45">last 12 weeks</div>
+              </div>
+              <div className="relative">
+                <div className="flex items-end gap-1.5 h-24" role="img" aria-label={`Checks per week: ${weeks.map((w) => w.count).join(', ')}`}>
+                  {weeks.map((w, i) => {
+                    const current = i === weeks.length - 1;
+                    return (
+                      <div key={i} className="flex-1 h-full flex items-end cursor-default" onMouseEnter={() => setHoverWeek(i)} onMouseLeave={() => setHoverWeek(null)}>
+                        <div className="w-full rounded-t-[4px] transition" style={{ height: `${w.count ? Math.max(6, (w.count / maxWeek) * 100) : 3}%`, background: current ? '#FF6B35' : hoverWeek === i ? '#0B1E3F' : 'rgba(11,30,63,0.22)' }} />
+                      </div>
+                    );
+                  })}
+                </div>
+                {hoverWeek != null && (
+                  <div className="absolute -top-8 px-2 py-1 rounded-md bg-[#0B1E3F] text-white text-[11px] whitespace-nowrap pointer-events-none" style={{ left: `calc(${((hoverWeek + 0.5) / 12) * 100}% - 48px)` }}>
+                    {weeks[hoverWeek].count} check{weeks[hoverWeek].count === 1 ? '' : 's'} · week of {new Date(weeks[hoverWeek].start).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  </div>
+                )}
+                <div className="flex justify-between text-[10px] mono text-[#0B1E3F]/40 mt-1.5">
+                  <span>{new Date(weeks[0].start).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                  <span>This week</span>
+                </div>
+              </div>
             </div>
-            {scamAlerts.length === 0 ? (
-              <div className="text-sm text-white/70 py-8 text-center">No high-risk brokers flagged yet.</div>
+          </div>
+
+          {/* Recent activity */}
+          <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Recent activity</h2>
+              <button onClick={() => navigate('history')} className="text-sm text-[#0B1E3F]/60 hover:text-[#0B1E3F] flex items-center gap-1">View all <ChevronRight className="w-3.5 h-3.5" /></button>
+            </div>
+            {lookups == null ? (
+              <div className="py-8 text-center text-sm text-[#0B1E3F]/50">Loading…</div>
+            ) : all.length === 0 ? (
+              <div className="py-10 text-center text-[#0B1E3F]/60">
+                <Search className="w-10 h-10 mx-auto mb-3 text-[#0B1E3F]/30" />
+                <div className="text-sm">No checks yet. Verify your first broker or carrier, or drop in a rate con.</div>
+                <button onClick={() => navigate('verify')} className="mt-4 px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Run your first check</button>
+              </div>
             ) : (
-              <div className="space-y-4">
-                {scamAlerts.map((a: any) => (
-                  <div key={a.id} className="pb-4 border-b border-white/10 last:border-0 last:pb-0">
-                    <div className="font-medium text-sm mb-1 text-white truncate">{a.name}</div>
-                    <div className="flex items-center gap-2 text-xs text-white/70 mb-2">
-                      <span className="px-2 py-0.5 bg-[#FF6B35]/20 text-[#FF6B35] rounded-full">Score {a.score}</span>
-                      <span>{timeAgo(a.created_at)}</span>
+              <div className="divide-y divide-[#0B1E3F]/5 -mx-2">
+                {all.slice(0, 6).map((l: any) => {
+                  const kind = LOOKUP_KIND[l.source] || LOOKUP_KIND.quick;
+                  const pill = verdictPill(l);
+                  const name = l.source === 'forensics' ? (l.query || 'PDF document') : l.name;
+                  const sub = l.source === 'forensics' ? 'PDF forensics' : [l.mc && `MC-${l.mc}`, l.dot && `DOT-${l.dot}`].filter(Boolean).join(' · ') || 'No ID';
+                  return (
+                    <button key={l.id} onClick={() => navigate('report', lookupReportData(l))} className="w-full flex items-center gap-3 px-2 py-3 rounded-lg hover:bg-[#0B1E3F]/[0.04] transition text-left">
+                      <div className="w-9 h-9 rounded-xl bg-[#0B1E3F]/5 flex items-center justify-center flex-shrink-0" title={kind.label}><kind.icon className="w-4 h-4 text-[#0B1E3F]/70" /></div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{name}</div>
+                        <div className="text-xs mono text-[#0B1E3F]/50 truncate">{kind.label} · {sub} · {timeAgo(l.created_at)}</div>
+                      </div>
+                      <span className={`hidden sm:inline px-2 py-0.5 rounded-full text-[11px] font-semibold ${pill.cls}`}>{pill.label}</span>
+                      <span className="mono text-sm font-semibold w-8 text-right text-[#0B1E3F]/70">{l.score}</span>
+                      <ChevronRight className="w-4 h-4 text-[#0B1E3F]/30" />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Needs attention */}
+          <div className="bg-[#0B1E3F] text-white rounded-2xl p-6 relative overflow-hidden card-shadow">
+            <div className="absolute inset-0 grid-bg-dark opacity-50" />
+            <div className="relative">
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h2 className="text-lg font-semibold">Needs attention</h2>
+                  <div className="text-xs text-white/55">High risk or caution, last 7 days</div>
+                </div>
+                <div className="w-9 h-9 rounded-xl bg-[#FF6B35]/20 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-[#FF6B35]" /></div>
+              </div>
+              {alertsRes.data == null ? (
+                <div className="text-sm text-white/60 py-6 text-center">Loading…</div>
+              ) : attention.length === 0 ? (
+                <div className="py-6 text-center">
+                  <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-[#16A34A]" />
+                  <div className="text-sm text-white/80">All clear. Nothing risky in the last 7 days.</div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {attention.slice(0, 4).map((a: any) => {
+                    const pill = verdictPill(a);
+                    return (
+                      <button key={a.id} onClick={() => navigate('report', lookupReportData(a))} className="w-full text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 transition">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium text-sm truncate">{a.source === 'forensics' ? (a.query || 'PDF document') : a.name}</div>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0 ${a.verdict === 'high' ? 'bg-[#DC2626]/25 text-[#FCA5A5]' : 'bg-[#F59E0B]/25 text-[#FCD34D]'}`}>{pill.label}</span>
+                        </div>
+                        <div className="text-xs text-white/55 mt-1 truncate">{(a.data?.flags || [])[0]?.title || (a.source === 'forensics' ? 'PDF forensics' : [a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`].filter(Boolean).join(' · '))} · {timeAgo(a.created_at)}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <button onClick={() => navigate('alerts')} className="w-full mt-5 py-2.5 bg-white/10 hover:bg-white/15 transition rounded-full text-sm font-medium flex items-center justify-center gap-2">
+                {attention.length > 4 ? `See all ${attention.length} alerts` : 'Open alerts'} <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Your company */}
+          <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Your company</h2>
+              <Building2 className="w-4 h-4 text-[#0B1E3F]/40" />
+            </div>
+            {!hasOwn ? (
+              <div>
+                <div className="text-sm text-[#0B1E3F]/65">Add your MC or DOT to see the score brokers and shippers see for you, get alerts when your FMCSA record changes, and see how often you&apos;re checked.</div>
+                <button onClick={() => navigate('settings', { tab: 'profile' })} className="mt-4 px-4 py-2 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5">Add your MC / DOT</button>
+              </div>
+            ) : !ownReport ? (
+              <div className="text-sm text-[#0B1E3F]/55">Loading your company…</div>
+            ) : (() => {
+              const v = ownReport.verdict || (ownReport.score >= 61 ? 'high' : ownReport.score >= 31 ? 'medium' : 'low');
+              const c = v === 'high' ? '#DC2626' : v === 'medium' ? '#F59E0B' : '#16A34A';
+              return (
+                <div>
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl flex flex-col items-center justify-center flex-shrink-0" style={{ background: `${c}18` }}>
+                      <div className="text-xl font-bold leading-none" style={{ color: c }}>{ownReport.score}</div>
+                      <div className="text-[9px] mono text-[#0B1E3F]/50 mt-0.5">/ 100</div>
                     </div>
-                    <div className="text-xs text-white/80 mono">{[a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`].filter(Boolean).join(' · ') || 'No ID'}</div>
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate">{ownReport.name || (own.ownMc ? `MC-${own.ownMc}` : `DOT-${own.ownDot}`)}</div>
+                      <div className="text-xs mono text-[#0B1E3F]/50">{own.ownMc ? `MC-${own.ownMc}` : `DOT-${own.ownDot}`} · {v === 'high' ? 'High risk' : v === 'medium' ? 'Caution' : 'Low risk'}</div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-[#0B1E3F]/55 mt-3">This is the score others see when they check you on Haulock.</div>
+                  <button onClick={() => window.dispatchEvent(new CustomEvent('haulock:open-own-company'))} className="mt-4 w-full py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 flex items-center justify-center gap-2">
+                    <Eye className="w-4 h-4" /> Score, monitoring &amp; who&apos;s checking
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Watchlist */}
+          <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-lg font-semibold">Watchlist</h2>
+              <button onClick={() => navigate('watchlist')} className="text-sm text-[#0B1E3F]/60 hover:text-[#0B1E3F] flex items-center gap-1">Open <ChevronRight className="w-3.5 h-3.5" /></button>
+            </div>
+            <div className="text-xs text-[#0B1E3F]/55 mb-4">
+              {watchRes.data == null ? 'Loading…' : watch.length === 0 ? 'Not watching anyone yet.' : `${watch.length} ${watch.length === 1 ? 'company' : 'companies'} checked daily against FMCSA.`}
+            </div>
+            {recentlyChanged.length > 0 ? (
+              <div className="space-y-2">
+                {recentlyChanged.slice(0, 3).map((w: any) => (
+                  <div key={w.id} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-[#F59E0B]/10">
+                    <Radio className="w-4 h-4 text-[#B45309] flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{w.name}</div>
+                      <div className="text-[11px] text-[#0B1E3F]/55">FMCSA record changed {timeAgo(w.data.fmcsaWatch.lastChangeAt)}</div>
+                    </div>
                   </div>
                 ))}
               </div>
+            ) : watch.length > 0 ? (
+              <div className="flex items-center gap-2 text-sm text-[#16A34A]"><CheckCircle2 className="w-4 h-4" /> No changes in the last 2 weeks</div>
+            ) : (
+              <div className="text-sm text-[#0B1E3F]/65">Watch a broker or carrier from its report and we&apos;ll email you when its authority, insurance or details change.</div>
             )}
-            <button onClick={() => navigate('alerts')} className="w-full mt-6 py-2.5 bg-white/10 hover:bg-white/15 transition rounded-full text-sm font-medium text-white flex items-center justify-center gap-2">
-              See all alerts <ArrowRight className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
       </div>
@@ -9977,7 +10250,7 @@ function PdfForensicsPanel() {
 
       {result && (
         <div className="mt-8">
-          <ForensicsResultBody result={result} />
+          <ForensicsResultBody result={result} file={file} />
           <div className="mt-6 pt-4 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60">
             Tip: this checks the PDF file itself. To verify the BROKER on the rate con, switch to the <strong>Rate con analyzer</strong> tab.
           </div>
@@ -10031,11 +10304,249 @@ const FORENSIC_TONE = {
   neutral: { dot: '#0B1E3F', chip: 'bg-[#0B1E3F]/8 text-[#0B1E3F]/70' },
 };
 
-function ForensicsResultBody({ result }: { result: any }) {
+// pdf.js is self-hosted in /public/pdfjs (the CSP only allows same-origin
+// scripts) and loaded only when a preview is shown.
+let pdfJsPromise: Promise<any> | null = null;
+function loadPdfJs(): Promise<any> {
+  if (!pdfJsPromise) {
+    const url = '/pdfjs/pdf.min.mjs';
+    pdfJsPromise = import(/* webpackIgnore: true */ url).then((m: any) => {
+      m.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.mjs';
+      return m;
+    }).catch((e: any) => { pdfJsPromise = null; throw e; });
+  }
+  return pdfJsPromise;
+}
+
+async function sha256Hex(f: File): Promise<string | null> {
+  try {
+    const d = await crypto.subtle.digest('SHA-256', await f.arrayBuffer());
+    return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch { return null; }
+}
+
+const REGION_STYLE: Record<string, { border: string; fill: string; dashed?: boolean; name: string }> = {
+  critical: { border: '#DC2626', fill: 'rgba(220,38,38,0.14)', name: 'Changed' },
+  warning: { border: '#F59E0B', fill: 'rgba(245,158,11,0.16)', name: 'Check this' },
+  info: { border: '#64748B', fill: 'rgba(100,116,139,0.12)', name: 'Note' },
+  removed: { border: '#F59E0B', fill: 'rgba(245,158,11,0.06)', dashed: true, name: 'Was here before' },
+};
+const regionStyle = (g: any) => g.kind === 'text_removed' ? REGION_STYLE.removed : REGION_STYLE[g.sev] || REGION_STYLE.info;
+
+function ForensicsPreview({ file, regions, fileSha256 }: { file: File | null; regions: any[]; fileSha256: string | null }) {
+  // History rows don't keep the PDF: the user can open the same file here
+  // (read in the browser only) to see the highlights again.
+  const [localFile, setLocalFile] = useState<File | null>(null);
+  const [mismatch, setMismatch] = useState(false);
+  const shown = file || localFile;
+  const [doc, setDoc] = useState<any>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [active, setActive] = useState<number | null>(null);
+  const [showBoxes, setShowBoxes] = useState(true);
+  const [allPages, setAllPages] = useState(false);
+
+  useEffect(() => {
+    if (!shown) return;
+    let cancelled = false;
+    let task: any = null;
+    setDoc(null); setLoadError(null); setActive(null);
+    (async () => {
+      const pdfjs = await loadPdfJs();
+      const data = new Uint8Array(await shown.arrayBuffer());
+      task = pdfjs.getDocument({ data, isEvalSupported: false });
+      const d = await task.promise;
+      if (!cancelled) setDoc(d);
+    })().catch(() => { if (!cancelled) setLoadError('We couldn’t draw a preview of this PDF in your browser. The findings below still apply.'); });
+    return () => { cancelled = true; try { task?.destroy?.(); } catch {} };
+  }, [shown]);
+
+  const openLocal = async (f: File) => {
+    setMismatch(false);
+    if (fileSha256) {
+      const h = await sha256Hex(f);
+      if (h && h !== fileSha256) setMismatch(true);
+    }
+    setLocalFile(f);
+  };
+
+  const boxes = mismatch ? [] : regions;
+  const numPages: number = doc?.numPages || 0;
+  const regionPages = Array.from(new Set(boxes.map((g) => g.page))).sort((a, b) => a - b);
+  const defaultPages = numPages <= 4
+    ? Array.from({ length: numPages }, (_, i) => i + 1)
+    : Array.from(new Set([1, ...regionPages])).filter((n) => n <= numPages).slice(0, 6);
+  const pages = allPages ? Array.from({ length: Math.min(numPages, 30) }, (_, i) => i + 1) : defaultPages;
+
+  const pick = (i: number) => {
+    setActive(i);
+    setShowBoxes(true);
+    const g = boxes[i];
+    if (g && !pages.includes(g.page)) setAllPages(true);
+    setTimeout(() => document.getElementById(`fx-box-${i}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+  };
+
+  if (!shown) {
+    return (
+      <div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">See it on the page</div>
+        <label className="block cursor-pointer border-2 border-dashed border-[#0B1E3F]/15 rounded-2xl p-6 text-center hover:border-[#FF6B35] hover:bg-[#FF6B35]/5 transition">
+          <input type="file" accept="application/pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) openLocal(f); }} />
+          <Eye className="w-6 h-6 mx-auto mb-2 text-[#0B1E3F]/40" />
+          <div className="text-sm font-medium">We marked {regions.length} spot{regions.length === 1 ? '' : 's'} on this PDF</div>
+          <div className="text-xs text-[#0B1E3F]/55 mt-1">We don&apos;t keep your files. Open the same PDF to see the highlights. It stays on your device and doesn&apos;t use a scan.</div>
+        </label>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">See it on the page</div>
+        <div className="flex items-center gap-3">
+          {boxes.length > 0 && (
+            <label className="flex items-center gap-1.5 text-xs text-[#0B1E3F]/70 cursor-pointer select-none">
+              <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} className="accent-[#FF6B35]" /> Show highlights
+            </label>
+          )}
+          {numPages > pages.length && !allPages && (
+            <button onClick={() => setAllPages(true)} className="text-xs font-medium underline text-[#0B1E3F]/70">Show all {Math.min(numPages, 30)} pages</button>
+          )}
+        </div>
+      </div>
+      {mismatch && (
+        <div className="mb-3 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-xs">That isn&apos;t the same file that was scanned (its fingerprint is different), so we&apos;re showing it without highlights.</div>
+      )}
+      <div className={`grid gap-4 ${boxes.length ? 'lg:grid-cols-[minmax(0,1fr)_280px]' : ''}`}>
+        <div className="bg-[#0B1E3F]/[0.04] rounded-2xl p-3 md:p-4 space-y-4 max-h-[820px] overflow-y-auto">
+          {loadError && <div className="text-sm text-[#0B1E3F]/60 p-6 text-center">{loadError}</div>}
+          {!loadError && !doc && (
+            <div className="py-16 flex flex-col items-center gap-3 text-sm text-[#0B1E3F]/55">
+              <div className="w-5 h-5 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> Drawing the pages…
+            </div>
+          )}
+          {doc && pages.map((n) => (
+            <ForensicsPage key={n} doc={doc} pageNo={n} boxes={boxes} showBoxes={showBoxes} active={active} onPick={pick} />
+          ))}
+          {doc && boxes.length === 0 && !mismatch && (
+            <div className="text-xs text-center text-[#16A34A] font-medium">Nothing to mark: no changed areas found on the page.</div>
+          )}
+        </div>
+        {boxes.length > 0 && (
+          <div className="lg:sticky lg:top-4 self-start space-y-2">
+            <div className="text-xs text-[#0B1E3F]/55">Click a spot to jump to it.</div>
+            {boxes.map((g, i) => {
+              const st = regionStyle(g);
+              return (
+                <button key={i} onClick={() => pick(i)} className={`w-full text-left p-3 rounded-xl border transition ${active === i ? 'border-[#0B1E3F] bg-[#0B1E3F]/[0.04]' : 'border-[#0B1E3F]/10 bg-white hover:border-[#0B1E3F]/30'}`}>
+                  <div className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center flex-shrink-0" style={{ background: st.border }}>{i + 1}</span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold leading-snug">{g.label}</div>
+                      {g.detail && <div className="text-xs text-[#0B1E3F]/65 mt-0.5 break-words">{g.detail}</div>}
+                      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mt-1">Page {g.page}</div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-[10px] text-[#0B1E3F]/55">
+              {Array.from(new Set(boxes.map((g) => regionStyle(g).name))).map((name) => {
+                const st = Object.values(REGION_STYLE).find((x) => x.name === name)!;
+                return <span key={name} className="flex items-center gap-1"><span className="w-3 h-2.5 rounded-sm" style={{ background: st.fill, border: `1.5px ${st.dashed ? 'dashed' : 'solid'} ${st.border}` }} />{name}</span>;
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ForensicsPage({ doc, pageNo, boxes, showBoxes, active, onPick }: { doc: any; pageNo: number; boxes: any[]; showBoxes: boolean; active: number | null; onPick: (i: number) => void }) {
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const [width, setWidth] = useState(0);
+  const [viewport, setViewport] = useState<any>(null);
+  const [hover, setHover] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setWidth(Math.floor(el.clientWidth));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!width) return;
+    let cancelled = false;
+    let task: any = null;
+    (async () => {
+      const page = await doc.getPage(pageNo);
+      const base = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: width / base.width });
+      const canvas = canvasRef.current;
+      if (!canvas || cancelled) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(vp.width * dpr);
+      canvas.height = Math.floor(vp.height * dpr);
+      canvas.style.width = `${Math.floor(vp.width)}px`;
+      canvas.style.height = `${Math.floor(vp.height)}px`;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      task = page.render({ canvasContext: ctx, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
+      await task.promise;
+      if (!cancelled) setViewport(vp);
+    })().catch(() => {});
+    return () => { cancelled = true; try { task?.cancel?.(); } catch {} };
+  }, [doc, pageNo, width]);
+
+  return (
+    <div>
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mb-1.5">Page {pageNo}</div>
+      <div ref={wrapRef} className="relative bg-white shadow-sm rounded-md overflow-hidden">
+        <canvas ref={canvasRef} className="block" />
+        {viewport && showBoxes && boxes.map((g, i) => {
+          if (g.page !== pageNo) return null;
+          const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(g.rect);
+          const left = Math.min(x1, x2), top = Math.min(y1, y2);
+          const w = Math.max(Math.abs(x2 - x1), 8), h = Math.max(Math.abs(y2 - y1), 8);
+          const st = regionStyle(g);
+          const on = active === i || hover === i;
+          return (
+            <div key={i} id={`fx-box-${i}`} className="absolute" style={{ left, top, width: w, height: h }}>
+              <button
+                onClick={() => onPick(i)}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover((v) => (v === i ? null : v))}
+                aria-label={`${g.label}${g.detail ? `: ${g.detail}` : ''}`}
+                className={`absolute inset-0 rounded-[3px] transition ${active === i ? 'animate-pulse' : ''}`}
+                style={{ background: st.fill, border: `2px ${st.dashed ? 'dashed' : 'solid'} ${st.border}`, boxShadow: on ? `0 0 0 3px ${st.border}33` : undefined }}
+              />
+              <span className="absolute -top-2.5 -left-2.5 w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center pointer-events-none shadow" style={{ background: st.border }}>{i + 1}</span>
+              {on && (
+                <div className={`absolute z-10 ${top > 90 ? 'bottom-full mb-2' : 'top-full mt-2'} left-0 w-60 max-w-[70vw] p-2.5 rounded-lg bg-[#0B1E3F] text-white text-xs shadow-xl pointer-events-none`}>
+                  <div className="font-semibold">{g.label}</div>
+                  {g.detail && <div className="text-white/75 mt-0.5 break-words">{g.detail}</div>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ForensicsResultBody({ result, file }: { result: any; file?: File | null }) {
   const r = result || {};
   const flags: any[] = Array.isArray(r.flags) ? r.flags : [];
   const normal: any[] = Array.isArray(r.normal) ? r.normal : [];
   const revisions: any[] = Array.isArray(r.revisions) ? r.revisions : [];
+  const regions: any[] = Array.isArray(r.regions) ? r.regions : [];
   const md = r.metadata || {};
   const [showMeta, setShowMeta] = useState(false);
 
@@ -10076,6 +10587,9 @@ function ForensicsResultBody({ result }: { result: any }) {
         </div>
         <div className="mt-3 text-xs text-[#0B1E3F]/55">Tamper score: 0–19 clean · 20–49 worth a look · 50+ likely edited. Higher means more signs of editing.</div>
       </div>
+
+      {/* The PDF itself, with the changed areas marked */}
+      {(file || regions.length > 0) && <ForensicsPreview file={file || null} regions={regions} fileSha256={r.fileSha256 || null} />}
 
       {/* Findings */}
       {flags.length > 0 && (
@@ -12799,7 +13313,9 @@ function SearchHistory({ navigate }: any) {
   type Group = { key: string; latest: any; rows: any[] };
   const groupsMap = new Map<string, Group>();
   for (const l of shown) {
-    const key = `${l.mc || ''}|${l.dot || ''}|${(l.name || 'unknown').toLowerCase()}`;
+    const key = l.source === 'forensics'
+      ? `forensics|${(l.query || l.data?.filename || l.id || '').toLowerCase()}`
+      : `${l.mc || ''}|${l.dot || ''}|${(l.name || 'unknown').toLowerCase()}`;
     const g = groupsMap.get(key);
     if (g) { g.rows.push(l); }
     else { groupsMap.set(key, { key, latest: l, rows: [l] }); }
@@ -12896,13 +13412,23 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
   // some point feed us a rate con.
   const hasRateCon = l.source === 'ratecon' || group.rows.some((r: any) => r.source === 'ratecon');
   const hasCoi = l.source === 'coi' || group.rows.some((r: any) => r.source === 'coi');
+  const isForensics = l.source === 'forensics';
+  // Forensics rows have a file, not a company; saved results before `kind`
+  // existed get it added so the report page routes to the forensics view.
+  const openRow = (row: any) => navigate('report', row.source === 'forensics' ? { kind: 'forensics', filename: row.query, ...(row.data || {}) } : row.data);
+  const forensicsLabel = (v: string) => v === 'high' ? 'LIKELY TAMPERED' : v === 'medium' ? 'WORTH A LOOK' : 'CLEAN';
   return (
     <div className="text-[#0B1E3F]">
       <div className="flex items-center gap-4 p-4 md:p-5 hover:bg-[#0B1E3F]/5 transition">
-        <button onClick={() => navigate('report', l.data)} className={`w-12 h-12 rounded-full flex items-center justify-center mono font-semibold flex-shrink-0 transition ${verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : verdict === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{l.score}</button>
-        <button onClick={() => navigate('report', l.data)} className="flex-1 min-w-0 text-left">
+        <button onClick={() => openRow(l)} className={`w-12 h-12 rounded-full flex items-center justify-center mono font-semibold flex-shrink-0 transition ${verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : verdict === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{l.score}</button>
+        <button onClick={() => openRow(l)} className="flex-1 min-w-0 text-left">
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="font-semibold text-[#0B1E3F] truncate">{l.name}</div>
+            <div className="font-semibold text-[#0B1E3F] truncate">{isForensics ? (l.query || l.data?.filename || 'PDF document') : l.name}</div>
+            {isForensics && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#0B1E3F]/8 text-[#0B1E3F] text-[10px] mono uppercase tracking-wider font-bold flex-shrink-0" title="A PDF checked for signs of editing.">
+                <Shield className="w-3 h-3" /> PDF forensics
+              </span>
+            )}
             {hasRateCon && (
               <span
                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#FF6B35]/10 text-[#FF6B35] text-[10px] mono uppercase tracking-wider font-bold flex-shrink-0"
@@ -12921,7 +13447,7 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
             )}
           </div>
           <div className="text-xs mono text-[#0B1E3F]/50 truncate">
-            {[l.mc && `MC-${l.mc}`, l.dot && `DOT-${l.dot}`].filter(Boolean).join(' · ') || 'No ID'} · {count > 1 ? `${count} searches` : `last ${timeAgo(l.created_at)}`}
+            {isForensics ? forensicsLabel(verdict) : ([l.mc && `MC-${l.mc}`, l.dot && `DOT-${l.dot}`].filter(Boolean).join(' · ') || 'No ID')} · {count > 1 ? `${count} ${isForensics ? 'scans' : 'searches'}` : `last ${timeAgo(l.created_at)}`}
             {count === 1 && l.email_query && ` · ${l.email_query}`}
           </div>
         </button>
@@ -12931,8 +13457,11 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
               <ChevronRight className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`} /> {count} searches
             </button>
           )}
-          <button onClick={() => navigate('report', l.data)} className="px-3 py-1.5 text-xs bg-[#0B1E3F]/5 text-[#0B1E3F] hover:bg-[#0B1E3F]/10 rounded-full transition">View</button>
-          {l.source === 'coi' ? (
+          <button onClick={() => openRow(l)} className="px-3 py-1.5 text-xs bg-[#0B1E3F]/5 text-[#0B1E3F] hover:bg-[#0B1E3F]/10 rounded-full transition">View</button>
+          {isForensics ? (
+            // The PDF isn't stored, so there's nothing to re-run here.
+            <button onClick={() => navigate('verify', { tab: 'forensics' })} className="px-3 py-1.5 text-xs bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 rounded-full transition" title="Check another PDF">Check a PDF</button>
+          ) : l.source === 'coi' ? (
             // A COI row re-checks the certificate against today's FMCSA
             // filings (saved reading — the PDF isn't stored), not an MC lookup.
             <>
@@ -12955,11 +13484,11 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
         <div className="bg-[#0B1E3F]/[0.02] border-t border-[#0B1E3F]/5 divide-y divide-[#0B1E3F]/5">
           {group.rows.map((row: any) => {
             const rv = row.verdict || (row.score >= 61 ? 'high' : row.score >= 31 ? 'medium' : 'low');
-            const verdictLabel = rv === 'high' ? 'HIGH RISK' : rv === 'medium' ? 'CAUTION' : 'LOW RISK';
+            const verdictLabel = row.source === 'forensics' ? forensicsLabel(rv) : rv === 'high' ? 'HIGH RISK' : rv === 'medium' ? 'CAUTION' : 'LOW RISK';
             const verdictColor = rv === 'high' ? 'text-[#DC2626]' : rv === 'medium' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
             return (
               <div key={row.id} className="w-full flex items-center gap-4 p-3 md:p-4 pl-8 hover:bg-[#0B1E3F]/5 transition text-[#0B1E3F]">
-                <button onClick={() => navigate('report', row.data)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
+                <button onClick={() => openRow(row)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center mono text-xs font-semibold flex-shrink-0 ${rv === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : rv === 'medium' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>{row.score}</div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
@@ -12970,6 +13499,7 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
                       {timeAgo(row.created_at)}
                       {row.source === 'ratecon' && ' · rate con'}
                       {row.source === 'coi' && ' · COI check'}
+                      {row.source === 'forensics' && ' · PDF forensics'}
                       {row.email_query && ` · ${row.email_query}`}
                     </div>
                   </div>
@@ -13052,7 +13582,8 @@ function Alerts({ navigate }: any) {
     if (!alerts) return [];
     const buckets = new Map<string, any[]>();
     for (const a of alerts) {
-      const key = a.mc ? `mc:${a.mc}` : a.dot ? `dot:${a.dot}` : `name:${(a.name || '').toLowerCase()}`;
+      // Same key as /api/alerts' badge count, so the two always agree.
+      const key = a.source === 'forensics' ? `pdf:${(a.query || '').toLowerCase()}` : a.mc ? `mc:${a.mc}` : a.dot ? `dot:${a.dot}` : `name:${(a.name || '').toLowerCase()}`;
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key)!.push(a);
     }
@@ -13125,13 +13656,13 @@ function Alerts({ navigate }: any) {
             return (
               <div
                 key={a.id}
-                onClick={() => navigate('report', a.data)}
+                onClick={() => navigate('report', a.source === 'forensics' ? { kind: 'forensics', filename: a.query, ...(a.data || {}) } : a.data)}
                 className="w-full text-left flex items-start gap-4 p-5 bg-white rounded-2xl border border-[#0B1E3F]/10 hover:border-[#0B1E3F]/20 card-shadow transition text-[#0B1E3F] cursor-pointer relative"
               >
                 <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${sev === 'critical' ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${a.verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : 'bg-[#F59E0B]/10 text-[#F59E0B]'}`}>{a.verdict === 'high' ? 'HIGH RISK' : 'CAUTION'}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${a.verdict === 'high' ? 'bg-[#DC2626]/10 text-[#DC2626]' : 'bg-[#F59E0B]/10 text-[#F59E0B]'}`}>{a.source === 'forensics' ? (a.verdict === 'high' ? 'LIKELY TAMPERED' : 'WORTH A LOOK') : a.verdict === 'high' ? 'HIGH RISK' : 'CAUTION'}</span>
                     <span className="text-xs mono text-[#0B1E3F]/50">· {timeAgo(a.created_at)}</span>
                     {d.scanCount > 1 && (
                       <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[#0B1E3F]/65">
@@ -13144,8 +13675,8 @@ function Alerts({ navigate }: any) {
                       </span>
                     )}
                   </div>
-                  <div className="font-semibold text-[#0B1E3F] truncate">{a.name}</div>
-                  <div className="text-sm mono text-[#0B1E3F]/50 mb-2">{[a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`].filter(Boolean).join(' · ') || 'No ID'}</div>
+                  <div className="font-semibold text-[#0B1E3F] truncate">{a.source === 'forensics' ? (a.query || 'PDF document') : a.name}</div>
+                  <div className="text-sm mono text-[#0B1E3F]/50 mb-2">{a.source === 'forensics' ? 'PDF forensics' : [a.mc && `MC-${a.mc}`, a.dot && `DOT-${a.dot}`].filter(Boolean).join(' · ') || 'No ID'}</div>
                   {topFlag && <div className="text-sm text-[#0B1E3F]/75">{topFlag.title} — {topFlag.desc}</div>}
                   {d.scanCount > 1 && (
                     <div className="mt-2 flex items-center gap-1.5 text-[11px] mono text-[#0B1E3F]/50">
