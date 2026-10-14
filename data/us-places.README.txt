@@ -1,0 +1,5 @@
+US cities and ZIP codes for the load planner, built from GeoNames
+(https://www.geonames.org, CC BY 4.0): cities500 (US, populated places)
+plus the US postal code file. 50 states + DC only.
+  c: "Name|ST|lat|lng|population" (sorted by population)
+  z: "ZIP|lat|lng|index into c"

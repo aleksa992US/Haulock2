@@ -52,6 +52,9 @@ public/motor-carrier*.csv
 !/data/README.md
 !/data/legacy/
 !/data/legacy/.gitkeep
+# Load-planner place data is imported by the app, so it must ship with the build.
+!/data/us-places.json
+!/data/us-places.README.txt
 
 # vercel
 .vercel
