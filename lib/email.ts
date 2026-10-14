@@ -952,6 +952,117 @@ ${divider()}
   };
 }
 
+// ---------- Sales emails (admin Sales tab) ----------
+// The operator writes plain text (blank line = new paragraph, **bold**,
+// bare https:// links) with merge tags already applied. Optionally shows
+// the recipient's OWN recent lookups so the email is about their freight,
+// not a generic pitch. Users with no lookups get a clearly-labelled
+// example check instead — never anyone else's real lookup.
+
+export type SalesEmailLookup = {
+  name: string;
+  idLabel: string;
+  verdict: 'low' | 'medium' | 'high';
+  score: number;
+  topFlag: string | null;
+  flagCount: number;
+  at: string;
+};
+
+function salesTextToHtml(text: string): string {
+  return text
+    .trim()
+    .split(/\n\s*\n/)
+    .map((para) => {
+      let html = escapeHtml(para.trim());
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0B1E3F;">$1</strong>');
+      html = html.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" style="color:#0B1E3F;text-decoration:underline;">$1</a>');
+      html = html.replace(/\n/g, '<br>');
+      return p(html);
+    })
+    .join('\n');
+}
+
+const VERDICT_STYLE: Record<SalesEmailLookup['verdict'], { label: string; bg: string; color: string }> = {
+  low: { label: 'Low risk', bg: 'rgba(22,163,74,0.1)', color: '#16A34A' },
+  medium: { label: 'Medium risk', bg: 'rgba(245,158,11,0.14)', color: '#B45309' },
+  high: { label: 'High risk', bg: 'rgba(220,38,38,0.1)', color: '#DC2626' },
+};
+
+const EXAMPLE_LOOKUP: SalesEmailLookup = {
+  name: 'Summit Freight Logistics',
+  idLabel: 'MC 847291',
+  verdict: 'high',
+  score: 82,
+  topFlag: 'Surety bond cancelled 3 weeks ago',
+  flagCount: 3,
+  at: '',
+};
+
+function lookupRow(l: SalesEmailLookup, last: boolean): string {
+  const v = VERDICT_STYLE[l.verdict];
+  const date = l.at ? new Date(l.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  const meta = [l.idLabel, date ? `checked ${date}` : ''].filter(Boolean).join(' · ');
+  const flag = l.topFlag
+    ? `<div style="margin-top:6px;font-size:13px;color:${l.verdict === 'low' ? 'rgba(11,30,63,0.6)' : v.color};">&#9888; ${escapeHtml(l.topFlag)}${l.flagCount > 1 ? ` <span style="color:rgba(11,30,63,0.45);">+${l.flagCount - 1} more</span>` : ''}</div>`
+    : `<div style="margin-top:6px;font-size:13px;color:#16A34A;">&#10003; No warning signs found</div>`;
+  return `<tr><td style="padding:14px 16px;${last ? '' : 'border-bottom:1px solid rgba(11,30,63,0.08);'}">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td style="vertical-align:top;">
+      <div style="font-size:15px;font-weight:600;color:#0B1E3F;">${escapeHtml(l.name)}</div>
+      ${meta ? `<div style="font-size:12px;color:rgba(11,30,63,0.5);font-family:'SF Mono',Menlo,Consolas,monospace;margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+      ${flag}
+    </td>
+    <td style="vertical-align:top;text-align:right;white-space:nowrap;padding-left:12px;">
+      <span style="display:inline-block;padding:4px 10px;background:${v.bg};color:${v.color};border-radius:999px;font-size:12px;font-weight:600;">${v.label} · ${l.score}</span>
+    </td>
+  </tr></table>
+</td></tr>`;
+}
+
+function salesLookupsBlock(lookups: SalesEmailLookup[], siteUrl: string): string {
+  const example = lookups.length === 0;
+  const rows = example ? [EXAMPLE_LOOKUP] : lookups;
+  const flagged = rows.filter((l) => l.verdict !== 'low').length;
+  const label = example ? 'Example check' : 'Your recent checks';
+  const note = example
+    ? `This is an example. Run your own in seconds at <a href="${siteUrl}/verify" style="color:#0B1E3F;text-decoration:underline;">haulock.com/verify</a>.`
+    : flagged > 0
+      ? `Haulock flagged ${flagged === 1 ? 'one of these' : `${flagged} of these`} &mdash; exactly what&rsquo;s easy to miss on a busy day.`
+      : `All clear on these. That&rsquo;s the peace of mind you can have on every load.`;
+  return `<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.5);margin:4px 0 8px 0;">${label}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid rgba(11,30,63,0.1);border-radius:12px;background:#FAF9F6;margin-bottom:10px;">
+${rows.map((l, i) => lookupRow(l, i === rows.length - 1)).join('\n')}
+</table>
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;margin-bottom:24px;">${note}</div>`;
+}
+
+export function salesEmailTemplate(args: {
+  subject: string;
+  body: string;
+  ctaLabel?: string | null;
+  ctaUrl?: string | null;
+  showLookups: boolean;
+  lookups?: SalesEmailLookup[] | null;
+  recipientEmail: string;
+  siteUrl: string;
+}): { subject: string; html: string } {
+  const paragraphs = salesTextToHtml(args.body);
+  const lookups = args.showLookups ? salesLookupsBlock(args.lookups || [], args.siteUrl) : '';
+  const cta = args.ctaLabel && args.ctaUrl && /^https?:\/\//i.test(args.ctaUrl) ? button(escapeHtml(args.ctaUrl), escapeHtml(args.ctaLabel)) : '';
+  // Lookups sit after the first paragraph so the email opens with a human
+  // line, then shows proof, then the rest of the pitch.
+  const firstBreak = paragraphs.indexOf('</p>');
+  const body = lookups && firstBreak >= 0
+    ? paragraphs.slice(0, firstBreak + 4) + '\n' + lookups + paragraphs.slice(firstBreak + 4) + cta
+    : paragraphs + lookups + cta;
+  const preview = args.body.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return {
+    subject: args.subject,
+    html: baseLayout({ preview, body, unsubEmail: args.recipientEmail }),
+  };
+}
+
 // Operator notification when an affiliate requests a payout.
 export function payoutRequestedTemplate(args: {
   affiliateName: string;

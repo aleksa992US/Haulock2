@@ -455,3 +455,56 @@ create table if not exists public.sales_leads (
 );
 -- Server-only table: RLS on with no policies, so only the service role can read/write.
 alter table public.sales_leads enable row level security;
+
+-- Admin Sales tab: saved email templates (the built-in ones live in code).
+create table if not exists public.sales_email_templates (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  subject text not null,
+  body text not null,
+  cta_label text,
+  cta_url text,
+  show_lookups boolean not null default true,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.sales_email_templates enable row level security;
+
+-- One row per bulk send from the Sales tab, plus one row per recipient so
+-- the tab can show history, per-person sends, and who later became paying.
+create table if not exists public.sales_campaigns (
+  id uuid primary key default gen_random_uuid(),
+  subject text not null,
+  body text not null,
+  cta_label text,
+  cta_url text,
+  show_lookups boolean not null default true,
+  audience text,                        -- e.g. "Hit free limit" or "12 selected"
+  status text not null default 'sending', -- sending | sent | failed
+  recipients int not null default 0,
+  sent int not null default 0,
+  failed int not null default 0,
+  skipped int not null default 0,
+  skip_reasons jsonb,
+  created_by text,
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+create index if not exists sales_campaigns_created_idx on public.sales_campaigns(created_at desc);
+alter table public.sales_campaigns enable row level security;
+
+create table if not exists public.sales_campaign_sends (
+  id bigserial primary key,
+  campaign_id uuid not null references public.sales_campaigns(id) on delete cascade,
+  user_id uuid,
+  email text not null,
+  status text not null,                 -- sent | failed
+  resend_id text,
+  error text,
+  sent_at timestamptz not null default now()
+);
+create index if not exists sales_campaign_sends_campaign_idx on public.sales_campaign_sends(campaign_id);
+create index if not exists sales_campaign_sends_user_idx on public.sales_campaign_sends(user_id, sent_at desc);
+-- Server-only tables: RLS on with no policies, so only the service role can read/write.
+alter table public.sales_campaign_sends enable row level security;
