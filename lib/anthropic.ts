@@ -175,6 +175,9 @@ export type CoiCoverage = 'auto_liability' | 'cargo' | 'general_liability' | 'wo
 
 export type CoiPolicy = {
   coverage: CoiCoverage;
+  // The INSR LTR (A–F) printed at the start of the coverage row. Optional so
+  // reports saved before it existed still type-check.
+  insurer_letter?: string | null;
   insurer_name: string | null;
   naic: string | null;
   policy_number: string | null;
@@ -183,8 +186,17 @@ export type CoiPolicy = {
   limit_amount: number | null; // USD — combined single / each occurrence / cargo limit
 };
 
+// One line of the "INSURER(S) AFFORDING COVERAGE" box.
+export type CoiInsurer = {
+  letter: string; // A–F
+  name: string | null;
+  naic: string | null; // 5 digits
+};
+
 export type CoiExtraction = {
   is_coi: boolean;
+  // The INSURER A–F list. Optional for reports saved before it existed.
+  insurers?: CoiInsurer[];
   insured_name: string | null;
   insured_address: string | null;
   insured_mc: string | null;
@@ -201,10 +213,19 @@ export type CoiExtraction = {
 
 const COI_PROMPT = `You read OCR text from a trucking company's certificate of insurance (usually an ACORD 25 "Certificate of Liability Insurance") and return structured data.
 
-ACORD 25 layout: PRODUCER (the insurance agency) top-left with contact name, phone, email; INSURED (the trucking company) below it; INSURER A–F with NAIC numbers on the right; a COVERAGES table where each row has an insurer letter, the coverage type, POLICY NUMBER, POLICY EFF and POLICY EXP dates and LIMITS; DESCRIPTION OF OPERATIONS; CERTIFICATE HOLDER at the bottom; the certificate DATE top-right.
+ACORD 25 layout:
+- Top-right: the certificate DATE.
+- Top-left: PRODUCER = the insurance agency (name, address, contact name, phone, fax, email). The producer is never an insurer.
+- Below the producer: INSURED = the trucking company (the carrier) with its address. The insured is NEVER an insurer. Numbers in the insured's address (street number, suite, ZIP) are never NAIC numbers or policy numbers.
+- Right of the producer/insured: the "INSURER(S) AFFORDING COVERAGE" box with a "NAIC #" column, one line per letter: "INSURER A: <company name> <NAIC #>" through "INSURER F". This box is the ONLY place insurer names and NAIC numbers come from.
+- COVERAGES table: one row per policy. The leftmost column "INSR LTR" holds a single letter A–F that points to a line in the INSURER(S) box. Then TYPE OF INSURANCE, ADDL INSD / SUBR WVD, POLICY NUMBER, POLICY EFF, POLICY EXP and LIMITS.
+- Then DESCRIPTION OF OPERATIONS, and CERTIFICATE HOLDER at the bottom.
 
 Rules:
-- Map each coverage row to its insurer through the INSURER letter (A–F).
+- insurers: every non-blank INSURER line, as {"letter", "name", "naic"}. naic is the 5-digit number from the NAIC # column; null if it is missing or not exactly 5 digits. Skip blank letters.
+- For each coverage row: insurer_letter = the INSR LTR letter of that row; insurer_name and naic = the name and NAIC # of that letter's line in the INSURER(S) box. Never take an insurer name from the INSURED, PRODUCER, CERTIFICATE HOLDER or DESCRIPTION boxes. If the row's letter can't be read, set insurer_letter, insurer_name and naic to null rather than guessing.
+- The same letter can appear on several rows; different rows often have different letters. Read each row's own letter.
+- policy_number exactly as printed on that row, including any suffix like "-25" or "-01".
 - coverage: "AUTOMOBILE LIABILITY" → auto_liability; "MOTOR TRUCK CARGO" or cargo in OTHER/description → cargo; "COMMERCIAL GENERAL LIABILITY" → general_liability; "WORKERS COMPENSATION" → workers_comp; "UMBRELLA"/"EXCESS LIAB" → umbrella; anything else → other.
 - limit_amount: auto → COMBINED SINGLE LIMIT (or BODILY INJURY per accident if no CSL); general liability → EACH OCCURRENCE; cargo → the cargo limit; umbrella → EACH OCCURRENCE. Pure number in USD, no $ or commas.
 - Dates as YYYY-MM-DD (ACORD uses MM/DD/YYYY).
@@ -213,7 +234,7 @@ Rules:
 - irregularities: short factual notes about things in the TEXT that don't add up, for example: expiration before effective date; policy term longer than ~13 months; certificate dated in the future; the same policy number listed for different insurers; insurer named without an NAIC number; producer email on a free webmail domain (gmail, yahoo, outlook, hotmail, aol, icloud, proton); misspelled well-known insurer names; limits that conflict between rows. Do not speculate about intent and never use the words fraud, fake or scam. Empty array if nothing stands out.
 
 Return ONLY a JSON object, no prose, no code fences:
-{"is_coi": boolean, "insured_name": string|null, "insured_address": string|null, "insured_mc": string|null, "insured_dot": string|null, "producer_name": string|null, "producer_phone": string|null, "producer_email": string|null, "certificate_date": string|null, "certificate_holder": string|null, "policies": [{"coverage": string, "insurer_name": string|null, "naic": string|null, "policy_number": string|null, "effective_date": string|null, "expiration_date": string|null, "limit_amount": number|null}], "irregularities": string[]}`;
+{"is_coi": boolean, "insured_name": string|null, "insured_address": string|null, "insured_mc": string|null, "insured_dot": string|null, "producer_name": string|null, "producer_phone": string|null, "producer_email": string|null, "certificate_date": string|null, "certificate_holder": string|null, "insurers": [{"letter": string, "name": string, "naic": string|null}], "policies": [{"coverage": string, "insurer_letter": string|null, "insurer_name": string|null, "naic": string|null, "policy_number": string|null, "effective_date": string|null, "expiration_date": string|null, "limit_amount": number|null}], "irregularities": string[]}`;
 
 const COVERAGES: CoiCoverage[] = ['auto_liability', 'cargo', 'general_liability', 'workers_comp', 'umbrella', 'other'];
 
@@ -251,9 +272,15 @@ export async function analyzeCoi(ocrText: string): Promise<CoiExtraction> {
     producer_email: str(parsed.producer_email),
     certificate_date: str(parsed.certificate_date),
     certificate_holder: str(parsed.certificate_holder),
+    insurers: Array.isArray(parsed.insurers)
+      ? parsed.insurers
+          .map((i: any) => ({ letter: String(i?.letter ?? '').trim().toUpperCase(), name: str(i?.name), naic: str(i?.naic) }))
+          .filter((i: CoiInsurer) => /^[A-F]$/.test(i.letter) && i.name)
+      : [],
     policies: Array.isArray(parsed.policies)
       ? parsed.policies.map((p: any) => ({
           coverage: COVERAGES.includes(p?.coverage) ? p.coverage : 'other',
+          insurer_letter: str(p?.insurer_letter),
           insurer_name: str(p?.insurer_name),
           naic: str(p?.naic),
           policy_number: str(p?.policy_number),

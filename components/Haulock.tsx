@@ -9054,7 +9054,7 @@ function CoiCheckPanel({ navigate }: { navigate: any }) {
       {!result && (
         <>
           <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-2">
-            Carrier MC number <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional — we read it from the COI when it&rsquo;s printed)</span>
+            Carrier MC number <span className="normal-case tracking-normal text-[#0B1E3F]/40">(optional — we read it from the COI, or find it by the auto liability policy number)</span>
           </label>
           <div className="flex items-stretch bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl overflow-hidden mb-5 max-w-sm focus-within:border-[#0B1E3F] transition">
             <span className="px-3 flex items-center mono text-sm text-[#0B1E3F]/60 border-r border-[#0B1E3F]/10 bg-white">MC-</span>
@@ -9116,8 +9116,19 @@ function CoiReportView({ report, navigate }: any) {
 
 function CoiResultBody({ report }: { report: any }) {
   const r = report || {};
+  // Reports saved before `compared` existed: compared only if a carrier was found.
+  const compared: boolean = typeof r.compared === 'boolean' ? r.compared : Boolean(r.carrier);
+  const notComparedReason: string = r.notComparedReason || (r.carrier ? 'FMCSA insurance data unavailable' : 'carrier not identified');
+  // Old saved reports carry an FMCSA headline even when nothing was compared;
+  // don't show a finding that didn't happen.
+  const headline: string = compared || typeof r.compared === 'boolean'
+    ? r.verdictLabel
+    : r.verdict === 'mismatch'
+      ? `Problems on the certificate — not compared with FMCSA (${notComparedReason})`
+      : `Not compared with FMCSA — ${notComparedReason}`;
   const tone =
     r.verdict === 'mismatch' ? { text: 'text-[#DC2626]', bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30' }
+    : !compared ? { text: 'text-[#0B1E3F]/70', bg: 'bg-[#0B1E3F]/[0.04]', border: 'border-[#0B1E3F]/15' }
     : r.verdict === 'verify' ? { text: 'text-[#D97706]', bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30' }
     : { text: 'text-[#16A34A]', bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30' };
   const fmtDate = (iso?: string | null) => {
@@ -9144,14 +9155,18 @@ function CoiResultBody({ report }: { report: any }) {
   return (
     <div className="space-y-6 text-[#0B1E3F]">
       <div className={`p-5 rounded-2xl border ${tone.bg} ${tone.border}`}>
-        <div className={`text-xs mono uppercase tracking-wider ${tone.text} mb-1`}>{r.verdictLabel}</div>
+        <div className={`text-xs mono uppercase tracking-wider ${tone.text} mb-1`}>{headline}</div>
         <div className="text-2xl font-semibold">{r.name}</div>
         <div className="text-sm text-[#0B1E3F]/60 mt-1 mono">
           {[r.mc && `MC-${r.mc}`, r.dot && `DOT-${r.dot}`].filter(Boolean).join(' · ') || 'Carrier not identified'}
           {r.filename ? ` · ${r.filename}` : ''}
         </div>
         <div className="text-sm text-[#0B1E3F]/70 mt-2">
-          {fails > 0 ? `${fails} thing${fails === 1 ? '' : 's'} don’t match` : 'Nothing contradicts FMCSA'}{warns > 0 ? ` · ${warns} to confirm` : ''} · checked against FMCSA data updated {fmtDate(r.dataAsOf)}
+          {compared
+            ? (fails > 0 ? `${fails} thing${fails === 1 ? '' : 's'} don’t match` : 'Nothing contradicts FMCSA')
+            : `Not compared — ${notComparedReason}${fails > 0 ? ` · ${fails} problem${fails === 1 ? '' : 's'} on the certificate` : ''}`}
+          {warns > 0 ? ` · ${warns} to confirm` : ''}
+          {compared && r.dataAsOf ? ` · checked against FMCSA data updated ${fmtDate(r.dataAsOf)}` : ''}
         </div>
       </div>
 
@@ -9181,7 +9196,7 @@ function CoiResultBody({ report }: { report: any }) {
         </div>
         <div className="p-5 rounded-xl border border-[#0B1E3F]/10">
           <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Filed with FMCSA (liability)</div>
-          {bipd.length === 0 ? <div className="text-sm text-[#0B1E3F]/60">{r.carrier ? 'No liability filing on record.' : 'Add the carrier’s MC number to compare.'}</div> : bipd.map((f, i) => (
+          {bipd.length === 0 ? <div className="text-sm text-[#0B1E3F]/60">{!r.carrier ? 'Not compared — add the carrier’s MC number to compare.' : !compared ? 'Not compared — FMCSA insurance data couldn’t be loaded.' : 'No liability filing on record.'}</div> : bipd.map((f, i) => (
             <div key={i} className="text-sm space-y-1 mb-3 last:mb-0">
               <div className="font-semibold">{f.insurer || 'Unknown insurer'}</div>
               <div className="mono text-[#0B1E3F]/70">Policy {f.policyNumber || '—'} · {f.coverage}</div>
