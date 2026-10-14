@@ -2,20 +2,132 @@ import { NextResponse } from 'next/server';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
-import { scoreCarrier } from '@/lib/risk';
-import { sendEmail, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange } from '@/lib/email';
+import { sendEmail, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange, type WatchlistFieldChange } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 // Daily watchlist refresh. For each watchlist row:
-//   1. Run a fresh FMCSA lookup.
-//   2. Compare the fresh score / verdict / authority / flags to the row's
-//      stored snapshot.
-//   3. If anything meaningful changed, email the watchlist owner (subject
-//      to their notify_watchlist preference) and update the row's snapshot.
-// Runs from Vercel Cron once a day. Safe to re-run; won't double-send.
+//   1. Run a fresh FMCSA registry lookup (QCMobile, with its fallbacks).
+//   2. Compare only FMCSA registry fields — authority per role, insurance,
+//      bond, out-of-service, safety rating, address, phone, name — with the
+//      last FMCSA snapshot for that row.
+//   3. If any of them changed, email the owner (subject to their
+//      notify_watchlist preference) listing exactly what changed.
+//
+// This is NOT a full scan: web reputation, Places, website, SMS and
+// cross-reference checks don't run here. So the job never re-scores, never
+// says risk "improved" or "got worse", and never overwrites the saved full
+// report (row.data) or its score — the FMCSA snapshot is kept separately in
+// row.data.fmcsaWatch. Runs from Vercel Cron once a day. Safe to re-run: the
+// snapshot is updated after each check, so the same change isn't re-sent.
+
+type FmcsaWatchSnapshot = {
+  name?: string;
+  dba?: string;
+  address?: string;
+  phone?: string;
+  commonAuthority?: string;
+  contractAuthority?: string;
+  brokerAuthority?: string;
+  bipdOnFile?: number;
+  cargoOnFile?: number;
+  bondOnFile?: number;
+  outOfService?: boolean;
+  safetyRating?: string;
+  // Every phone FMCSA has returned for this row. QCMobile alternates between
+  // phone fields from one response to the next, so a number we've already
+  // seen isn't reported as a change.
+  seenPhones?: string[];
+  checkedAt?: string;
+};
+
+const WATCH_KEYS = ['name', 'dba', 'address', 'phone', 'commonAuthority', 'contractAuthority', 'brokerAuthority', 'bipdOnFile', 'cargoOnFile', 'bondOnFile', 'outOfService', 'safetyRating'] as const;
+
+function snapshotOf(c: any): FmcsaWatchSnapshot {
+  const out: FmcsaWatchSnapshot = {};
+  for (const k of WATCH_KEYS) {
+    const v = c?.[k];
+    if (v === undefined || v === null || v === '') continue;
+    (out as any)[k] = v;
+  }
+  return out;
+}
+
+const textKey = (v: unknown) => String(v ?? '').toUpperCase().replace(/[.,#]/g, ' ').replace(/\s+/g, ' ').trim();
+const phoneKey = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10);
+const moneyK = (k: number) => (k === 0 ? '$0' : `$${(k * 1000).toLocaleString('en-US')}`);
+const UNRATED = /^(not rated|none|)$/i;
+
+// FMCSA field changes between two snapshots. A field counts only when both
+// sides have a value: a field missing from one response (fallback data
+// sources leave some out) is "not checked", not a change.
+function diffSnapshots(prev: FmcsaWatchSnapshot, next: FmcsaWatchSnapshot, opts: { legacyBaseline: boolean }): WatchlistFieldChange[] {
+  const out: WatchlistFieldChange[] = [];
+  const has = (v: unknown) => v !== undefined && v !== null && v !== '';
+
+  const text = (key: 'name' | 'dba' | 'address', label: string) => {
+    if (has(prev[key]) && has(next[key]) && textKey(prev[key]) !== textKey(next[key])) {
+      out.push({ field: key, label, from: String(prev[key]), to: String(next[key]), concern: true });
+    }
+  };
+  text('name', 'Legal name');
+  text('dba', 'DBA name');
+  text('address', 'Physical address');
+
+  if (has(prev.phone) && has(next.phone) && phoneKey(prev.phone) !== phoneKey(next.phone)) {
+    const seen = new Set((prev.seenPhones || []).map(phoneKey));
+    if (!seen.has(phoneKey(next.phone))) {
+      out.push({ field: 'phone', label: 'Phone', from: String(prev.phone), to: String(next.phone), concern: true });
+    }
+  }
+
+  const authority = (key: 'commonAuthority' | 'contractAuthority' | 'brokerAuthority', label: string) => {
+    if (has(prev[key]) && has(next[key]) && prev[key] !== next[key]) {
+      out.push({ field: key, label, from: String(prev[key]), to: String(next[key]), concern: prev[key] === 'Active' });
+    }
+  };
+  authority('commonAuthority', 'Common carrier authority');
+  authority('contractAuthority', 'Contract carrier authority');
+  authority('brokerAuthority', 'Broker authority');
+
+  const money = (key: 'bipdOnFile' | 'cargoOnFile' | 'bondOnFile', label: string) => {
+    const a = prev[key];
+    const b = next[key];
+    if (typeof a === 'number' && typeof b === 'number' && a !== b) {
+      out.push({ field: key, label, from: moneyK(a), to: moneyK(b), concern: b < a });
+    }
+  };
+  money('bipdOnFile', 'Liability insurance (BIPD) on file');
+  money('cargoOnFile', 'Cargo insurance on file');
+  money('bondOnFile', 'Broker bond on file');
+
+  if (typeof prev.outOfService === 'boolean' && typeof next.outOfService === 'boolean' && prev.outOfService !== next.outOfService) {
+    // Reports saved before the OOS fix counted any old OOS date as "out of
+    // service". Yes → No against such a baseline is our correction, not an
+    // FMCSA change, so it isn't reported.
+    if (!(opts.legacyBaseline && prev.outOfService && !next.outOfService)) {
+      out.push({
+        field: 'outOfService',
+        label: 'Out-of-service order',
+        from: prev.outOfService ? 'In effect' : 'None',
+        to: next.outOfService ? 'In effect' : 'None',
+        concern: next.outOfService,
+      });
+    }
+  }
+
+  // "Not rated" also shows up when a fallback source has no rating at all,
+  // so a rating disappearing isn't reported; a new or different one is.
+  const ra = String(prev.safetyRating ?? '');
+  const rb = String(next.safetyRating ?? '');
+  if (!UNRATED.test(rb) && textKey(ra) !== textKey(rb)) {
+    out.push({ field: 'safetyRating', label: 'Safety rating', from: UNRATED.test(ra) ? 'Not rated' : ra, to: rb, concern: /unsatisfactory|conditional/i.test(rb) });
+  }
+
+  return out;
+}
 export async function GET(req: Request) { return run(req); }
 export async function POST(req: Request) { return run(req); }
 
@@ -68,47 +180,52 @@ async function run(req: Request) {
 
     let fresh: any;
     try {
-      const carrier = await lookupCarrier(parsed);
-      fresh = scoreCarrier(carrier);
+      // Registry fields only; the authority-age history isn't compared.
+      fresh = await lookupCarrier(parsed, { skipAuthorityHistory: true });
     } catch (err: any) {
       // FMCSA hiccup — leave the row untouched, try again tomorrow.
       results.push({ id: row.id, status: 'fmcsa-error', message: err?.message });
       continue;
     }
+    if (fresh?.source !== 'fmcsa') {
+      // No live FMCSA data (e.g. no WebKey → mock carrier). Nothing to compare.
+      results.push({ id: row.id, status: 'no-live-data' });
+      continue;
+    }
 
-    const prev = (row.data || {}) as any;
-    const prevFlagTitles = new Set<string>(((prev.flags || []) as any[]).map((f) => String(f?.title || '')).filter(Boolean));
-    const freshFlagTitles = new Set<string>(((fresh.flags || []) as any[]).map((f) => String(f?.title || '')).filter(Boolean));
-    const newFlags: string[] = [];
-    for (const t of freshFlagTitles) if (!prevFlagTitles.has(t)) newFlags.push(t);
+    const saved = (row.data || {}) as any;
+    // Baseline: the FMCSA snapshot from the last daily check, or — the first
+    // time — the FMCSA fields of the full report saved with the watch.
+    const legacyBaseline = !saved.fmcsaWatch;
+    const prevSnap: FmcsaWatchSnapshot = saved.fmcsaWatch || snapshotOf(saved);
+    const freshSnap = snapshotOf(fresh);
+    const changes = diffSnapshots(prevSnap, freshSnap, { legacyBaseline });
 
-    const prevScore = Number(row.last_score ?? prev.score ?? 0);
-    const prevVerdict = String(row.last_verdict || prev.verdict || '');
-    const newScore = Number(fresh.score) || 0;
-    const newVerdict = String(fresh.verdict || '');
-    const prevAuthority = prev.authorityStatus ?? null;
-    const newAuthority = fresh.authorityStatus ?? null;
-    const authorityChanged = (prevAuthority || '') !== (newAuthority || '');
+    // Next baseline: fresh values, keeping previous values for fields this
+    // response didn't include, plus the phones seen so far.
+    const seenPhones = Array.from(new Set([
+      ...(prevSnap.seenPhones || []),
+      ...(prevSnap.phone ? [prevSnap.phone] : []),
+      ...(freshSnap.phone ? [freshSnap.phone] : []),
+    ].map((ph) => String(ph)))).slice(-5);
+    const nextSnap: FmcsaWatchSnapshot = { ...prevSnap, ...freshSnap, seenPhones, checkedAt };
+    const saveSnapshot = async () => {
+      if (dryRun) return;
+      // Only data.fmcsaWatch and last_checked change; the saved full report,
+      // last_score and last_verdict stay as the user's last full scan left them.
+      await svc.from('watchlist').update({
+        last_checked: checkedAt,
+        data: { ...saved, fmcsaWatch: nextSnap },
+      }).eq('id', row.id);
+    };
 
-    const meaningful = newScore !== prevScore || newVerdict !== prevVerdict || newFlags.length > 0 || authorityChanged;
-
-    if (!meaningful) {
-      // Touch last_checked so we round-robin through the table fairly.
-      if (!dryRun) await svc.from('watchlist').update({ last_checked: checkedAt }).eq('id', row.id);
+    if (changes.length === 0) {
+      await saveSnapshot();
       skipped += 1;
       continue;
     }
 
-    const change: WatchlistChange = {
-      scoreFrom: prevScore,
-      scoreTo: newScore,
-      verdictFrom: prevVerdict,
-      verdictTo: newVerdict,
-      newFlags,
-      authorityChanged,
-      authorityFrom: prevAuthority,
-      authorityTo: newAuthority,
-    };
+    const change: WatchlistChange = { changes };
 
     if (u.notifyOn && isResendConfigured() && !dryRun) {
       const toAddress = u.notificationEmail || u.email;
@@ -126,20 +243,13 @@ async function run(req: Request) {
       }
     }
 
-    if (!dryRun) {
-      await svc.from('watchlist').update({
-        last_score: newScore,
-        last_verdict: newVerdict,
-        last_checked: checkedAt,
-        data: fresh,
-      }).eq('id', row.id);
-    }
+    await saveSnapshot();
 
     results.push({
       id: row.id,
       name: fresh.name || row.name,
       mc: row.mc, dot: row.dot,
-      changed: { score: change.scoreFrom !== change.scoreTo, verdict: change.verdictFrom !== change.verdictTo, newFlags: newFlags.length, authorityChanged },
+      changed: changes.map((c) => ({ field: c.field, from: c.from, to: c.to })),
       notified: u.notifyOn && !dryRun,
     });
 

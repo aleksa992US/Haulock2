@@ -8,17 +8,29 @@
 // "GRAY FALCON UNITED LLC", MC-1040945).
 //
 // Strategy: query Brave for the name + "MC number FMCSA", scan the result
-// titles + snippets for MC-XXXXX / DOT-XXXXX patterns. Return the most
-// frequently cited identifier across the top hits. Once we have an id we
-// can do a clean MC/DOT lookup via the regular pipeline.
+// titles + snippets for MC-XXXXX / DOT-XXXXX patterns, and rank every cited
+// identifier (hits whose text names the company count double).
+//
+// A citation count is NOT proof of identity: directory pages list unrelated
+// carriers side by side, and the most-cited number can belong to someone
+// else. Callers must look each id up and accept it only when the registered
+// legal name / DBA resembles the search (lib/name-match), or when the user
+// confirms it.
+
+import { nameTokens } from './name-match';
 
 const BRAVE_URL = 'https://api.search.brave.com/res/v1/web/search';
+
+export type ResolvedId = { kind: 'mc' | 'dot'; value: string; citations: number };
 
 export type NameResolveResult = {
   configured: boolean;
   found: boolean;
+  // Most-cited MC and DOT. Unverified — see `ids`.
   mc?: string;
   dot?: string;
+  // Every cited id, most-cited first (MCs before DOTs on ties). Unverified.
+  ids: ResolvedId[];
   evidence: { url: string; title: string; snippet: string }[];
   error?: string;
 };
@@ -29,9 +41,10 @@ export function isNameResolverConfigured(): boolean {
 
 export async function resolveNameToMc(name: string): Promise<NameResolveResult> {
   const key = process.env.BRAVE_SEARCH_API_KEY;
-  if (!key) return { configured: false, found: false, evidence: [] };
+  if (!key) return { configured: false, found: false, ids: [], evidence: [] };
   const cleanName = name.replace(/[^A-Za-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (cleanName.length < 4) return { configured: true, found: false, evidence: [] };
+  if (cleanName.length < 4) return { configured: true, found: false, ids: [], evidence: [] };
+  const nameWords = nameTokens(name);
 
   // Probe with two queries — one biased toward FMCSA registry mentions, one
   // toward news/forum coverage. Run in parallel with a tight 4s budget each.
@@ -42,7 +55,9 @@ export async function resolveNameToMc(name: string): Promise<NameResolveResult> 
 
   const settled = await Promise.allSettled(queries.map((q) => braveSearch(q, key)));
 
-  // Aggregate identifiers across all hits — the most-cited MC/DOT pair wins.
+  // Aggregate identifiers across all hits. A hit whose title/snippet names
+  // the company counts 2, one that doesn't counts 1 (its numbers are more
+  // likely to belong to some other carrier on the same page).
   const mcCounts = new Map<string, number>();
   const dotCounts = new Map<string, number>();
   const evidence: NameResolveResult['evidence'] = [];
@@ -56,24 +71,28 @@ export async function resolveNameToMc(name: string): Promise<NameResolveResult> 
       if (mcs.length === 0 && dots.length === 0) continue;
       // Keep only the first 8 evidence items so the returned object stays small.
       if (evidence.length < 8) evidence.push(hit);
-      for (const mc of mcs) mcCounts.set(mc, (mcCounts.get(mc) || 0) + 1);
-      for (const dot of dots) dotCounts.set(dot, (dotCounts.get(dot) || 0) + 1);
+      const blobWords = new Set(nameTokens(blob));
+      const weight = nameWords.length > 0 && nameWords.every((w) => blobWords.has(w)) ? 2 : 1;
+      for (const mc of mcs) mcCounts.set(mc, (mcCounts.get(mc) || 0) + weight);
+      for (const dot of dots) dotCounts.set(dot, (dotCounts.get(dot) || 0) + weight);
     }
   }
 
-  if (mcCounts.size === 0 && dotCounts.size === 0) {
-    return { configured: true, found: false, evidence };
-  }
+  const ids: ResolvedId[] = [
+    ...Array.from(mcCounts, ([value, citations]) => ({ kind: 'mc' as const, value, citations })),
+    ...Array.from(dotCounts, ([value, citations]) => ({ kind: 'dot' as const, value, citations })),
+  ].sort((a, b) => b.citations - a.citations || (a.kind === b.kind ? 0 : a.kind === 'mc' ? -1 : 1));
 
-  // Pick the most-cited MC; if no MC, fall back to most-cited DOT.
-  const topMc = topByCount(mcCounts);
-  const topDot = topByCount(dotCounts);
+  if (ids.length === 0) {
+    return { configured: true, found: false, ids, evidence };
+  }
 
   return {
     configured: true,
-    found: Boolean(topMc || topDot),
-    mc: topMc,
-    dot: topDot,
+    found: true,
+    mc: topByCount(mcCounts),
+    dot: topByCount(dotCounts),
+    ids,
     evidence,
   };
 }

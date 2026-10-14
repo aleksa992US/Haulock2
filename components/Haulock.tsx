@@ -19,6 +19,7 @@ import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
 import { COI_CHECK_ON, SCAN_EMAIL_ON } from '@/lib/features';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
+import { recommendationFor, carrierAuthorityLabel } from '@/lib/recommendation';
 
 const APP_ROUTES = ['dashboard', 'verify', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'sales', 'support', 'earnings'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
@@ -9468,34 +9469,6 @@ function entityBadge(r: any): { label: string; bg: string; color: string; icon: 
   return { label: 'No authority', bg: '#DC2626', color: '#ffffff', icon: '⚠' };
 }
 
-// Recommendation copy depends on what the company IS. A broker gives you a
-// load (you're deciding whether to book it); a carrier hauls your load
-// (you're deciding whether to tender to it). Same FMCSA authority fields
-// as entityBadge so the badge and the advice never disagree.
-function recommendationFor(r: any, verdict: string): { headline: string; detail: string } {
-  const isCarrier = r.commonAuthority === 'Active' || r.contractAuthority === 'Active';
-  const isBroker = r.brokerAuthority === 'Active';
-  const high = verdict === 'high';
-  const medium = verdict === 'medium';
-  if (isCarrier && !isBroker) {
-    if (high) return { headline: 'Don’t tender to this carrier yet.', detail: 'Multiple serious red flags. Before you hand off a load, confirm who you’re dealing with by calling a number you look up yourself, and confirm insurance directly with the insurer.' };
-    if (medium) return { headline: 'Proceed with caution.', detail: 'This carrier shows some risk signals. Review the red flags below, confirm their insurance is active, and confirm identity by calling a number you look up yourself before you tender.' };
-    return { headline: 'Looks safe to tender.', detail: 'This carrier has a clean record and no major red flags. As always, confirm insurance is current before you hand off the load.' };
-  }
-  if (isBroker && !isCarrier) {
-    if (high) return { headline: 'Do not book this load.', detail: 'Multiple serious red flags. If you must proceed, require full payment upfront and confirm identity through an independent channel.' };
-    if (medium) return { headline: 'Proceed with caution.', detail: 'This broker shows some risk signals. Check that the rate con details match FMCSA records and confirm identity independently.' };
-    return { headline: 'Safe to book.', detail: 'This broker has a clean record and no major red flags. Standard payment terms are appropriate.' };
-  }
-  if (!isCarrier && !isBroker) {
-    return { headline: high ? 'Do not do business with this company.' : 'Proceed with caution.', detail: 'This company has no active FMCSA operating authority, so it can’t legally broker or haul interstate freight right now. Confirm its authority before booking or tendering anything.' };
-  }
-  // Holds both carrier and broker authority.
-  if (high) return { headline: 'Don’t book or tender yet.', detail: 'Multiple serious red flags. Whether they’re brokering a load to you or hauling one for you, confirm identity through an independent channel first.' };
-  if (medium) return { headline: 'Proceed with caution.', detail: 'This company holds both carrier and broker authority and shows some risk signals. Check the red flags below and confirm identity independently.' };
-  return { headline: 'Looks safe.', detail: 'This company holds both carrier and broker authority, with a clean record and no major red flags.' };
-}
-
 // COI checks are saved to history like any other scan; route them to their
 // own view so the carrier report never receives a COI payload.
 function Report({ report, navigate }: any) {
@@ -9772,9 +9745,7 @@ function CarrierReport({ report, navigate }: any) {
             const brokerActive = r.brokerAuthority === 'Active';
             const known = Boolean(r.commonAuthority || r.contractAuthority || r.brokerAuthority || r.authorityStatus);
             const noneActive = known && !carrierActive && !brokerActive && !(r.authorityStatus === 'Active' && !r.commonAuthority && !r.contractAuthority && !r.brokerAuthority);
-            const carrierVal = carrierActive
-              ? `Active${r.commonAuthority === 'Active' && r.contractAuthority === 'Active' ? ' (common & contract)' : r.contractAuthority === 'Active' ? ' (contract)' : ''}`
-              : r.commonAuthority || r.contractAuthority || (r.brokerAuthority ? 'Not authorized' : r.authorityStatus) || '—';
+            const carrierVal = carrierAuthorityLabel(r);
             return [
               { label: 'Carrier authority', val: carrierVal, good: carrierActive, warn: noneActive },
               { label: 'Broker authority', val: r.brokerAuthority || '—', good: brokerActive, warn: noneActive },
@@ -9803,16 +9774,26 @@ function CarrierReport({ report, navigate }: any) {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Web presence</h2>
-              <div className="text-sm text-[#0B1E3F]/60 mt-1">Carrier website found via Google + checked for legitimacy.</div>
+              <div className="text-sm text-[#0B1E3F]/60 mt-1">We only treat a website as theirs when its name matches and its Google listing has their FMCSA address or phone.</div>
             </div>
             {r.webPresence.found ? (
-              <span
-                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${r.webPresence.nameMatch ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/8 text-[#0B1E3F]/70'}`}
-                title={r.webPresence.nameMatch ? 'The domain SLD includes the legal company name.' : 'Marketing-style domain that does not include the legal name. Common for brand sites and not a fraud signal.'}
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                {r.webPresence.nameMatch ? 'Website found · name matches' : 'Website found'}
-              </span>
+              r.webPresence.verified === true ? (
+                <span
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#16A34A]/10 text-[#16A34A]"
+                  title={`The site's Google listing has the same ${r.webPresence.verifiedBy === 'phone' ? 'phone number' : 'address'} as the FMCSA record, and its name matches the company.`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Website confirmed · matches FMCSA {r.webPresence.verifiedBy === 'phone' ? 'phone' : 'address'}
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#F59E0B]/10 text-[#B45309]"
+                  title="We found this site by searching the company name, but couldn't tie it to the FMCSA address or phone. It may belong to someone else."
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Possible website — not confirmed as theirs
+                </span>
+              )
             ) : (
               <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/70">
                 <AlertTriangle className="w-3.5 h-3.5" /> No website found
@@ -9823,37 +9804,55 @@ function CarrierReport({ report, navigate }: any) {
             <>
               <div className="grid md:grid-cols-2 gap-3 mb-4">
                 <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
-                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">Website</div>
-                  <a href={r.webPresence.url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-[#0B1E3F] hover:underline break-all">{r.webPresence.domain}</a>
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">{r.webPresence.verified === true ? 'Website' : 'Possible website'}</div>
+                  <a href={r.webPresence.url} target="_blank" rel="noreferrer nofollow" className="text-sm font-semibold text-[#0B1E3F] hover:underline break-all">{r.webPresence.domain}</a>
                   {r.webPresence.title && <div className="text-xs text-[#0B1E3F]/60 mt-1 truncate">{r.webPresence.title}</div>}
                 </div>
                 <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
                   <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">Domain age</div>
-                  <div className={`text-sm font-semibold ${r.webPresence.domainAgeDays != null && r.webPresence.domainAgeDays < 90 ? 'text-[#DC2626]' : 'text-[#0B1E3F]'}`}>
-                    {r.webPresence.domainAgeDays != null
-                      ? r.webPresence.domainAgeDays < 365
-                        ? `${r.webPresence.domainAgeDays} days`
-                        : `${(r.webPresence.domainAgeDays / 365).toFixed(1)} years`
-                      : '—'}
-                  </div>
+                  {r.webPresence.verified === true ? (
+                    <div className={`text-sm font-semibold ${r.webPresence.domainAgeDays != null && r.webPresence.domainAgeDays < 90 ? 'text-[#DC2626]' : 'text-[#0B1E3F]'}`}>
+                      {r.webPresence.domainAgeDays != null
+                        ? r.webPresence.domainAgeDays < 365
+                          ? `${r.webPresence.domainAgeDays} days`
+                          : `${(r.webPresence.domainAgeDays / 365).toFixed(1)} years`
+                        : '—'}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-[#0B1E3F]/60">Not checked — site not confirmed as theirs</div>
+                  )}
                 </div>
               </div>
+              {r.webPresence.verified !== true && (
+                <div className="mb-4 p-3 rounded-lg bg-[#F59E0B]/5 border border-[#F59E0B]/25 text-xs text-[#0B1E3F]/75 leading-relaxed">
+                  {r.webPresence.nameMatch
+                    ? 'The name matches, but this site’s Google listing doesn’t have their FMCSA address or phone (or it has no listing), so it could be another company’s — or an impersonator’s.'
+                    : 'This site came up in a search for the company, but neither its name nor its Google listing ties it to their FMCSA record.'}
+                  {' '}Don’t use phone numbers or emails from it to verify this company, and don’t treat an email from this domain as proof of who sent it.
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
-                {r.webPresence.hasMx != null && (
+                {r.webPresence.verified === true && r.webPresence.hasMx != null && (
                   <span className={`px-2.5 py-1 rounded-full text-[11px] mono ${r.webPresence.hasMx ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#F59E0B]/10 text-[#F59E0B]'}`}>
                     {r.webPresence.hasMx ? 'MX configured' : 'No MX'}
                   </span>
                 )}
-                {r.webPresence.hasSpf != null && (
+                {r.webPresence.verified === true && r.webPresence.hasSpf != null && (
                   <span className={`px-2.5 py-1 rounded-full text-[11px] mono ${r.webPresence.hasSpf ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60'}`}>
                     {r.webPresence.hasSpf ? 'SPF set' : 'No SPF'}
                   </span>
                 )}
+                {r.webPresence.verified === true && r.webPresence.addressMatch && (
+                  <span className="px-2.5 py-1 bg-[#16A34A]/10 text-[#16A34A] rounded-full text-[11px] mono">Google listing at FMCSA address</span>
+                )}
+                {r.webPresence.verified === true && r.webPresence.phoneMatch && (
+                  <span className="px-2.5 py-1 bg-[#16A34A]/10 text-[#16A34A] rounded-full text-[11px] mono">Google listing has FMCSA phone</span>
+                )}
                 {r.webPresence.nameMatch && (
-                  <span className="px-2.5 py-1 bg-[#16A34A]/10 text-[#16A34A] rounded-full text-[11px] mono">Name matches domain</span>
+                  <span className="px-2.5 py-1 bg-[#0B1E3F]/5 text-[#0B1E3F]/70 rounded-full text-[11px] mono">Name matches</span>
                 )}
               </div>
-              {Array.isArray(r.webPresence.socials) && r.webPresence.socials.length > 0 && (
+              {r.webPresence.verified === true && Array.isArray(r.webPresence.socials) && r.webPresence.socials.length > 0 && (
                 <div className="mt-4">
                   <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Social media found on website</div>
                   <div className="flex flex-wrap gap-2">
@@ -9878,18 +9877,28 @@ function CarrierReport({ report, navigate }: any) {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Address verification</h2>
-              <div className="text-sm text-[#0B1E3F]/60 mt-1">Cross-checked the FMCSA address against Google Places.</div>
+              <div className="text-sm text-[#0B1E3F]/60 mt-1">Cross-checked the FMCSA address against Google Places. Only a listing at the exact same address (street, number, ZIP and suite) counts.</div>
             </div>
-            {r.addressCheck.found ? (
+            {r.addressCheck.error ? (
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/70"><AlertTriangle className="w-3.5 h-3.5" /> Couldn&rsquo;t check</span>
+            ) : r.addressCheck.found ? (
               r.addressCheck.isMailbox ? (
                 <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#F59E0B]/10 text-[#F59E0B]"><AlertTriangle className="w-3.5 h-3.5" /> Mail-forwarding service</span>
+              ) : r.addressCheck.isResidence ? (
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/75"><Building2 className="w-3.5 h-3.5" /> Likely residential address (common for owner-operators)</span>
               ) : r.addressCheck.businessStatus === 'CLOSED_PERMANENTLY' ? (
                 <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#DC2626]/10 text-[#DC2626]"><XCircle className="w-3.5 h-3.5" /> Permanently closed</span>
+              ) : r.addressCheck.addressMatched !== true ? (
+                // Saved before exact-address matching existed: the listing
+                // may be at a nearby address. Make no claim either way.
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/70"><AlertTriangle className="w-3.5 h-3.5" /> Nearby listing — address not confirmed</span>
+              ) : r.addressCheck.nameMatches ? (
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#16A34A]/10 text-[#16A34A]"><CheckCircle2 className="w-3.5 h-3.5" /> Listed at this address under their name</span>
               ) : (
-                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#16A34A]/10 text-[#16A34A]"><CheckCircle2 className="w-3.5 h-3.5" /> Verified business</span>
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#F59E0B]/10 text-[#B45309]"><AlertTriangle className="w-3.5 h-3.5" /> A different business is listed here</span>
               )
             ) : (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/70"><AlertTriangle className="w-3.5 h-3.5" /> Not found in Places</span>
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#0B1E3F]/10 text-[#0B1E3F]/70"><AlertTriangle className="w-3.5 h-3.5" /> No listing at this address</span>
             )}
           </div>
           <div className="grid md:grid-cols-2 gap-3">
@@ -9899,17 +9908,24 @@ function CarrierReport({ report, navigate }: any) {
             </div>
             <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
               <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">Google Places match</div>
-              {r.addressCheck.found ? (
+              {r.addressCheck.error ? (
+                <div className="text-sm text-[#0B1E3F]/60">Google Places didn&rsquo;t respond, so the address wasn&rsquo;t checked. This is not a finding.</div>
+              ) : r.addressCheck.found && r.addressCheck.isResidence ? (
+                <>
+                  <div className="text-sm font-medium text-[#0B1E3F]">No business listed at this address</div>
+                  <div className="text-xs text-[#0B1E3F]/60 mt-0.5">{r.addressCheck.matchedAddress || ''}{r.addressCheck.matchedAddress ? ' · ' : ''}usually a home. Normal for owner-operators.</div>
+                </>
+              ) : r.addressCheck.found ? (
                 <>
                   <div className="text-sm font-medium text-[#0B1E3F]">{r.addressCheck.matchedName || '—'}</div>
                   <div className="text-xs text-[#0B1E3F]/60 mt-0.5">{r.addressCheck.matchedAddress || ''}</div>
                 </>
               ) : (
-                <div className="text-sm text-[#0B1E3F]/60">No matching place</div>
+                <div className="text-sm text-[#0B1E3F]/60">No Google listing at exactly this address</div>
               )}
             </div>
           </div>
-          {r.addressCheck.found && (
+          {r.addressCheck.found && !r.addressCheck.isResidence && (
             <div className="flex flex-wrap gap-2 mt-4">
               {r.addressCheck.businessStatus && (
                 <span className={`px-2.5 py-1 rounded-full text-[11px] mono ${r.addressCheck.businessStatus === 'OPERATIONAL' ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#F59E0B]/10 text-[#F59E0B]'}`}>{r.addressCheck.businessStatus}</span>
@@ -10033,23 +10049,40 @@ function CarrierReport({ report, navigate }: any) {
             </div>
           </div>
           {(() => {
-            // Email-domain-matches-website check: when the user supplied
-            // an email and that email's domain is the same as the
-            // carrier's FMCSA-listed website, that's a *positive* signal
-            // worth surfacing loudly. Most spoofed rate-cons fail this.
+            // Email-domain-matches-website check. FMCSA lists no websites,
+            // so a match only means something when we confirmed the site
+            // is the company's (name + Google listing at the FMCSA address
+            // or phone). Against an unconfirmed site — which could be an
+            // impersonator's — a match proves nothing, and we say so.
             const queriedDomain = (r.queriedEmail || '').toLowerCase().split('@').pop()?.replace(/^www\./, '') || '';
             const carrierDomain = (r.webPresence?.domain || '').toLowerCase().replace(/^www\./, '');
             const exactMatch = queriedDomain && carrierDomain && queriedDomain === carrierDomain;
-            if (exactMatch) {
+            const siteConfirmed = r.webPresence?.verified === true;
+            if (exactMatch && siteConfirmed) {
               return (
                 <div className="p-4 mb-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-[#16A34A]/15 flex items-center justify-center flex-shrink-0">
                     <CheckCircle2 className="w-4 h-4 text-[#16A34A]" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-[#0B1E3F]">Email matches the carrier&rsquo;s FMCSA-listed website</div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Email matches the website we confirmed for this company</div>
                     <div className="text-xs text-[#0B1E3F]/65 mt-0.5">
-                      <span className="mono">{r.queriedEmail}</span> uses <span className="mono">{queriedDomain}</span>, the same domain as the carrier&rsquo;s real website. Strong legitimacy signal — spoofed rate-cons usually use a near-but-different domain.
+                      <span className="mono">{r.queriedEmail}</span> uses <span className="mono">{queriedDomain}</span>, the same domain as the website whose Google listing has their FMCSA {r.webPresence?.verifiedBy === 'phone' ? 'phone number' : 'address'}. A good sign — spoofed rate cons usually use a near-but-different domain. Email can still be forged, so confirm big changes (like payment details) by phone.
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            if (exactMatch) {
+              return (
+                <div className="p-4 mb-5 bg-[#0B1E3F]/[0.03] border border-[#0B1E3F]/15 rounded-xl flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[#0B1E3F]/10 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="w-4 h-4 text-[#0B1E3F]/60" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Email uses the same domain as a possible website — not confirmed as theirs</div>
+                    <div className="text-xs text-[#0B1E3F]/65 mt-0.5">
+                      <span className="mono">{queriedDomain}</span> is the domain of a site we found by searching the company name, but we couldn&rsquo;t tie that site to their FMCSA address or phone. This match doesn&rsquo;t show the email is from them. Call the company on a number you look up yourself.
                     </div>
                   </div>
                 </div>
@@ -10070,15 +10103,17 @@ function CarrierReport({ report, navigate }: any) {
             </div>
             <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
               <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Email provider</div>
-              <div className={`text-sm font-semibold truncate ${r.domain.mx?.hasMx ? 'text-[#0B1E3F]' : 'text-[#DC2626]'}`} title={r.domain.mx?.provider || (r.domain.mx?.records?.[0] ?? '')}>
+              <div className={`text-sm font-semibold truncate ${r.domain.mx?.hasMx || r.domain.mx?.error ? 'text-[#0B1E3F]' : 'text-[#DC2626]'}`} title={r.domain.mx?.provider || (r.domain.mx?.records?.[0] ?? '')}>
                 {r.domain.mx?.hasMx
                   ? (r.domain.mx.provider || 'Custom / unknown')
-                  : 'No email server'}
+                  : r.domain.mx?.error ? 'Couldn’t check' : 'No email server'}
               </div>
               <div className="text-xs text-[#0B1E3F]/50 mt-1">
                 {r.domain.mx?.hasMx
                   ? `${r.domain.mx.records?.length || 0} MX record${(r.domain.mx.records?.length || 0) === 1 ? '' : 's'}${r.domain.mx.provider ? '' : ' (no known provider match)'}`
-                  : 'Cannot receive email — strong fraud signal'}
+                  : r.domain.mx?.error
+                    ? 'The DNS lookup failed — not a finding'
+                    : 'Can’t receive email, so replies to this sender bounce. Real business email domains can receive mail.'}
               </div>
             </div>
             <div className="p-4 bg-[#0B1E3F]/5 rounded-xl">
@@ -10140,15 +10175,18 @@ function CarrierReport({ report, navigate }: any) {
             <div className="mb-6">
               <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Other FMCSA records sharing this phone or address</div>
               <div className="space-y-2">
-                {r.chameleonLinks.map((link: any, i: number) => (
-                  <div key={i} className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/20 rounded-xl">
-                    <div className="w-8 h-8 rounded-lg bg-[#DC2626]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <AlertTriangle className="w-4 h-4 text-[#DC2626]" />
+                {/* Only FMCSA-sourced links. Older saved reports may hold
+                    'our-lookup' links built from Haulock's own past verdicts;
+                    those are no longer evidence and aren't shown. */}
+                {r.chameleonLinks.filter((link: any) => link.source !== 'our-lookup').map((link: any, i: number) => (
+                  <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${link.badStatus ? 'bg-[#DC2626]/5 border-[#DC2626]/20' : 'bg-[#0B1E3F]/[0.03] border-[#0B1E3F]/10'}`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${link.badStatus ? 'bg-[#DC2626]/15' : 'bg-[#0B1E3F]/10'}`}>
+                      <AlertTriangle className={`w-4 h-4 ${link.badStatus ? 'text-[#DC2626]' : 'text-[#0B1E3F]/50'}`} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="px-2 py-0.5 bg-[#DC2626]/15 text-[#DC2626] rounded-full text-[10px] mono uppercase tracking-wider font-semibold">{link.matchedOn} match</span>
-                        <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{link.source === 'fmcsa-flag' ? 'FMCSA enforcement' : 'Prior Haulock high-risk scan'}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] mono uppercase tracking-wider font-semibold ${link.badStatus ? 'bg-[#DC2626]/15 text-[#DC2626]' : 'bg-[#0B1E3F]/10 text-[#0B1E3F]/60'}`}>{link.matchedOn} match</span>
+                        <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{link.badStatus ? 'FMCSA record' : 'FMCSA record · informational, not scored'}</span>
                       </div>
                       <div className="text-sm font-semibold text-[#0B1E3F]">{link.name}</div>
                       <div className="text-[11px] mono text-[#0B1E3F]/55 mt-0.5">
@@ -10219,7 +10257,7 @@ function CarrierReport({ report, navigate }: any) {
                 })}
               </div>
               <div className="mt-4 text-xs text-[#0B1E3F]/55 italic">
-                Click an alias to run a full Haulock scan on it. Coverage that mentions one entity in this network usually mentions all of them.
+                These companies were named in the same coverage as this one. That alone doesn&rsquo;t mean they&rsquo;re related. Click one to run a separate Haulock scan on it.
               </div>
             </div>
           )}
@@ -11215,6 +11253,8 @@ function FlagRow({ sev, title, desc, pts, details, metrics, recommendation, webH
                     <a key={i} href={h.url} target="_blank" rel="noopener noreferrer" className="block bg-white rounded-lg border px-3 py-2.5 hover:border-[#0B1E3F]/40 transition" style={{ borderColor: borderMap[sev] }}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/70 font-semibold">{info.kind}</span>
+                        {h.category === 'fraud' && <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#DC2626]/10 text-[#DC2626] font-semibold">Mentions fraud</span>}
+                        {h.category && h.category !== 'fraud' && <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#16A34A]/10 text-[#16A34A] font-semibold">Not scored</span>}
                         <span className="text-xs mono text-[#0B1E3F]/50">{h.domain}</span>
                       </div>
                       <div className="text-sm font-medium text-[#0B1E3F] mt-1 underline decoration-[#0B1E3F]/20 underline-offset-2">{h.title}</div>

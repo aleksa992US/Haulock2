@@ -1,4 +1,6 @@
 import type { CarrierReport, RiskFlag } from './fmcsa';
+import { roleNoun } from './recommendation';
+import { isRecentReactivation, humanMonths } from './fmcsa-authority-history';
 
 export function scoreCarrier(c: CarrierReport): CarrierReport {
   const flags: RiskFlag[] = [...c.flags];
@@ -36,38 +38,63 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (c.outOfService && isCarrier) {
+  // `outOfService` is only true when FMCSA lists an OOS order AND says the
+  // carrier is not allowed to operate (see normalize() in lib/fmcsa) — a
+  // leftover OOS date on a carrier that's allowed to operate doesn't count.
+  if (c.outOfService === true && isCarrier) {
     flags.push({
       sev: 'critical',
       title: 'Carrier is out of service',
-      desc: 'FMCSA has placed this carrier out of service.',
+      desc: `FMCSA lists an out-of-service order${c.oosDate ? ` dated ${c.oosDate}` : ''} and shows the carrier as not allowed to operate.`,
       pts: 40,
-      details: 'A federal OOS order means the carrier has been found in serious safety violation and is prohibited from operating any vehicle in interstate commerce until the violation is resolved.',
-      recommendation: 'Do not book under any circumstances.',
+      details: 'While an out-of-service order is in effect, the carrier may not operate commercial motor vehicles in interstate commerce. FMCSA issues these orders for reasons such as an unsatisfactory safety rating, an imminent-hazard finding, or unpaid civil penalties, and lifts them once the cause is resolved.',
+      metrics: [
+        ...(c.oosDate ? [{ label: 'OOS order date', value: c.oosDate }] : []),
+        { label: 'Allowed to operate', value: c.allowedToOperate === false ? 'No' : 'Not stated' },
+      ],
+      recommendation: 'Do not tender a load while the order is in effect. If the carrier says it was lifted, re-check FMCSA before booking.',
     });
   }
 
-  if (c.authorityAge && /reactivated/i.test(c.authorityAge)) {
+  // Authority age. Live reports carry `authorityHistory` from FMCSA's
+  // AuthHist datasets; mock and older saved reports only have the
+  // `authorityAge` text, so fall back to reading that.
+  const hist = c.authorityHistory;
+  const reactivatedRecently = hist?.checked
+    ? isRecentReactivation(hist)
+    : Boolean(c.authorityAge && /reactivated/i.test(c.authorityAge));
+  const ageMonths = hist?.checked
+    ? hist.ageMonths
+    : c.authorityAge && /^(\d+)\s*month/i.test(c.authorityAge) ? parseInt(c.authorityAge, 10) : undefined;
+  if (reactivatedRecently) {
     flags.push({
       sev: 'critical',
       title: 'Authority recently reactivated',
-      desc: 'Reactivation after long dormancy is a known fraud pattern.',
+      desc: hist?.reactivatedDate
+        ? `Authority became active again on ${hist.reactivatedDate} after ${hist.dormantMonths != null ? humanMonths(hist.dormantMonths) : 'a long period'} with no active authority.`
+        : 'Reactivation after long dormancy is a known fraud pattern.',
       pts: 30,
-      details: 'A common freight fraud pattern is to buy or reactivate a dormant MC number to inherit its clean record, then run scam loads for 30–90 days before disappearing. New activity on an old authority is a significant red flag.',
+      details: 'A common freight fraud pattern is to buy or reactivate a dormant MC number to inherit its clean record, then run scam loads for 30–90 days before disappearing. New activity on an old authority is a significant red flag. Legitimate companies also reinstate authority after a break, so confirm who is running it now.',
+      metrics: hist?.reactivatedDate
+        ? [
+            ...(hist.firstGrantDate ? [{ label: 'First granted', value: hist.firstGrantDate }] : []),
+            { label: 'Reactivated', value: hist.reactivatedDate },
+            ...(hist.dormantMonths != null ? [{ label: 'Inactive before that', value: humanMonths(hist.dormantMonths) }] : []),
+          ]
+        : undefined,
       recommendation: 'Verify identity via an independent channel. Require payment upfront if you proceed.',
     });
-  } else if (c.authorityAge && /^(\d+)\s*month/i.test(c.authorityAge)) {
-    const months = parseInt(c.authorityAge, 10);
-    if (months < 12) {
-      flags.push({
-        sev: 'warning',
-        title: 'Authority age under 12 months',
-        desc: `Granted ${c.authorityAge} ago.`,
-        pts: 15,
-        details: 'New authorities aren\'t automatically fraud, but many freight scams run on brand-new MC numbers because they have no history to investigate. Legitimate new carriers usually have real-world references you can call.',
-        recommendation: 'Ask for references from shippers, brokers or carriers they\'ve worked with, and call them.',
-      });
-    }
+  } else if (ageMonths != null && ageMonths < 12) {
+    flags.push({
+      sev: 'warning',
+      title: 'Authority age under 12 months',
+      desc: hist?.firstGrantDate
+        ? `First granted ${hist.firstGrantDate} (${humanMonths(ageMonths)} ago).`
+        : `Granted ${c.authorityAge} ago.`,
+      pts: 15,
+      details: 'New authorities aren\'t automatically fraud, but many freight scams run on brand-new MC numbers because they have no history to investigate. Legitimate new companies usually have real-world references you can call.',
+      recommendation: 'Ask for references from shippers, brokers or carriers they\'ve worked with, and call them.',
+    });
   }
 
   // BIPD (liability) insurance — only for motor carriers, or when FMCSA
@@ -183,66 +210,118 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (!isPureBroker && c.driverOosRate != null && c.driverOosRateNat != null && c.driverOosRate > c.driverOosRateNat * 1.5) {
+  // Out-of-service rates. A rate from a handful of inspections is noise
+  // (1 OOS out of 1 inspection = 100%), so only flag once the carrier has
+  // MIN_OOS_INSPECTIONS inspections of that type. Counts come from QCMobile
+  // (driverInsp / vehicleInsp), with the SMS page as backup. With no count
+  // at all we still judge the rate, but the flag says the count is missing.
+  const MIN_OOS_INSPECTIONS = 10;
+  const smsInsp = c.sms?.fetched ? c.sms.inspections : null;
+  const drvInsp = c.driverInspections ?? smsInsp?.driverInspections;
+  const drvOosInsp = c.driverOosInspections ?? smsInsp?.driverOosCount;
+  const vehInsp = c.vehicleInspections ?? smsInsp?.vehicleInspections;
+  const vehOosInsp = c.vehicleOosInspections ?? smsInsp?.vehicleOosCount;
+  const enoughInspections = (n: number | undefined) => n == null || n >= MIN_OOS_INSPECTIONS;
+  const inspectionBasis = (n: number | undefined, oos: number | undefined) =>
+    n == null
+      ? ' The inspection count wasn’t available, so this rate may rest on only a few inspections.'
+      : ` Based on ${oos != null ? `${oos} of ` : ''}${n} inspection${n === 1 ? '' : 's'} in 24 months.`;
+  const inspectionMetrics = (kind: 'Driver' | 'Vehicle', n: number | undefined, oos: number | undefined) => [
+    { label: `${kind} inspections (24mo)`, value: n != null ? String(n) : 'Unknown' },
+    ...(n != null && oos != null ? [{ label: 'Placed out of service', value: String(oos) }] : []),
+  ];
+
+  if (!isPureBroker && c.driverOosRate != null && c.driverOosRateNat != null && c.driverOosRate > c.driverOosRateNat * 1.5 && enoughInspections(drvInsp)) {
     flags.push({
       sev: 'warning',
       title: `Driver out-of-service rate ${c.driverOosRate.toFixed(1)}%`,
-      desc: `Well above national average of ${c.driverOosRateNat.toFixed(2)}%.`,
+      desc: `Well above national average of ${c.driverOosRateNat.toFixed(2)}%.${inspectionBasis(drvInsp, drvOosInsp)}`,
       pts: 10,
       details: 'Driver OOS rate is the percentage of roadside driver inspections where the driver was placed out of service (typically for hours-of-service violations, licensing issues, or drug/alcohol failures). High rates suggest systemic driver compliance problems.',
       metrics: [
         { label: 'This carrier', value: `${c.driverOosRate.toFixed(2)}%` },
         { label: 'National average', value: `${c.driverOosRateNat.toFixed(2)}%` },
         { label: 'Multiple of avg', value: `${(c.driverOosRate / c.driverOosRateNat).toFixed(1)}×` },
+        ...inspectionMetrics('Driver', drvInsp, drvOosInsp),
       ],
       recommendation: 'Factor into delay / liability expectations. Higher OOS = more roadside stops.',
     });
   }
 
-  if (!isPureBroker && c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat * 1.5) {
+  if (!isPureBroker && c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat * 1.5 && enoughInspections(vehInsp)) {
     flags.push({
       sev: 'warning',
       title: `Vehicle out-of-service rate ${c.vehicleOosRate.toFixed(1)}%`,
-      desc: `Well above national average of ${c.vehicleOosRateNat.toFixed(2)}%.`,
+      desc: `Well above national average of ${c.vehicleOosRateNat.toFixed(2)}%.${inspectionBasis(vehInsp, vehOosInsp)}`,
       pts: 10,
       details: 'Vehicle OOS rate is the percentage of roadside vehicle inspections where the truck or trailer was placed out of service for equipment defects (brakes, tires, lights, etc.). High rates indicate poor maintenance — expect breakdowns and delays.',
       metrics: [
         { label: 'This carrier', value: `${c.vehicleOosRate.toFixed(2)}%` },
         { label: 'National average', value: `${c.vehicleOosRateNat.toFixed(2)}%` },
         { label: 'Multiple of avg', value: `${(c.vehicleOosRate / c.vehicleOosRateNat).toFixed(1)}×` },
+        ...inspectionMetrics('Vehicle', vehInsp, vehOosInsp),
       ],
       recommendation: 'For time-sensitive freight, prefer a carrier with OOS rates at or below the national average.',
     });
-  } else if (!isPureBroker && c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat) {
+  } else if (!isPureBroker && c.vehicleOosRate != null && c.vehicleOosRateNat != null && c.vehicleOosRate > c.vehicleOosRateNat && enoughInspections(vehInsp)) {
     flags.push({
       sev: 'info',
       title: `Vehicle OOS rate ${c.vehicleOosRate.toFixed(1)}% · above average`,
-      desc: `National average ${c.vehicleOosRateNat.toFixed(2)}%.`,
+      desc: `National average ${c.vehicleOosRateNat.toFixed(2)}%.${inspectionBasis(vehInsp, vehOosInsp)}`,
       pts: 5,
       details: 'Vehicle OOS rate measures the percentage of roadside vehicle inspections where the truck or trailer was placed out of service for equipment defects. Slightly above average isn\'t a booking blocker, but it indicates maintenance is below the national median.',
       metrics: [
         { label: 'This carrier', value: `${c.vehicleOosRate.toFixed(2)}%` },
         { label: 'National average', value: `${c.vehicleOosRateNat.toFixed(2)}%` },
         { label: 'Multiple of avg', value: `${(c.vehicleOosRate / c.vehicleOosRateNat).toFixed(2)}×` },
+        ...inspectionMetrics('Vehicle', vehInsp, vehOosInsp),
       ],
       recommendation: 'Worth noting, not a blocker. Prefer lower OOS rates for time-critical loads.',
     });
   }
 
+  // Fatal crashes. FMCSA counts every reportable crash a carrier was
+  // involved in over 24 months, whatever its driver's role, and big fleets
+  // drive far more miles. One fatal crash says more about a 3-truck carrier
+  // than a 300-truck one, so large fleets get the count set against fleet
+  // size instead of a flat penalty.
   if (!isPureBroker && c.fatalCrash && c.fatalCrash > 0) {
-    flags.push({
-      sev: 'warning',
-      title: `${c.fatalCrash} fatal crash${c.fatalCrash === 1 ? '' : 'es'} on record`,
-      desc: 'Check the carrier\'s full safety record before booking.',
-      pts: 15,
-      details: 'FMCSA tracks the last 24 months of reportable crashes (fatal, injury, or tow-away). Fatal crashes specifically are weighted heavily in Safety Measurement System (SMS) scores and may indicate serious safety issues.',
-      metrics: [
-        { label: 'Fatal crashes (24mo)', value: String(c.fatalCrash) },
-        { label: 'Injury crashes (24mo)', value: String(c.injCrash ?? 0) },
-        { label: 'Total crashes (24mo)', value: String(c.crashTotal ?? 0) },
-      ],
-      recommendation: 'Pull their SMS scores and review crash details before engaging for high-liability freight.',
-    });
+    const n = c.fatalCrash;
+    const LARGE_FLEET_UNITS = 50;
+    const large = c.powerUnits != null && c.powerUnits >= LARGE_FLEET_UNITS;
+    const per100 = c.powerUnits ? (n / c.powerUnits) * 100 : null;
+    const crashMetrics = [
+      { label: 'Fatal crashes (24mo)', value: String(n) },
+      { label: 'Injury crashes (24mo)', value: String(c.injCrash ?? 0) },
+      { label: 'Total crashes (24mo)', value: String(c.crashTotal ?? 0) },
+      { label: 'Fleet size', value: c.powerUnits ? `${c.powerUnits} power units` : 'Unknown' },
+      ...(per100 != null ? [{ label: 'Fatal per 100 power units (24mo)', value: per100.toFixed(1) }] : []),
+    ];
+    const plural = n === 1 ? '' : 'es';
+    if (large && per100 != null) {
+      const many = per100 >= 2;
+      flags.push({
+        sev: many ? 'warning' : 'info',
+        title: `${n} fatal crash${plural} in 24 months · ${c.powerUnits}-truck fleet`,
+        desc: `About ${per100.toFixed(1)} per 100 power units over 24 months${many ? ', which is a lot for a fleet this size' : ''}. FMCSA counts crashes regardless of who was at fault, and large fleets drive many more miles.`,
+        pts: many ? 10 : 5,
+        details: 'FMCSA lists every reportable crash (fatal, injury, or tow-away) the carrier was involved in over the last 24 months, regardless of its driver\'s role. For a large fleet, the count is best read against the number of trucks on the road.',
+        metrics: crashMetrics,
+        recommendation: 'Review the crash details on FMCSA SMS before tendering high-liability freight.',
+      });
+    } else {
+      flags.push({
+        sev: 'warning',
+        title: `${n} fatal crash${plural} in 24 months`,
+        desc: c.powerUnits
+          ? `For a ${c.powerUnits}-truck fleet. Check the carrier's full safety record before booking.`
+          : 'Fleet size unknown. Check the carrier\'s full safety record before booking.',
+        pts: 15,
+        details: 'FMCSA lists every reportable crash (fatal, injury, or tow-away) the carrier was involved in over the last 24 months, regardless of its driver\'s role. For a small fleet, a fatal crash is a significant event worth asking about.',
+        metrics: crashMetrics,
+        recommendation: 'Pull their SMS scores and review crash details before engaging for high-liability freight.',
+      });
+    }
   }
 
   // FMCSA counts crashes over 24 months; the usual benchmark is about
@@ -271,39 +350,44 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
   }
 
   if (c.webPresence?.configured) {
-    if (c.webPresence.found) {
+    // `verified` / `verifiedBy` come from lib/website-finder's
+    // assessWebsiteOwnership (not yet on the shared CarrierReport type).
+    const wp = c.webPresence as NonNullable<CarrierReport['webPresence']> & { verified?: boolean; verifiedBy?: string };
+    if (wp.found) {
       // Name-mismatch is a marketing / SEO signal, not a fraud signal.
       // Many legit carriers run on a brand-style domain (Apollo Freight
       // Systems Inc → owneroperatorsapollo.com). We deliberately do NOT
       // flag it; the report still surfaces the mismatch in a neutral
       // badge for transparency, but it does not affect the score.
-      // Only judge the site's age / email setup when the site's name matches
-      // the company — otherwise we may have found someone else's website.
-      const siteIsTheirs = c.webPresence.nameMatch === true;
-      if (siteIsTheirs && c.webPresence.domainAgeDays != null && c.webPresence.domainAgeDays <= 90) {
+      // Only judge the site's age / email setup when we've confirmed the
+      // site is theirs: the name matches AND its Google listing is at the
+      // FMCSA address or has the FMCSA phone. A site that merely ranks for
+      // the name may be someone else's — or an impersonator's.
+      const siteIsTheirs = wp.nameMatch === true && wp.verified === true;
+      if (siteIsTheirs && wp.domainAgeDays != null && wp.domainAgeDays <= 90) {
         flags.push({
           sev: 'warning',
-          title: `Website domain registered ${c.webPresence.domainAgeDays} day${c.webPresence.domainAgeDays === 1 ? '' : 's'} ago`,
+          title: `Website domain registered ${wp.domainAgeDays} day${wp.domainAgeDays === 1 ? '' : 's'} ago`,
           desc: 'Established companies usually have websites that are years old.',
           pts: 25,
-          details: 'A website registered in the last 3 months is a common setup for impersonators: they copy a real company\'s name onto a new site and email domain. Legitimate new companies exist too, so check how long they\'ve had authority.',
+          details: 'This website is tied to the company\'s FMCSA address or phone, but the domain is under 3 months old. That can mean the business was recently set up or taken over. Legitimate new companies exist too, so check how long they\'ve had authority.',
           metrics: [
-            { label: 'Domain age', value: `${c.webPresence.domainAgeDays} days` },
-            { label: 'Domain', value: c.webPresence.domain || '—' },
+            { label: 'Domain age', value: `${wp.domainAgeDays} days` },
+            { label: 'Domain', value: wp.domain || '—' },
           ],
           recommendation: 'Do not trust contact info from this website without independent verification.',
         });
       }
-      if (siteIsTheirs && c.webPresence.hasMx === false) {
+      if (siteIsTheirs && wp.hasMx === false) {
         flags.push({
           sev: 'info',
           title: 'Their website domain has no email server',
-          desc: 'The website domain has no MX records, so email to @' + c.webPresence.domain + ' won\'t arrive.',
+          desc: 'The website domain has no MX records, so email to @' + wp.domain + ' won\'t arrive.',
           pts: 5,
-          details: 'Many small companies use Gmail and never set up email on their own domain, so this isn\'t a red flag on its own. It does mean an email "from @' + c.webPresence.domain + '" wasn\'t sent from a real mailbox there.',
+          details: 'Many small companies use Gmail and never set up email on their own domain, so this isn\'t a red flag on its own. It does mean an email "from @' + wp.domain + '" wasn\'t sent from a real mailbox there.',
         });
       }
-    } else if (!c.webPresence.error) {
+    } else if (!wp.error) {
       flags.push({
         sev: 'info',
         title: 'No website found',
@@ -314,64 +398,73 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     }
   }
 
-  if (c.addressCheck?.configured) {
-    if (c.addressCheck.found && c.addressCheck.isMailbox) {
+  // `found` means Places has a listing at exactly the FMCSA address (see
+  // lib/places addressesMatch). A failed lookup (`error`) is "couldn't
+  // check" and produces no flag at all.
+  const addr = c.addressCheck as (NonNullable<CarrierReport['addressCheck']> & { addressMatched?: boolean; nameMatches?: boolean }) | undefined;
+  if (addr?.configured && addr.error) {
+    // Couldn't check — not a finding.
+  } else if (addr?.configured) {
+    if (addr.found && addr.isMailbox) {
       flags.push({
         sev: 'warning',
         title: 'Address is a mail-forwarding service',
-        desc: `Their on-file address resolves to ${c.addressCheck.mailboxProvider || 'a mail box rental'}, not a real business location.`,
+        desc: `Their on-file address resolves to ${addr.mailboxProvider || 'a mail box rental'}, not a real business location.`,
         pts: 25,
         details: 'Freight fraud often uses commercial mail receiving agencies (UPS Store, iPostal1, etc.) so the operator can\'t be physically located. Some legitimate small carriers use them too, but combined with other flags it is a strong signal.',
         metrics: [
           { label: 'On file', value: c.address || '—' },
-          { label: 'Resolves to', value: c.addressCheck.matchedName || '—' },
-          { label: 'Provider', value: c.addressCheck.mailboxProvider || 'Mail box rental' },
+          { label: 'Resolves to', value: addr.matchedName || '—' },
+          { label: 'Provider', value: addr.mailboxProvider || 'Mail box rental' },
         ],
-        recommendation: 'Ask the carrier for a physical operating address (terminal/yard) and verify with a phone call.',
+        recommendation: `Ask the ${roleNoun(c)} for a physical operating address and verify it with a phone call.`,
       });
-    } else if (!c.addressCheck.found && c.address && !c.addressCheck.error) {
+    } else if (!addr.found && c.address) {
       flags.push({
         sev: 'info',
         title: 'Address could not be verified',
-        desc: 'Google Places couldn\'t locate their on-file physical address.',
+        desc: 'Google Places has no listing at exactly their on-file address.',
         pts: 5,
         details: 'Not necessarily fraud — small businesses sometimes have addresses that don\'t resolve cleanly. But combined with other signals (new authority, missing insurance) it adds suspicion.',
       });
-    } else if (c.addressCheck.found && c.addressCheck.businessStatus === 'CLOSED_PERMANENTLY') {
+    } else if (addr.found && addr.isResidence) {
+      // A house or building with no business listed — normal for a
+      // home-based owner-operator. Neutral; shown in the address panel.
+    } else if (addr.found && addr.businessStatus === 'CLOSED_PERMANENTLY') {
       flags.push({
         sev: 'warning',
         title: 'Business at this address is closed permanently',
         desc: 'Google Places lists the business at the on-file address as permanently closed.',
         pts: 20,
-        recommendation: 'Verify the carrier\'s current operating location before booking.',
+        recommendation: `Verify the ${roleNoun(c)}'s current operating location before booking.`,
       });
     } else if (
-      c.addressCheck.found
-      && !c.addressCheck.isMailbox
-      && c.addressCheck.matchedName
+      addr.found
+      && addr.addressMatched === true
+      && !addr.isMailbox
+      && !addr.isResidence
+      && addr.matchedName
       && c.name
-      && !carrierNamesMatch(c.name, c.addressCheck.matchedName)
+      && !carrierNamesMatch(c.name, addr.matchedName)
     ) {
-      // The address resolves to a real business — but a DIFFERENT one than
-      // the carrier we're checking. Classic shell-broker pattern: the
-      // registered "office" is just a coworking suite, executive-suite
-      // service, or a real tenant whose mailing address got reused.
-      const fmcsaSuite = extractSuite(c.address);
-      const placesSuite = extractSuite(c.addressCheck.matchedAddress);
-      const suiteMismatch = fmcsaSuite && placesSuite && fmcsaSuite !== placesSuite;
+      // Google lists a DIFFERENT business at exactly this address (same
+      // street number, street, ZIP and suite). Can mean a shared office or
+      // executive suite that hosts registrations, or simply a tenant
+      // without its own Google listing.
+      const noun = roleNoun(c);
+      const suite = extractSuite(c.address);
       flags.push({
         sev: 'warning',
         title: 'Address resolves to a different business',
-        desc: `FMCSA lists ${c.name} at this address, but Google Places shows ${c.addressCheck.matchedName} as the business there${suiteMismatch ? ` (in ${placesSuite}, not ${fmcsaSuite})` : ''}. Could be a shared executive-suite / coworking address used by a shell broker.`,
+        desc: `FMCSA lists ${c.name} at this address, but Google Places shows ${addr.matchedName} as the business there. It could be a shared office or executive-suite address, or the ${noun} may simply not have its own Google listing.`,
         pts: 25,
-        details: 'A common ghost-broker pattern: register an MC at a multi-tenant office building so the address looks legitimate, but no actual business operates there under the carrier name. Verify by phone, ask for a photo of their yard or terminal, or call the building manager.',
+        details: 'Some shell companies register at a multi-tenant office building so the address looks legitimate, while no business operates there under their name. Many real companies also share buildings. Verify by phone, ask for a photo of their office, yard or terminal, or call the building manager.',
         metrics: [
           { label: 'FMCSA name', value: c.name },
-          { label: 'Business at address', value: c.addressCheck.matchedName },
-          ...(fmcsaSuite ? [{ label: 'FMCSA suite', value: fmcsaSuite }] : []),
-          ...(placesSuite ? [{ label: 'Places suite', value: placesSuite }] : []),
+          { label: 'Business at address', value: addr.matchedName },
+          ...(suite ? [{ label: 'Suite', value: suite }] : []),
         ],
-        recommendation: 'Do not assume "verified business" means this carrier exists. Phone the carrier and the building.',
+        recommendation: `A Google listing at the address doesn't show this ${noun} operates there. Phone the ${noun} and the building.`,
       });
     }
   }
@@ -407,30 +500,78 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
 // "Gray Falcon United" vs "Roadrunner Freight" should NOT be.
 const NAME_NOISE = new Set([
   'llc', 'lc', 'inc', 'incorporated', 'corp', 'corporation', 'co', 'company',
-  'ltd', 'limited', 'lp', 'llp', 'pllc', 'pa', 'pc',
-  'the', 'and', '&', 'group', 'holdings',
+  'ltd', 'limited', 'lp', 'llp', 'pllc', 'pa', 'pc', 'dba',
+  'the', 'and', 'of', '&', 'group', 'holdings',
 ]);
 
-function tokenizeName(name: string): string[] {
-  return name
+// Industry words that half the companies in freight share. Two names that
+// only have these in common ("Acme Freight" / "Roadrunner Freight") are NOT
+// the same company, so these never count as a match on their own.
+export const GENERIC_INDUSTRY_WORDS = new Set([
+  'freight', 'freights', 'logistics', 'logistic', 'trucking', 'truck', 'trucks', 'truckers',
+  'transport', 'transports', 'transportation', 'transit', 'trans', 'express', 'xpress', 'expedited',
+  'expediting', 'carrier', 'carriers', 'services', 'service', 'solutions', 'lines', 'line',
+  'delivery', 'deliveries', 'hauling', 'haulers', 'hauler', 'haul', 'enterprises', 'enterprise',
+  'shipping', 'cargo', 'moving', 'movers', 'brokerage', 'brokers', 'broker', 'dispatch',
+  'dispatching', 'distribution', 'intermodal', 'motor', 'motors', 'fleet', 'systems', 'supply',
+  'chain', 'worldwide', 'international', 'global', 'national', 'usa', 'us', 'america', 'american',
+]);
+
+export function tokenizeName(name: string): string[] {
+  return (name || '')
     .toLowerCase()
+    .replace(/&/g, ' and ')
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter((w) => w && !NAME_NOISE.has(w));
 }
 
-// Two carrier names "match" if they share at least one significant token
-// (after stripping LLC/Inc/etc. and "the"/"and"/etc.). Two completely
-// different companies share zero tokens. False positive risk is low because
-// we strip generic words, but we DO accept partial overlap as a match —
-// e.g., "Acme Freight" matches "Acme Logistics Group" because they share
-// "acme". The Gray Falcon vs Roadrunner Freight pair shares no tokens.
-function carrierNamesMatch(a: string, b: string): boolean {
+// The words that actually identify a company: tokens minus generic
+// industry words. "ACME FREIGHT LLC" → ['acme'].
+export function distinctiveNameTokens(name: string): string[] {
+  return tokenizeName(name).filter((w) => !GENERIC_INDUSTRY_WORDS.has(w));
+}
+
+// Lenient comparison, used before raising "a different business is at this
+// address": we'd rather miss a mismatch than accuse a company. Names match
+// when they share a distinctive word (3+ letters), when one's distinctive
+// words run together inside the other's ("GRAYFALCON" / "Gray Falcon
+// United"), or — when a name is made only of generic words ("Express
+// Logistics Inc") — when they share any word at all. Generic words alone
+// never make a match: "Acme Freight" vs "Roadrunner Freight" → no match.
+export function carrierNamesMatch(a: string, b: string): boolean {
   const ta = tokenizeName(a);
   const tb = tokenizeName(b);
   if (ta.length === 0 || tb.length === 0) return true; // can't compare → don't false-flag
-  const set = new Set(ta);
-  return tb.some((t) => set.has(t));
+  const da = ta.filter((w) => !GENERIC_INDUSTRY_WORDS.has(w));
+  const db = tb.filter((w) => !GENERIC_INDUSTRY_WORDS.has(w));
+  if (da.length === 0 || db.length === 0) {
+    // Only generic words on one side — fall back to any shared word.
+    const set = new Set(ta);
+    return tb.some((t) => set.has(t));
+  }
+  const ja = da.join('');
+  const jb = db.join('');
+  if (ja === jb) return true;
+  const shorter = ja.length <= jb.length ? ja : jb;
+  const longer = ja.length <= jb.length ? jb : ja;
+  if (shorter.length >= 4 && longer.includes(shorter)) return true;
+  const set = new Set(da.filter((w) => w.length >= 3));
+  return db.some((t) => t.length >= 3 && set.has(t));
+}
+
+// Strict comparison, used when a name match is evidence that something
+// belongs to the company (a website's Google listing). The distinctive words
+// must be the same on both sides: "Acme Freight LLC" = "Acme Freight
+// Services", but "Acme Freight" ≠ "Acme Plumbing".
+export function companyNamesStrictMatch(a: string, b: string): boolean {
+  const da = distinctiveNameTokens(a).join('');
+  const db = distinctiveNameTokens(b).join('');
+  if (da && db) return da === db;
+  if (da || db) return false;
+  const fa = tokenizeName(a).join('');
+  const fb = tokenizeName(b).join('');
+  return Boolean(fa) && fa === fb;
 }
 
 // Pull the suite/unit/apartment number out of a US address string. Used to

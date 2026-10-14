@@ -107,8 +107,11 @@ const SMS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // scraped as a fleet of 6. v5: per-BASIC subpages are now fetched and
 // merged into each SmsBasic with percentile / acuteCriticalViolations /
 // safetyEventGroup, so reports show real values where the Overview page
-// hid them under "data-sufficiency threshold".
-const SMS_CACHE_VERSION = 'v5';
+// hid them under "data-sufficiency threshold". v6: BASIC alerts now come
+// from FMCSA's prioritization icon in the BASIC list (not the word
+// "Alert"), the Vehicle Maint. / Drugs-Alcohol subpage slugs are fixed, and
+// inspection OOS percentages are read (v5 stored OOS counts of 0).
+const SMS_CACHE_VERSION = 'v6';
 
 export async function fetchSmsData(dot: string): Promise<SmsData> {
   const empty: SmsData = {
@@ -179,16 +182,22 @@ async function fetchSmsHtml(dot: string): Promise<string> {
 
 // ----- per-BASIC subpages ----------------------------------------------
 
-// Map of (basics-key) → URL slug FMCSA uses for that BASIC's subpage.
+// Map of (basics-key) → URL slug FMCSA uses for that BASIC's subpage. These
+// match the links in the Overview page's BASIC list (`<li class=" Slug">`
+// → /SMS/Carrier/<DOT>/BASIC/<Slug>.aspx). "VehicleMaintenance" and
+// "Substance" redirect to FMCSA's error page.
 const BASIC_SUBPAGE_SLUGS: Record<keyof SmsData['basics'], string> = {
   unsafeDriving:        'UnsafeDriving',
   hoursOfService:       'HOSCompliance',
   driverFitness:        'DriverFitness',
-  controlledSubstances: 'Substance',
-  vehicleMaintenance:   'VehicleMaintenance',
+  controlledSubstances: 'DrugsAlcohol',
+  vehicleMaintenance:   'VehicleMaint',
   hazmat:               'HMCompliance',
   crashIndicator:       'CrashIndicator',
 };
+const SLUG_TO_BASIC: Record<string, keyof SmsData['basics']> = Object.fromEntries(
+  Object.entries(BASIC_SUBPAGE_SLUGS).map(([k, slug]) => [slug.toLowerCase(), k as keyof SmsData['basics']]),
+);
 
 // Fetches one BASIC subpage for the given DOT. Short timeout because the
 // caller fans 7 of these out in parallel.
@@ -304,7 +313,7 @@ async function enrichWithBasicSubpages(data: SmsData): Promise<void> {
 
 // ----- parsing ---------------------------------------------------------
 
-function parseSmsHtml(html: string, dot: string): SmsData {
+export function parseSmsHtml(html: string, dot: string): SmsData {
   const result: SmsData = {
     configured: true,
     fetched: true,
@@ -347,6 +356,13 @@ function parseSmsHtml(html: string, dot: string): SmsData {
   for (const { key, patterns } of basicLabels) {
     const basic = extractBasicForLabel(html, patterns);
     if (basic) result.basics[key] = basic;
+  }
+
+  // FMCSA's prioritization ("alert") symbol, read from the BASIC list only.
+  const { alerts } = extractBasicAlerts(html);
+  for (const key of alerts) {
+    const existing = result.basics[key];
+    result.basics[key] = { measure: existing?.measure ?? 0, inspections: existing?.inspections ?? 0, ...existing, alert: true };
   }
 
   // -- Inspections summary table. Look for the "Inspections" header row
@@ -432,6 +448,36 @@ function extractCarrierOverview(html: string): SmsCarrierOverview {
   return out;
 }
 
+// FMCSA's "prioritized for intervention" symbol per BASIC. The Overview page
+// lists the BASICs as `<ul id="BASICList"><li class=" UnsafeDriving">…</li>`,
+// and a BASIC over the intervention threshold (or with an acute/critical
+// violation in the last 12 months) carries
+//   <img src='/SMS//images/icons/prioritize_large.png' class='prioritizeIcon …'/>
+// inside its <li>. The same icon (prioritize_small.png) also appears in the
+// legend under the list, so only icons inside a BASIC <li> count.
+//
+// Since the FAST Act (2015) FMCSA hides this symbol for property carriers
+// in the public view ("Public Property Carrier View") and for the Crash
+// Indicator and HM BASICs ("Not Public"), so for most trucking companies
+// it never appears. Passenger carriers still show it.
+export function extractBasicAlerts(html: string): { alerts: Set<keyof SmsData['basics']>; listed: Set<keyof SmsData['basics']> } {
+  const alerts = new Set<keyof SmsData['basics']>();
+  const listed = new Set<keyof SmsData['basics']>();
+  const list = html.match(/<ul[^>]*\bid=["']BASICList["'][^>]*>([\s\S]*?)<\/ul>/i);
+  if (!list) return { alerts, listed };
+  const items = list[1].match(/<li\b[\s\S]*?<\/li>/gi) || [];
+  for (const li of items) {
+    const cls = li.match(/^<li[^>]*\bclass=["']([^"']*)["']/i)?.[1] || '';
+    const href = li.match(/\/BASIC\/([A-Za-z]+)\.aspx/i)?.[1] || '';
+    const key = SLUG_TO_BASIC[href.toLowerCase()]
+      ?? cls.split(/\s+/).map((c) => SLUG_TO_BASIC[c.toLowerCase()]).find(Boolean);
+    if (!key) continue;
+    listed.add(key);
+    if (/prioritize_(?:large|small)\.png|class=["'][^"']*\bprioritizeIcon\b/i.test(li)) alerts.add(key);
+  }
+  return { alerts, listed };
+}
+
 // Extract a single BASIC row by matching the label, then pulling the next
 // decimal/integer pair and an Alert indicator from a small window of HTML
 // after the label. Resilient to formatting changes inside that window.
@@ -482,9 +528,9 @@ function extractBasicForLabel(html: string, patterns: RegExp[]): SmsBasic | null
     const inspections = inspMatch ? parseInt(inspMatch[1], 10) : 0;
     if (inspections === 0) continue;
 
-    const alert = /\bAlert\b/i.test(rowText);
-
-    return { measure, inspections, alert };
+    // The word "Alert" in a row is not FMCSA's alert marker (the public page
+    // never prints it); alerts come only from extractBasicAlerts().
+    return { measure, inspections, alert: false };
   }
   return null;
 }
@@ -494,15 +540,30 @@ function extractInspections(html: string): SmsInspections | null {
   // of "Vehicle" + "Driver" + counts in proximity.
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-  const veh = extractIntAfter(text, /Vehicle\s*Inspections?(?:\s*\(?last\s*24\s*months\)?)?/i);
-  const drv = extractIntAfter(text, /Driver\s*Inspections?(?:\s*\(?last\s*24\s*months\)?)?/i);
-  const vehOos = extractIntAfter(text, /Vehicle\s*OOS|Vehicle\s*Out[\s-]*of[\s-]*Service/i);
-  const drvOos = extractIntAfter(text, /Driver\s*OOS|Driver\s*Out[\s-]*of[\s-]*Service/i);
+  // The Summary of Activities table prints each row as
+  //   <label>Driver Inspections</label><span class="num">308</span><span class="oos">2.6%</span>
+  // i.e. count then OOS percentage, with no OOS count. Read both; derive the
+  // count from the percentage (exact for counts under 1,000 because FMCSA
+  // rounds to 0.1%, may be off by one above that).
+  const row = (label: string) => {
+    const m = text.match(new RegExp(`${label}\\s+(\\d[\\d,]*)\\s+(\\d+(?:\\.\\d+)?)\\s*%`, 'i'));
+    if (!m) return null;
+    const n = parseInt(m[1].replace(/,/g, ''), 10);
+    const pct = parseFloat(m[2]);
+    return Number.isFinite(n) && Number.isFinite(pct) && pct <= 100 ? { n, pct } : null;
+  };
+  const vehRow = row('Vehicle\\s*Inspections');
+  const drvRow = row('Driver\\s*Inspections');
+
+  const veh = vehRow?.n ?? extractIntAfter(text, /Vehicle\s*Inspections?(?:\s*\(?last\s*24\s*months\)?)?/i);
+  const drv = drvRow?.n ?? extractIntAfter(text, /Driver\s*Inspections?(?:\s*\(?last\s*24\s*months\)?)?/i);
+  const vehOos = vehRow ? Math.round((vehRow.n * vehRow.pct) / 100) : extractIntAfter(text, /Vehicle\s*OOS|Vehicle\s*Out[\s-]*of[\s-]*Service/i);
+  const drvOos = drvRow ? Math.round((drvRow.n * drvRow.pct) / 100) : extractIntAfter(text, /Driver\s*OOS|Driver\s*Out[\s-]*of[\s-]*Service/i);
 
   if (veh == null && drv == null) return null;
 
-  const vehOosPct = veh && veh > 0 && vehOos != null ? Math.round((vehOos / veh) * 1000) / 10 : null;
-  const drvOosPct = drv && drv > 0 && drvOos != null ? Math.round((drvOos / drv) * 1000) / 10 : null;
+  const vehOosPct = vehRow ? vehRow.pct : veh && veh > 0 && vehOos != null ? Math.round((vehOos / veh) * 1000) / 10 : null;
+  const drvOosPct = drvRow ? drvRow.pct : drv && drv > 0 && drvOos != null ? Math.round((drvOos / drv) * 1000) / 10 : null;
 
   // SMS publishes the national average percentages adjacent to the per-
   // carrier OOS percentage. We try to capture those when present.

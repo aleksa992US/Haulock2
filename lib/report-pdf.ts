@@ -4,6 +4,12 @@
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage } from 'pdf-lib';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { carrierAuthorityLabel, recommendationFor } from './recommendation';
+
+// Standard PDF fonts only cover basic Latin; swap typographic punctuation.
+function pdfSafe(t: string): string {
+  return t.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...');
+}
 
 // Brand palette — keep in sync with app/globals.css and Haulock.tsx.
 const NAVY = rgb(0.043, 0.118, 0.247);          // #0B1E3F
@@ -144,16 +150,12 @@ function drawHero(ctx: DrawCtx, r: Carrier) {
   ctx.page.drawText('RISK LEVEL', { x: rx, y: top - 22, size: 8, font: ctx.helvBold, color: MUTED });
   ctx.page.drawText(verdict, { x: rx, y: top - 38, size: 16, font: ctx.helvBold, color: verdictColor });
 
-  const rec = r.verdict === 'high'
-    ? 'Do not book this load.'
-    : r.verdict === 'medium' ? 'Proceed with caution.'
-    : 'Safe to book.';
+  // Same role-aware advice as the report page (carrier vs broker).
+  const recommendation = recommendationFor(r, r.verdict);
+  const rec = pdfSafe(recommendation.headline);
   ctx.page.drawText(rec, { x: rx, y: top - 60, size: 12, font: ctx.helvBold, color: NAVY });
 
-  const rec2 = r.verdict === 'high'
-    ? 'Multiple serious red flags detected. Verify identity through an independent channel.'
-    : r.verdict === 'medium' ? 'Some risk signals. Verify rate-con details against FMCSA records.'
-    : 'Clean record. No major red flags. Standard payment terms appropriate.';
+  const rec2 = pdfSafe(recommendation.detail);
   drawWrappedText(ctx.page, rec2, ctx.helv, 9, MUTED, rx, top - 75, CONTENT_W - 160 - 8, 11);
 
   ctx.y -= heroH + 20;
@@ -209,12 +211,34 @@ function drawAddressCheck(ctx: DrawCtx, r: Carrier) {
   if (!r.addressCheck?.configured) return;
   ensureSpace(ctx, 80);
   drawSectionTitle(ctx, 'Address verification');
+  // Field names match CarrierReport.addressCheck (lib/fmcsa.ts).
   const a = r.addressCheck;
+  const flagTitles = (Array.isArray(r.flags) ? r.flags : []).map((f: any) => String(f?.title || ''));
+  const differentBusiness = flagTitles.some((t: string) => /address resolves to a different business/i.test(t));
   const items: Array<{ label: string; value: string }> = [
     { label: 'FMCSA address', value: r.address || '—' },
-    { label: 'Google Places match', value: a.found ? (a.formatted || a.placeName || 'Found') : 'Not found in Places' },
-    { label: 'Status', value: a.isMailbox ? 'Mailbox / mail-forwarding' : a.businessStatus || (a.found ? 'Operational' : '—') },
   ];
+  if (a.error) {
+    items.push({ label: 'Google Places', value: 'Could not check' });
+  } else if (!a.found) {
+    items.push({ label: 'Google Places', value: 'No listing at this address' });
+  } else {
+    items.push({ label: 'Business at address', value: a.matchedName || '—' });
+    if (a.matchedAddress) items.push({ label: 'Places address', value: a.matchedAddress });
+    items.push({
+      label: 'Status',
+      value: a.isMailbox
+        ? `Mail-forwarding service${a.mailboxProvider ? ` (${a.mailboxProvider})` : ''}`
+        : a.isResidence
+          ? 'Residence / no business listed'
+          : a.businessStatus === 'CLOSED_PERMANENTLY'
+            ? 'Closed permanently'
+            : a.businessStatus === 'CLOSED_TEMPORARILY'
+              ? 'Closed temporarily'
+              : a.businessStatus === 'OPERATIONAL' ? 'Operational' : '—',
+    });
+    if (differentBusiness) items.push({ label: 'Name check', value: `Different business than ${r.name || 'this company'}` });
+  }
   drawDetailRows(ctx, items);
 }
 
@@ -340,29 +364,46 @@ function identityItems(r: Carrier): Array<{ label: string; value: string }> {
     { label: 'Physical address', value: r.address || '—' },
     { label: 'Phone', value: r.phone || '—' },
     { label: 'Email domain', value: r.emailDomain || '—' },
-    { label: 'Authority age', value: r.authorityAge || '—' },
+    // QCMobile has no grant date; age comes from FMCSA's authority history
+    // when it could be fetched. Say so instead of a bare dash.
+    { label: 'Authority age', value: r.authorityAge || (r.authorityHistory?.checked ? 'No grant on record' : 'Unavailable') },
   ];
+}
+
+// "2026-03-15" / "03/15/2026" style dates, or "Overdue" / "Not overdue"
+// from FMCSA's Y/N flag. Never "Current" without a date.
+function mcs150Label(r: Carrier): string {
+  const date = r.mcs150Date || r.sms?.carrier?.mcs150Date;
+  if (date) return r.mcs150Outdated === true ? `${date} (overdue)` : String(date);
+  if (r.mcs150Outdated === true) return 'Overdue';
+  if (r.mcs150Outdated === false) return 'Not overdue';
+  return '—';
+}
+
+function oosRateLabel(rate: number | null | undefined, nat: number | null | undefined, insp: number | null | undefined): string {
+  if (rate == null || !Number.isFinite(Number(rate))) return '—';
+  const parts = [`${Number(rate).toFixed(2)}%`];
+  if (nat != null && Number.isFinite(Number(nat))) parts.push(`nat. ${Number(nat).toFixed(2)}%`);
+  if (insp != null) parts.push(`${insp} insp.`);
+  return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0];
 }
 
 function fmcsaItems(r: Carrier): Array<{ label: string; value: string }> {
   return [
-    { label: 'Operating authority', value: r.authorityStatus || '—' },
+    { label: 'Carrier authority', value: carrierAuthorityLabel(r) },
     { label: 'Broker authority', value: r.brokerAuthority || '—' },
     { label: 'Safety rating', value: r.safetyRating || 'Not rated' },
-    { label: 'Out-of-service', value: r.outOfService ? 'Yes' : 'No' },
+    { label: 'Out-of-service', value: r.outOfService === true ? 'Yes' : r.outOfService === false ? 'No' : '—' },
     { label: 'Insurance on file', value: r.insuranceSummary || '—' },
-    { label: 'MCS-150', value: r.mcs150Date || (r.mcs150Outdated ? 'Overdue' : 'Current') },
+    { label: 'MCS-150', value: mcs150Label(r) },
   ];
 }
 
 function opsSafetyItems(r: Carrier): Array<{ label: string; value: string }> {
   const fleet = r.powerUnits != null ? `${r.powerUnits} power units${r.drivers != null ? ` · ${r.drivers} drivers` : ''}` : '—';
-  const drvOos = r.driverOosRate != null
-    ? `${r.driverOosRate.toFixed(2)}%${r.driverOosRateNat != null ? ` (nat. ${r.driverOosRateNat.toFixed(2)}%)` : ''}`
-    : '—';
-  const vehOos = r.vehicleOosRate != null
-    ? `${r.vehicleOosRate.toFixed(2)}%${r.vehicleOosRateNat != null ? ` (nat. ${r.vehicleOosRateNat.toFixed(2)}%)` : ''}`
-    : '—';
+  const smsInsp = r.sms?.fetched ? r.sms.inspections : null;
+  const drvOos = oosRateLabel(r.driverOosRate, r.driverOosRateNat, r.driverInspections ?? smsInsp?.driverInspections);
+  const vehOos = oosRateLabel(r.vehicleOosRate, r.vehicleOosRateNat, r.vehicleInspections ?? smsInsp?.vehicleInspections);
   return [
     { label: 'Fleet size', value: fleet },
     { label: 'Classification', value: r.operation || '—' },

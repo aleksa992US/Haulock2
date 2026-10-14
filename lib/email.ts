@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import { createHmac } from 'crypto';
+import { carrierAuthorityLabel, recommendationFor, roleNoun, type AuthorityFields } from './recommendation';
 
 let cached: Resend | null = null;
 
@@ -259,7 +260,7 @@ ${button(siteUrl, 'Verify your first broker →')}
   };
 }
 
-export type AlertReport = {
+export type AlertReport = AuthorityFields & {
   name: string;
   mc?: string;
   dot?: string;
@@ -283,21 +284,24 @@ export function highRiskAlertTemplate({ report, siteUrl }: { report: AlertReport
         </tr>
       </table>
     </td></tr>`).join('') : '';
+  // Role-aware: "broker" / "carrier" / "company" from its FMCSA authority.
+  const noun = roleNoun(report);
+  const rec = recommendationFor(report, 'high');
   const body = `
-<div style="display:inline-block;padding:4px 10px;background:rgba(220,38,38,0.1);color:#DC2626;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">High risk · do not book</div>
-${h1(`We flagged a broker ${italicAccent('you just looked up.')}`)}
+<div style="display:inline-block;padding:4px 10px;background:rgba(220,38,38,0.1);color:#DC2626;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">High risk</div>
+${h1(`We flagged a ${noun} ${italicAccent('you just looked up.')}`)}
 <div style="background:rgba(220,38,38,0.05);border:1px solid rgba(220,38,38,0.2);border-radius:12px;padding:20px;margin:0 0 24px 0;">
-  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:6px;">Broker</div>
+  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:6px;">${noun.charAt(0).toUpperCase() + noun.slice(1)}</div>
   <div style="font-size:22px;font-weight:600;color:#0B1E3F;margin-bottom:4px;">${escapeHtml(report.name)}</div>
   <div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);margin-bottom:16px;">${escapeHtml(idLine)}</div>
   <div style="display:inline-block;padding:4px 10px;background:#DC2626;color:#ffffff;border-radius:6px;font-size:12px;font-weight:600;">Risk score ${report.score}/100</div>
 </div>
-${p('Our scan returned the following red flags. We recommend walking away from this load, or requiring full payment upfront with independent identity verification if you must proceed.')}
+${p(`<strong style="color:#0B1E3F;">${escapeHtml(rec.headline)}</strong> ${escapeHtml(rec.detail)}`)}
 ${topFlags.length ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:24px;">${flagsHtml}</table>` : ''}
 ${button(siteUrl, 'Open full report →')}
 ${divider()}
 <div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">
-  <strong style="color:#0B1E3F;">Why we sent this:</strong> you just ran a broker verification on Haulock and the result returned as HIGH RISK. Manage notification preferences in <a href="${siteUrl}" style="color:#0B1E3F;text-decoration:underline;">Settings → Notifications</a>.
+  <strong style="color:#0B1E3F;">Why we sent this:</strong> you just checked this ${noun} on Haulock and the result came back HIGH RISK. Manage notification preferences in <a href="${siteUrl}" style="color:#0B1E3F;text-decoration:underline;">Settings → Notifications</a>.
 </div>`;
   return {
     subject: `HIGH RISK alert: ${report.name}`,
@@ -326,7 +330,7 @@ export function reportShareTemplate({ report, senderName, senderEmail, message, 
   const verdictLabel = report.verdict === 'high' ? 'HIGH RISK' : report.verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   const verdictColor = report.verdict === 'high' ? '#DC2626' : report.verdict === 'medium' ? '#F59E0B' : '#16A34A';
   const verdictBg = report.verdict === 'high' ? 'rgba(220,38,38,0.08)' : report.verdict === 'medium' ? 'rgba(245,158,11,0.10)' : 'rgba(22,163,74,0.10)';
-  const recLine = report.verdict === 'high' ? 'Do not book this load.' : report.verdict === 'medium' ? 'Proceed with caution.' : 'Safe to book.';
+  const recLine = recommendationFor(report, report.verdict).headline;
   const topFlags = (report.flags || []).slice(0, 4);
   const senderLabel = senderName ? `${escapeHtml(senderName)}${senderEmail ? ` (${escapeHtml(senderEmail)})` : ''}` : 'Someone';
 
@@ -360,7 +364,7 @@ ${topFlags.map((f) => `
 </tr>`;
 
   const detailRows = [
-    detailRow('Operating authority', report.authorityStatus || '—'),
+    detailRow('Carrier authority', carrierAuthorityLabel(report)),
     detailRow('Broker authority', report.brokerAuthority || '—'),
     detailRow('Safety rating', report.safetyRating || 'Not rated'),
     detailRow('Insurance on file', report.insuranceSummary || '—'),
@@ -636,17 +640,20 @@ ${sourcesHtml}
   };
 }
 
-// Watchlist update — sent when a broker on the user's watchlist changes
-// (score, verdict, authority, or new flags). Compact and actionable.
+// Watchlist update — sent when a watched company's FMCSA registry record
+// changes: authority (per role), insurance, bond, out-of-service, safety
+// rating, address, phone or name. The daily job re-reads only the FMCSA
+// registry (no web, address or SMS checks), so the email lists exactly
+// which fields changed and never says the overall risk went up or down.
+export type WatchlistFieldChange = {
+  field: string;     // e.g. 'brokerAuthority'
+  label: string;     // e.g. 'Broker authority'
+  from: string;      // display value before ('—' when it wasn't on record)
+  to: string;        // display value now
+  concern: boolean;  // a warning sign: authority lost, coverage dropped, OOS order, rating downgraded, identity details changed
+};
 export type WatchlistChange = {
-  scoreFrom: number;
-  scoreTo: number;
-  verdictFrom: string;
-  verdictTo: string;
-  newFlags: string[];
-  authorityChanged: boolean;
-  authorityFrom: string | null;
-  authorityTo: string | null;
+  changes: WatchlistFieldChange[];
 };
 export function watchlistUpdateTemplate(args: {
   carrier: { name: string; mc?: string | null; dot?: string | null };
@@ -655,39 +662,34 @@ export function watchlistUpdateTemplate(args: {
   siteUrl: string;
 }): { subject: string; html: string } {
   const idLine = [args.carrier.mc && `MC-${args.carrier.mc}`, args.carrier.dot && `DOT-${args.carrier.dot}`].filter(Boolean).join(' · ') || 'No ID';
-  const direction = args.change.scoreTo > args.change.scoreFrom || (args.change.verdictTo === 'high' && args.change.verdictFrom !== 'high') ? 'worse' : 'better';
-  const accent = direction === 'worse' ? '#DC2626' : '#16A34A';
-  const accentBg = direction === 'worse' ? 'rgba(220,38,38,0.08)' : 'rgba(22,163,74,0.10)';
-  const verdictLabel = (v: string) => v === 'high' ? 'HIGH' : v === 'medium' ? 'CAUTION' : v === 'low' ? 'LOW' : (v || '—').toUpperCase();
-  const flagsList = args.change.newFlags.length === 0 ? '' : `
-<div style="margin:0 0 24px 0;">
-  <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:8px;">New flags</div>
-  <ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);">
-    ${args.change.newFlags.slice(0, 5).map((t) => `<li style="margin-bottom:4px;">${escapeHtml(t)}</li>`).join('')}
-  </ul>
-</div>`;
-  const authorityLine = args.change.authorityChanged ? `
-<div style="font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);margin:0 0 12px 0;">
-  <strong style="color:#0B1E3F;">Authority status:</strong> ${escapeHtml(args.change.authorityFrom || '—')} &rarr; <strong style="color:${accent};">${escapeHtml(args.change.authorityTo || '—')}</strong>
-</div>` : '';
+  const changes = args.change.changes;
+  const concerns = changes.filter((c) => c.concern);
+  const badge = concerns.length > 0
+    ? { text: `Watchlist · ${concerns.length} change${concerns.length === 1 ? '' : 's'} to review`, color: '#DC2626', bg: 'rgba(220,38,38,0.08)' }
+    : { text: 'Watchlist · FMCSA record changed', color: '#0B1E3F', bg: 'rgba(11,30,63,0.06)' };
+  const rows = changes.map((c) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);font-size:13px;color:rgba(11,30,63,0.6);vertical-align:top;width:38%;">${escapeHtml(c.label)}</td>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);font-size:14px;line-height:1.5;color:rgba(11,30,63,0.85);">
+        ${escapeHtml(c.from || '—')} &rarr; <strong style="color:${c.concern ? '#DC2626' : '#0B1E3F'};">${escapeHtml(c.to || '—')}</strong>
+      </td>
+    </tr>`).join('');
+  const summary = changes.length === 1
+    ? `${changes[0].label}: ${changes[0].from || '—'} to ${changes[0].to || '—'}.`
+    : `${changes.length} FMCSA fields changed: ${changes.slice(0, 3).map((c) => c.label.toLowerCase()).join(', ')}${changes.length > 3 ? ', and more' : ''}.`;
   const body = `
-<div style="display:inline-block;padding:4px 10px;background:${accentBg};color:${accent};border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">Watchlist · ${direction === 'worse' ? 'risk increased' : 'risk improved'}</div>
-${h1(`Update on ${italicAccent(args.carrier.name)}`)}
-<div style="background:${accentBg};border-radius:12px;padding:20px;margin:0 0 24px 0;">
+<div style="display:inline-block;padding:4px 10px;background:${badge.bg};color:${badge.color};border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">${escapeHtml(badge.text)}</div>
+${h1(`FMCSA record changed for ${italicAccent(escapeHtml(args.carrier.name))}`)}
+<div style="background:#F5F3EE;border-radius:12px;padding:20px;margin:0 0 24px 0;">
   <div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);margin-bottom:8px;">${escapeHtml(idLine)}</div>
-  <div style="font-size:14px;line-height:1.65;color:rgba(11,30,63,0.85);">
-    <strong style="color:#0B1E3F;">Score:</strong> ${args.change.scoreFrom} &rarr; <strong style="color:${accent};">${args.change.scoreTo}</strong>
-    &nbsp;·&nbsp;
-    <strong style="color:#0B1E3F;">Verdict:</strong> ${verdictLabel(args.change.verdictFrom)} &rarr; <strong style="color:${accent};">${verdictLabel(args.change.verdictTo)}</strong>
-  </div>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">${rows}</table>
 </div>
-${authorityLine}
-${flagsList}
+${p('Our daily check compares the FMCSA registry record with the last one we saw. It doesn&rsquo;t re-run the web, address or safety checks, so your saved risk score hasn&rsquo;t been recalculated. Run a new scan for the full picture.')}
 ${button(args.siteUrl + '/watchlist', 'Open watchlist →')}
 <div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Manage which watchlist updates you receive in <a href="${args.siteUrl}/settings" style="color:#0B1E3F;text-decoration:underline;">Settings &rarr; Notifications</a>.</div>`;
   return {
-    subject: `Watchlist update: ${args.carrier.name} ${direction === 'worse' ? 'risk increased' : 'changed'}`,
-    html: baseLayout({ preview: `${args.carrier.name}: score ${args.change.scoreFrom} to ${args.change.scoreTo}.`, body, unsubEmail: args.recipientEmail }),
+    subject: `Watchlist: ${args.carrier.name}: ${changes.length === 1 ? `${changes[0].label.toLowerCase()} changed` : `${changes.length} FMCSA changes`}`,
+    html: baseLayout({ preview: `${args.carrier.name}: ${summary}`, body, unsubEmail: args.recipientEmail }),
   };
 }
 

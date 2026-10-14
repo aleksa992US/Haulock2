@@ -6,25 +6,35 @@
 // fingerprints (phone, address) that link a fresh-looking carrier to a
 // dirty one.
 //
-// Sources we cross-check:
-//   1. FMCSA "Carrier - All With History" Socrata dataset — find any other
-//      carrier with the same phone/address that has an active enforcement
-//      flag (pending revocation, no insurance, no surety bond).
-//   2. Our own `lookups` table — find any carrier we've previously scored
-//      as HIGH-risk that shares a phone/address with the one being checked.
+// Source: the FMCSA "Carrier - All With History" Socrata dataset. We find
+// other FMCSA records with the same phone and keep only those where FMCSA
+// itself shows a problem: authority revocation pending, active authority
+// with no insurance / bond on file (the enforcement-list criteria), or no
+// active authority at all (inactive / revoked).
+//
+// We deliberately do NOT use Haulock's own past verdicts (the `lookups`
+// table). A carrier we once scored HIGH may have been a false positive, and
+// feeding verdicts back in spreads that error to every dispatch service and
+// sister company that shares its phone.
 
 import type { CarrierReport } from './fmcsa';
 
 const SOCRATA_BASE = 'https://data.transportation.gov/resource';
 
+// A phone shared by this many other FMCSA records is almost always a
+// dispatch, factoring or answering service — informational only.
+const SHARED_SERVICE_THRESHOLD = 5;
+
 export type ChameleonLink = {
-  source: 'fmcsa-flag' | 'our-lookup';
+  source: 'fmcsa-flag';
   matchedOn: 'phone' | 'address' | 'phone+address';
   name: string;
   mc?: string;
   dot?: string;
-  reason: string;          // human-readable: what's bad about THIS linked carrier
-  badStatus: boolean;      // true if this linked record is a known-bad signal
+  reason: string;          // human-readable: what FMCSA shows for THIS linked record
+  // true → FMCSA shows a problem with the linked record and the phone isn't
+  // a widely shared service number. false → informational only, not scored.
+  badStatus: boolean;
 };
 
 export async function findChameleonLinks(carrier: CarrierReport): Promise<ChameleonLink[]> {
@@ -36,10 +46,6 @@ export async function findChameleonLinks(carrier: CarrierReport): Promise<Chamel
   const results = await Promise.all([
     queryFmcsaByFingerprint(phone, address, carrier).catch((e) => {
       console.warn('[chameleon] FMCSA query failed:', e?.message);
-      return [] as ChameleonLink[];
-    }),
-    queryOurLookupsByFingerprint(phone, address, carrier).catch((e) => {
-      console.warn('[chameleon] lookups query failed:', e?.message);
       return [] as ChameleonLink[];
     }),
   ]);
@@ -102,33 +108,47 @@ async function queryFmcsaByFingerprint(
     if (!res.ok) return [];
     const rows = (await res.json()) as Array<Record<string, any>>;
 
-    return rows
+    // Other FMCSA records on this phone (the carrier itself excluded).
+    const others = rows.filter((r) => {
+      const linkedDot = stripDigits(r.dot_number);
+      const linkedMc = stripDigits(r.docket_number);
+      if (linkedDot && self.dot && linkedDot === self.dot) return false;
+      if (linkedMc && self.mc && linkedMc === self.mc) return false;
+      return normalizePhone(r.bus_telno) === phone;
+    });
+    // Count distinct records — the dataset can hold several rows per DOT.
+    const distinctOthers = new Set(others.map((r) => stripDigits(r.dot_number) || stripDigits(r.docket_number) || String(r.legal_name || ''))).size;
+    const sharedService = distinctOthers >= SHARED_SERVICE_THRESHOLD;
+
+    return others
       .map((r): ChameleonLink | null => {
         const linkedDot = stripDigits(r.dot_number);
         const linkedMc = stripDigits(r.docket_number);
-        // Skip the carrier itself — we don't flag a carrier for matching itself.
-        if (linkedDot && self.dot && linkedDot === self.dot) return null;
-        if (linkedMc && self.mc && linkedMc === self.mc) return null;
 
         const flags: string[] = [];
-        const isCommonActive = String(r.common_stat || '') === 'A';
-        const isContractActive = String(r.contract_stat || '') === 'A';
-        const isBrokerActive = String(r.broker_stat || '') === 'A';
+        const stats = [r.common_stat, r.contract_stat, r.broker_stat].map((s) => String(s || ''));
+        const isCommonActive = stats[0] === 'A';
+        const isContractActive = stats[1] === 'A';
+        const isBrokerActive = stats[2] === 'A';
         const bipd = parseAmount(r.bipd_file);
         const bond = parseAmount(r.bond_file);
 
+        // Only FMCSA's own facts about the other record count.
         if (String(r.broker_rev_pend || '') === 'Y') flags.push('broker authority revocation pending');
         if (String(r.common_rev_pend || '') === 'Y') flags.push('common authority revocation pending');
         if (String(r.contract_rev_pend || '') === 'Y') flags.push('contract authority revocation pending');
-        if ((isCommonActive || isContractActive) && bipd === 0) flags.push('no liability insurance on file');
-        if (isBrokerActive && bond === 0) flags.push('broker, no surety bond');
-        if (String(r.undeliverable_mail || '') === 'Y') flags.push('FMCSA mail undeliverable');
+        if ((isCommonActive || isContractActive) && bipd === 0) flags.push('active carrier authority with no liability insurance on file');
+        if (isBrokerActive && bond === 0) flags.push('active broker authority with no surety bond on file');
+        // Had authority, none active now: inactive or revoked.
+        if (!isCommonActive && !isContractActive && !isBrokerActive && stats.includes('I')) {
+          flags.push('no active operating authority (inactive or revoked)');
+        }
 
-        // Only surface FMCSA matches that have a real bad signal — there are
-        // legitimate reasons two carriers share a phone (broker + carrier
-        // arms of one company, mail-forwarding services). Without a flag,
-        // it's noise.
+        // A shared phone with a record FMCSA shows nothing wrong with is
+        // normal (broker + carrier arms of one company, dispatch services) —
+        // not surfaced. Undeliverable mail alone is too noisy to count.
         if (flags.length === 0) return null;
+        if (String(r.undeliverable_mail || '') === 'Y') flags.push('FMCSA mail undeliverable');
 
         const matchPhone = phone && normalizePhone(r.bus_telno) === phone;
         const matchAddr = address && normalizeAddress(r.bus_street_po) === address;
@@ -140,70 +160,27 @@ async function queryFmcsaByFingerprint(
         //   - The user gets ZERO actionable signal from "Acme is at the
         //     same address as a flagged carrier" when that address is a
         //     coworking space.
-        // Phone is a much stronger signal — same number across two
-        // FMCSA records is rarely innocent. We require a phone match.
+        // A phone match is stronger, but still only counts together with an
+        // FMCSA problem on the other record, and not for service numbers.
         if (!matchPhone) return null;
 
+        const reason = flags.join(' · ');
         return {
           source: 'fmcsa-flag',
           matchedOn: matchPhone && matchAddr ? 'phone+address' : 'phone',
           name: String(r.legal_name || r.dba_name || 'Unknown carrier').trim(),
           mc: linkedMc,
           dot: linkedDot,
-          reason: flags.join(' · '),
-          badStatus: true,
+          reason: sharedService
+            ? `${reason} · this phone is on ${distinctOthers} other FMCSA records, so it's likely a dispatch or answering service`
+            : reason,
+          badStatus: !sharedService,
         };
       })
       .filter((x): x is ChameleonLink => x != null);
   } finally {
     clearTimeout(timeout);
   }
-}
-
-async function queryOurLookupsByFingerprint(
-  phone: string | undefined,
-  address: string | undefined,
-  self: CarrierReport,
-): Promise<ChameleonLink[]> {
-  const { getServiceSupabase } = await import('./supabase/service');
-  const svc = getServiceSupabase();
-  if (!svc) return [];
-
-  // We only flag links to lookups we've ALREADY scored as HIGH risk.
-  // Otherwise every shared-phone match would noise up the report.
-  const { data } = await svc
-    .from('lookups')
-    .select('mc,dot,name,verdict,data,created_at')
-    .eq('verdict', 'high')
-    .order('created_at', { ascending: false })
-    .limit(500);
-
-  if (!Array.isArray(data)) return [];
-
-  const matches: ChameleonLink[] = [];
-  for (const row of data) {
-    const rowPhone = normalizePhone(row?.data?.phone);
-    const matchPhone = phone && rowPhone && rowPhone === phone;
-    // Phone-only signal — address matches across our lookup history are
-    // too noisy (commercial buildings, mailbox services). See note in
-    // queryFmcsaByFingerprint above.
-    if (!matchPhone) continue;
-    // Skip the carrier itself.
-    if (row.mc && self.mc && row.mc === self.mc) continue;
-    if (row.dot && self.dot && row.dot === self.dot) continue;
-    const matchAddr = false;
-
-    matches.push({
-      source: 'our-lookup',
-      matchedOn: matchPhone && matchAddr ? 'phone+address' : matchPhone ? 'phone' : 'address',
-      name: row.name || row?.data?.name || 'Unknown carrier',
-      mc: row.mc || undefined,
-      dot: row.dot || undefined,
-      reason: 'previously scored HIGH risk by Haulock',
-      badStatus: true,
-    });
-  }
-  return matches;
 }
 
 // ----- normalization -------------------------------------------------------

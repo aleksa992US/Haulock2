@@ -72,6 +72,8 @@ export async function POST(req: Request) {
       insuranceSummary: report.insuranceSummary,
       safetyRating: report.safetyRating,
       authorityStatus: report.authorityStatus,
+      commonAuthority: report.commonAuthority,
+      contractAuthority: report.contractAuthority,
       brokerAuthority: report.brokerAuthority,
     },
     senderName,

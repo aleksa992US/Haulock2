@@ -209,12 +209,16 @@ export async function checkWebReputation(name: string, opts: WebReputationOpts =
       // somewhere in title+snippet. For "Super Ego Logistics" the seed
       // tokens are ['super','ego','logistics'] — an article that says
       // "Super Ego Holding" only matches if all three words appear.
-      // Whole words only — "ego" must not match "diego".
+      // The name must appear as a phrase — its significant words in order,
+      // ignoring punctuation ("Super-Ego Logistics, LLC" matches "super ego
+      // logistics") — in the title or the snippet. Scattered words ("Diego",
+      // "Apollo", "freight" in different places) don't count.
       const blob = `${hit.title} ${hit.snippet}`.toLowerCase();
       const tokens = trimmed[i].matchTokens;
       if (tokens.length === 0) continue;
-      const allTokensMatch = tokens.every((t) => new RegExp(`\\b${escapeRegExp(t.toLowerCase())}\\b`).test(blob));
-      if (!allTokensMatch) continue;
+      const phrase = ` ${tokens.map((t) => t.toLowerCase()).join(' ')} `;
+      const norm = (x: string) => ` ${x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+      if (!norm(hit.title).includes(phrase) && !norm(hit.snippet).includes(phrase)) continue;
       // Registry pages (FMCSA SAFER, NCCDB, etc.) get filtered out before
       // anything else. Every active carrier has a snapshot on these — a
       // hit there means the company exists, not that it has fraud coverage.
@@ -263,10 +267,6 @@ function tokenizeNameForMatch(name: string): string[] {
 }
 
 // ----- internal -----------------------------------------------------------
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 type RawBraveHit = { title: string; url: string; domain: string; snippet: string };
 

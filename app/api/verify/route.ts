@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, NotFoundByNameError } from '@/lib/fmcsa';
+import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, NotFoundByNameError, AmbiguousNameError } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { monthStart } from '@/lib/plans';
@@ -7,7 +7,7 @@ import { checkAddress } from '@/lib/places';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { findCarrierWebsite, nameMatchesDomain } from '@/lib/website-finder';
+import { findCarrierWebsite, assessWebsiteOwnership } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
 import { checkUserRateLimit } from '@/lib/rate-limit';
@@ -39,6 +39,13 @@ export async function GET(req: Request) {
     );
   }
   const parsed = resolved.query;
+  // Set when the user searched a name and then picked this MC/DOT from the
+  // `ambiguous_name` candidate list: the name they originally typed.
+  const searchedName = parsed.kind !== 'name' ? (searchParams.get('searched') ?? '').trim().slice(0, 120) : '';
+  const matchedBy: 'mc' | 'dot' | 'name-choice' | undefined = parsed.kind === 'name'
+    ? undefined // set by lookupCarrier on a strong single match
+    : searchedName ? 'name-choice' : parsed.kind;
+  const searchedFor = searchedName || q.trim();
 
   const supabase = getServerSupabase();
   let user: any = null;
@@ -51,13 +58,17 @@ export async function GET(req: Request) {
   // unless it predates the current response schema. Older rows lack the
   // `sources` summary, parallel enrichment fields, and the multi-source
   // scan strip — bypass them so the user gets a fresh full scan.
-  if (!force && supabase && user && parsed.kind !== 'name') {
+  // Skipped when a sender email is given (the saved row never ran the
+  // lookalike check for it) and for rows older than 7 days (FMCSA data,
+  // insurance and web results move — an old result shouldn't pass as today's).
+  if (!force && !queriedEmail.trim() && supabase && user && parsed.kind !== 'name') {
     const col = parsed.kind === 'mc' ? 'mc' : 'dot';
     const { data: cached } = await supabase
       .from('lookups')
       .select('*')
       .eq('user_id', user.id)
       .eq(col, parsed.value)
+      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(1);
     if (cached && cached[0]) {
@@ -79,14 +90,25 @@ export async function GET(req: Request) {
       // requires 2+ citations AND 2+ sources for company-shaped aliases
       // before contributing to the risk score. V11: linked entities only
       // from trusted-source hits (no directory listings), and no hazmat
-      // percentile read from FMCSA's intervention-threshold label.
-      const SCHEMA_VERSION = 11;
+      // percentile read from FMCSA's intervention-threshold label. V12:
+      // reports record their data source/date (dataSource, dataAsOf) and how
+      // the company was found (matchedBy, searchedFor); snapshot backfill no
+      // longer fills 24-month crash/inspection fields; web reputation only
+      // scores pages that mention fraud; websites must be confirmed as the
+      // company's; chameleon links use FMCSA facts only.
+      const SCHEMA_VERSION = 12;
       const hasMatchingSchemaVersion = row.schemaVersion === SCHEMA_VERSION;
-      const isCurrentSchema = hasSources && hasChameleonCheck && hasWebReputation && hasLinkedEntities && hasFmcsaArchive && hasFmcsaSms && hasMatchingSchemaVersion;
-      console.log('[verify] user-cache hit', { q, hasSources, hasChameleonCheck, hasWebReputation, hasLinkedEntities, hasFmcsaArchive, hasFmcsaSms, hasMatchingSchemaVersion, savedAt: cached[0].created_at });
+      // A report built from fallback data (FMCSA didn't answer) is never
+      // replayed: the next search should try the live service again.
+      const isLiveData = row.dataSource == null || row.dataSource === 'fmcsa-live';
+      const isCurrentSchema = hasSources && hasChameleonCheck && hasWebReputation && hasLinkedEntities && hasFmcsaArchive && hasFmcsaSms && hasMatchingSchemaVersion && isLiveData;
+      console.log('[verify] user-cache hit', { q, hasSources, hasChameleonCheck, hasWebReputation, hasLinkedEntities, hasFmcsaArchive, hasFmcsaSms, hasMatchingSchemaVersion, isLiveData, savedAt: cached[0].created_at });
       if (isCurrentSchema) {
         return NextResponse.json({
           ...row,
+          // How it was found this time, not when the row was saved.
+          matchedBy,
+          searchedFor,
           cached: true,
           cachedAt: cached[0].created_at,
         });
@@ -154,6 +176,24 @@ export async function GET(req: Request) {
     });
   } catch (err: any) {
     console.error('[verify] FMCSA lookup FAILED', err?.message);
+    // The name matches several companies, or none closely enough to accept
+    // without asking. Same 409 shape as `ambiguous_number`: each candidate's
+    // `query` (MC-… / DOT-…) picks it. Clients re-run with that query plus
+    // `searched=<name>` so the report records the name the user picked from.
+    if (err instanceof AmbiguousNameError || err?.code === 'ambiguous_name') {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: 'ambiguous_name',
+          searched: err.searched ?? q,
+          candidates: err.candidates ?? [],
+          total: err.total ?? err.candidates?.length ?? 0,
+          exactMatchFound: err.exactMatchFound ?? true,
+          needsConfirmation: Boolean(err.needsConfirmation),
+        },
+        { status: 409 },
+      );
+    }
     // "Name not found anywhere" is a 404, not a 503. The user typed a name
     // that no public source registers — they need different guidance than
     // "try again in a minute".
@@ -194,6 +234,21 @@ export async function GET(req: Request) {
     );
   }
 
+  // How the company was found, for the report's "You searched … → matched …"
+  // line. Name searches arrive with matchedBy='name' from lookupCarrier,
+  // which only returns a company for a single strong name match.
+  if (matchedBy) carrier.matchedBy = matchedBy;
+  if (!carrier.searchedFor) carrier.searchedFor = searchedFor;
+  // Web reputation also searches the typed name, but only when the user
+  // picked this company for that name or it matched the name strongly, and
+  // only when it differs from the registered names already searched.
+  const typedName = carrier.searchedFor || '';
+  const reputationAliases = (carrier.matchedBy === 'name' || carrier.matchedBy === 'name-choice')
+    && typedName
+    && ![carrier.name, carrier.dba].some((n) => (n || '').trim().toLowerCase() === typedName.toLowerCase())
+    ? [typedName]
+    : [];
+
   // Run all enrichment sources in parallel — address verification (Google
   // Places), web presence, and chameleon-carrier link detection don't
   // depend on each other, so we don't pay the latency multiple times.
@@ -219,7 +274,7 @@ export async function GET(req: Request) {
         : Promise.resolve(null),
     ),
     timed('web',
-      findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address }).catch((e) => {
+      findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address, phone: carrier.phone }).catch((e) => {
         console.error('[verify] website find FAILED', e?.message);
         return null;
       }),
@@ -405,14 +460,28 @@ export async function GET(req: Request) {
       // we just inserted will have them empty even though earlier ones had
       // valid values. The merge preserves "stickiness" so the carrier's
       // last known phone keeps showing on the report.
-      const { findCarrierFieldsFromSnapshots } = await import('@/lib/carrier-snapshots');
-      const sd: any = (await findCarrierFieldsFromSnapshots({ dot: carrier.dot, mc: carrier.mc }, 10)) || {};
-      if (carrier.powerUnits == null && sd.powerUnits != null) carrier.powerUnits = sd.powerUnits;
-      if (carrier.drivers == null && sd.drivers != null) carrier.drivers = sd.drivers;
-      if (!carrier.operation && sd.operation) carrier.operation = sd.operation;
-      if (carrier.crashTotal == null && sd.crashTotal != null) carrier.crashTotal = sd.crashTotal;
-      if (carrier.fatalCrash == null && sd.fatalCrash != null) carrier.fatalCrash = sd.fatalCrash;
-      if (!carrier.phone && sd.phone) carrier.phone = sd.phone;
+      //
+      // Never for 24-month-window fields (crashes, OOS rates, inspections):
+      // an old snapshot's count can cover a different 24 months. Those come
+      // from the SMS backfill below, which is current. Fleet size only from
+      // a snapshot under 90 days old. Every backfilled field is recorded in
+      // `carrier.backfilled` so the report can say it's from an earlier record.
+      const { findCarrierFieldsWithDates } = await import('@/lib/carrier-snapshots');
+      const sd = await findCarrierFieldsWithDates({ dot: carrier.dot, mc: carrier.mc }, 10);
+      const recentCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+      const backfilled: { field: string; asOf: string }[] = [...(carrier.backfilled || [])];
+      const fill = (field: 'powerUnits' | 'drivers' | 'operation' | 'phone', recentOnly: boolean) => {
+        const hit = sd[field];
+        if (!hit || (carrier as any)[field] != null && (carrier as any)[field] !== '') return;
+        if (recentOnly && hit.capturedAt < recentCutoff) return;
+        (carrier as any)[field] = hit.value;
+        backfilled.push({ field, asOf: hit.capturedAt });
+      };
+      fill('powerUnits', true);
+      fill('drivers', true);
+      fill('operation', false);
+      fill('phone', false);
+      if (backfilled.length) carrier.backfilled = backfilled;
     } catch (err) {
       console.warn('[verify] snapshot backfill failed:', err instanceof Error ? err.message : err);
     }
@@ -570,12 +639,24 @@ export async function GET(req: Request) {
 
   if (addressResult && addressResult.configured) carrier.addressCheck = addressResult;
 
+  // A found website is only treated as the company's when there's real
+  // evidence: the domain or listing name matches the company AND the site's
+  // Google listing is at the FMCSA address or has the FMCSA phone. FMCSA
+  // itself lists no websites. Re-assessed here (not just in the finder)
+  // because the phone may have been backfilled from snapshots above.
+  let siteConfirmed = false;
   if (webResult && webResult.configured) {
+    const ownership = webResult.found && webResult.domain
+      ? assessWebsiteOwnership(webResult, { name: carrier.name, address: carrier.address, phone: carrier.phone })
+      : undefined;
+    siteConfirmed = ownership?.verified === true;
     let domainAgeDays: number | null | undefined;
     let hasMx: boolean | undefined;
     let hasSpf: boolean | undefined;
     let socials: { platform: string; url: string }[] | undefined;
-    if (webResult.found && webResult.domain) {
+    // Domain age, email setup and social links describe the site's owner —
+    // only meaningful once we know the site is theirs.
+    if (siteConfirmed && webResult.domain) {
       const [dc, sc] = await Promise.all([
         checkDomain(webResult.domain).catch(() => null),
         webResult.url ? findSocialLinks(webResult.url).catch(() => []) : Promise.resolve([]),
@@ -588,33 +669,47 @@ export async function GET(req: Request) {
       }
       if (sc && sc.length) socials = sc;
     }
-    carrier.webPresence = {
+    // Built as a variable so the ownership fields (not yet on the shared
+    // CarrierReport type) pass through.
+    const webPresence = {
       configured: true,
       found: webResult.found,
       domain: webResult.domain,
       url: webResult.url,
       title: webResult.title,
       snippet: webResult.snippet,
-      nameMatch: webResult.found && webResult.domain ? nameMatchesDomain(carrier.name, webResult.domain) : undefined,
+      nameMatch: ownership ? ownership.nameMatch : undefined,
+      verified: ownership ? ownership.verified : undefined,
+      verifiedBy: ownership ? ownership.verifiedBy : undefined,
+      addressMatch: ownership ? ownership.addressMatch : undefined,
+      phoneMatch: ownership ? ownership.phoneMatch : undefined,
+      source: webResult.source,
       domainAgeDays,
       hasMx,
       hasSpf,
       socials,
       error: webResult.error,
     };
+    carrier.webPresence = webPresence;
   }
 
   // Lookalike-domain detection — only meaningful when we have BOTH a sender
-  // domain (from `?email=…`) AND the carrier's real FMCSA-listed website.
-  // The sender claiming to be this carrier should resolve to the same
-  // domain; near-matches (typosquats, homographs, TLD swaps) are the exact
-  // pattern used in carrier-impersonation / spoofed-rate-con fraud.
+  // domain (from `?email=…`) AND a website we confirmed belongs to this
+  // company (see above). Comparing against an unconfirmed site could call
+  // the real company's email a lookalike of an impersonator's site, so an
+  // unconfirmed site is never used here.
   const senderDomain = normalizeDomain(queriedEmail);
-  const carrierDomain = normalizeDomain(carrier.webPresence?.domain);
+  const carrierDomain = siteConfirmed ? normalizeDomain(carrier.webPresence?.domain) : undefined;
   if (senderDomain && carrierDomain) {
     const lookalike = detectLookalike(senderDomain, carrierDomain);
     if (lookalike) {
-      const desc = describeLookalike(lookalike);
+      const rawDesc = describeLookalike(lookalike);
+      // lib/lookalike-detection's wording says "FMCSA-listed website"; FMCSA
+      // lists no websites. Say what we actually know.
+      const desc = {
+        title: rawDesc.title.replace(/the carrier's real website/g, 'the website we confirmed for this company'),
+        desc: rawDesc.desc.replace(/the FMCSA-listed website/g, 'the website we confirmed for this company'),
+      };
       const pts =
         lookalike.kind === 'tld_swap' ? 35 :
         lookalike.kind === 'homograph' ? 35 :
@@ -629,7 +724,7 @@ export async function GET(req: Request) {
           pts,
           metrics: [
             { label: 'Sender domain', value: lookalike.suspect },
-            { label: 'Real website', value: lookalike.legit },
+            { label: 'Confirmed website', value: lookalike.legit },
             { label: 'Match type', value: lookalike.kind.replace('_', ' ') },
           ],
           recommendation: 'Do NOT reply to this email. Phone the carrier on a number from the FMCSA registry — not from the rate con — to verify the load.',
@@ -640,25 +735,30 @@ export async function GET(req: Request) {
     }
   }
 
-  // Chameleon-carrier flag — convert each linked carrier into a RiskFlag so
-  // it counts toward the score AND shows in the "Red flags detected" panel.
-  for (const link of chameleonLinks) {
-    if (!link.badStatus) continue;
-    const idLine = [link.mc && `MC-${link.mc}`, link.dot && `DOT-${link.dot}`].filter(Boolean).join(' · ');
+  // Chameleon-carrier flag. Links come only from FMCSA's own data about the
+  // other record (revocation pending, no insurance/bond, no active
+  // authority) — never from Haulock's past verdicts. One flag for all of
+  // them (15 pts, +5 per extra record, max 25) so sister companies don't
+  // stack up. Phones shared by many records (dispatch / answering services)
+  // arrive with badStatus=false and are listed in the report, not scored.
+  const badLinks = chameleonLinks.filter((l) => l.badStatus);
+  if (badLinks.length > 0) {
+    const idOf = (l: typeof badLinks[number]) => [l.mc && `MC-${l.mc}`, l.dot && `DOT-${l.dot}`].filter(Boolean).join(' · ');
+    const top = badLinks.slice(0, 3);
+    const noun = badLinks.length === 1 ? 'another FMCSA record' : `${badLinks.length} other FMCSA records`;
+    const sharesAddress = badLinks.some((l) => l.matchedOn === 'phone+address');
     carrier.flags = [
       ...(carrier.flags || []),
       {
         sev: 'warning',
-        title: `Shared ${link.matchedOn} with another flagged FMCSA record`,
-        desc: `In FMCSA records, this carrier shares a ${link.matchedOn} with ${link.name}${idLine ? ` (${idLine})` : ''}, which is currently ${link.reason}. Sharing identifiers can be legitimate — multi-MC operators, shared dispatch services, or shared office addresses — so this is a yellow flag, not a verdict.`,
-        pts: 15,
-        metrics: [
-          { label: 'Other FMCSA record', value: link.name },
-          { label: 'Matched on', value: link.matchedOn },
-          { label: 'Status of the other record', value: link.reason },
-          { label: 'Source', value: link.source === 'fmcsa-flag' ? 'FMCSA enforcement registry' : 'Prior Haulock high-risk scan' },
-        ],
-        recommendation: 'Investigate before booking — call the carrier on a number from a different source, ask for a current insurance certificate, and check whether the linked entity is actively used.',
+        title: `Shares a phone number with ${noun} with problems on file`,
+        desc: `In FMCSA records, this company's phone number${sharesAddress ? ' (and street address)' : ''} also appears on ${top.map((l) => `${l.name}${idOf(l) ? ` (${idOf(l)})` : ''} — ${l.reason}`).join('; ')}${badLinks.length > 3 ? `; +${badLinks.length - 3} more` : ''}. Sharing a phone can be legitimate (sister companies, an old authority the owner replaced), so this is a yellow flag, not a verdict.`,
+        pts: Math.min(25, 15 + 5 * (badLinks.length - 1)),
+        metrics: top.flatMap((l) => [
+          { label: 'Other FMCSA record', value: `${l.name}${idOf(l) ? ` · ${idOf(l)}` : ''}` },
+          { label: 'What FMCSA shows for it', value: l.reason },
+        ]).concat([{ label: 'Source', value: 'FMCSA carrier registry' }]),
+        recommendation: 'Before booking, call the company on a number you look up yourself, ask for a current insurance certificate, and ask how they are connected to the other record.',
       },
     ];
   }
@@ -673,31 +773,47 @@ export async function GET(req: Request) {
     },
     {
       name: 'Google Places',
-      ok: Boolean(carrier.addressCheck?.configured && carrier.addressCheck.found),
-      note: carrier.addressCheck?.configured
-        ? (carrier.addressCheck.found ? (carrier.addressCheck.isMailbox ? 'Mailbox service' : 'Verified business') : 'Not found in Places')
-        : 'Not configured',
+      ok: Boolean(carrier.addressCheck?.configured && carrier.addressCheck.found && !carrier.addressCheck.error),
+      note: !carrier.addressCheck?.configured
+        ? 'Not configured'
+        : carrier.addressCheck.error
+          ? 'Couldn’t check — Places didn’t respond'
+          : !carrier.addressCheck.found
+            ? 'No listing at this exact address'
+            : carrier.addressCheck.isMailbox
+              ? 'Mailbox service'
+              : carrier.addressCheck.isResidence
+                ? 'Likely residential address'
+                : (carrier.addressCheck as { nameMatches?: boolean }).nameMatches
+                  ? 'Business listed under their name'
+                  : 'A different business is listed there',
     },
     {
       name: 'Web presence',
-      ok: Boolean(carrier.webPresence?.configured && carrier.webPresence.found),
+      ok: Boolean(carrier.webPresence?.configured && carrier.webPresence.found && siteConfirmed),
       note: carrier.webPresence?.configured
-        ? (carrier.webPresence.found ? `Website ${carrier.webPresence.nameMatch ? 'matches' : 'mismatch'}` : 'No website found')
+        ? (carrier.webPresence.found
+            ? (siteConfirmed ? 'Website confirmed via Google listing' : 'Possible website — not confirmed as theirs')
+            : 'No website found')
         : 'Not configured',
     },
     {
       name: 'Domain & email',
-      ok: Boolean(carrier.webPresence?.found && (carrier.webPresence.hasMx || carrier.webPresence.domainAgeDays != null)),
-      note: carrier.webPresence?.found
-        ? `${carrier.webPresence.domainAgeDays != null ? `${carrier.webPresence.domainAgeDays}d old` : 'no WHOIS'}${carrier.webPresence.hasMx ? ' · MX' : ''}${carrier.webPresence.hasSpf ? ' · SPF' : ''}`
-        : 'No domain to check',
+      ok: Boolean(siteConfirmed && (carrier.webPresence?.hasMx || carrier.webPresence?.domainAgeDays != null)),
+      note: !carrier.webPresence?.found
+        ? 'No domain to check'
+        : !siteConfirmed
+          ? 'Not checked — website not confirmed'
+          : `${carrier.webPresence.domainAgeDays != null ? `${carrier.webPresence.domainAgeDays}d old` : 'no WHOIS'}${carrier.webPresence.hasMx ? ' · MX' : ''}${carrier.webPresence.hasSpf ? ' · SPF' : ''}`,
     },
     {
       name: 'Social media',
       ok: Boolean(carrier.webPresence?.socials && carrier.webPresence.socials.length > 0),
       note: carrier.webPresence?.socials?.length
         ? `${carrier.webPresence.socials.length} profile${carrier.webPresence.socials.length === 1 ? '' : 's'} found`
-        : 'None found',
+        : carrier.webPresence?.found && !siteConfirmed
+          ? 'Not checked — website not confirmed'
+          : 'None found',
     },
     {
       name: 'Lookalike domain',
@@ -709,14 +825,16 @@ export async function GET(req: Request) {
         ? `Match: ${carrier.lookalikeMatch.kind.replace('_', ' ')} of ${carrier.lookalikeMatch.legit}`
         : senderDomain && carrierDomain
           ? 'No impersonation detected'
-          : senderDomain ? 'No carrier website to compare' : 'No sender email supplied',
+          : senderDomain ? 'No confirmed company website to compare' : 'No sender email supplied',
     },
     {
       name: 'Chameleon check',
-      ok: !carrier.chameleonLinks || carrier.chameleonLinks.length === 0,
-      note: carrier.chameleonLinks && carrier.chameleonLinks.length > 0
-        ? `${carrier.chameleonLinks.length} linked flagged carrier${carrier.chameleonLinks.length === 1 ? '' : 's'}`
-        : 'No phone/address links to flagged carriers',
+      ok: badLinks.length === 0,
+      note: badLinks.length > 0
+        ? `Phone shared with ${badLinks.length} FMCSA record${badLinks.length === 1 ? '' : 's'} with problems`
+        : chameleonLinks.length > 0
+          ? 'Phone shared with many records (likely a service) — not scored'
+          : 'No shared phone with problem FMCSA records',
     },
     {
       name: 'Web reputation',
@@ -778,7 +896,8 @@ export async function GET(req: Request) {
   // Stamp the schema version so the user-cache check can identify rows
   // generated by this version of the verify route. Bump whenever the
   // payload shape changes meaningfully.
-  scored.schemaVersion = 11;
+  // Must equal SCHEMA_VERSION in the user-cache check above.
+  scored.schemaVersion = 12;
   const verdictLabel = scored.verdict === 'high' ? 'HIGH RISK' : scored.verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   console.log(`[verify] ─── RESULT · score ${scored.score}/100 · ${verdictLabel} · ${scored.flags?.length ?? 0} red flag${(scored.flags?.length ?? 0) === 1 ? '' : 's'} ───`);
   if (scored.flags && scored.flags.length > 0) {

@@ -6,7 +6,8 @@
 //
 // Used by the verify and rate-con-scan flows to flag a sender domain when
 // it's suspiciously close to — but not identical to — a known legitimate
-// domain (typically the carrier's actual FMCSA-listed website).
+// domain (the company's website, once we've confirmed it's theirs —
+// FMCSA doesn't list websites).
 
 export type LookalikeKind = 'levenshtein' | 'homograph' | 'tld_swap' | 'subdomain_swap';
 
@@ -141,16 +142,16 @@ function levenshtein(a: string, b: string): number {
 
 export function describeLookalike(m: LookalikeMatch): { title: string; desc: string } {
   const titles: Record<LookalikeKind, string> = {
-    tld_swap: 'Sender domain is a TLD swap of the carrier\'s real website',
-    homograph: 'Sender domain uses look-alike characters to impersonate the carrier',
-    subdomain_swap: 'Carrier\'s real domain appears as a subdomain (impersonation pattern)',
-    levenshtein: 'Sender domain is suspiciously close to the carrier\'s real website',
+    tld_swap: 'Sender domain is a TLD swap of the company\'s confirmed website',
+    homograph: 'Sender domain uses look-alike characters to impersonate the company',
+    subdomain_swap: 'The company\'s domain appears as a subdomain (impersonation pattern)',
+    levenshtein: 'Sender domain is suspiciously close to the company\'s confirmed website',
   };
   const descs: Record<LookalikeKind, string> = {
-    tld_swap: `The rate-con sender uses ${m.suspect} but the FMCSA-listed website is ${m.legit}. Same name, different TLD — classic typosquat.`,
+    tld_swap: `The rate-con sender uses ${m.suspect} but the website we confirmed for this company is ${m.legit}. Same name, different TLD — classic typosquat.`,
     homograph: `${m.suspect} uses character substitutions (e.g., 0/o, 1/l, rn/m) to look like the legitimate ${m.legit}. Always re-type the domain to verify.`,
     subdomain_swap: `${m.suspect} contains ${m.legit} as a subdomain. The actual registered domain is different — payment redirected here goes to the impersonator.`,
-    levenshtein: `${m.suspect} is ${m.distance} character${m.distance === 1 ? '' : 's'} off from ${m.legit}. Likely typosquat — verify by phoning the carrier on a known-good number.`,
+    levenshtein: `${m.suspect} is ${m.distance} character${m.distance === 1 ? '' : 's'} off from ${m.legit}. Likely typosquat — verify by phoning the company on a number you look up yourself.`,
   };
   return { title: titles[m.kind], desc: descs[m.kind] };
 }

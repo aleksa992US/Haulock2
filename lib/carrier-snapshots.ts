@@ -228,6 +228,36 @@ export async function findCarrierFieldsFromSnapshots(
   return merged as Partial<CarrierFingerprint>;
 }
 
+// Same walk, but keeps WHEN each value was captured, so callers can refuse
+// stale values for time-windowed fields and label what they backfill.
+export async function findCarrierFieldsWithDates(
+  args: { dot?: string; mc?: string },
+  depth: number = 10,
+): Promise<Record<string, { value: any; capturedAt: string }>> {
+  const { dot, mc } = args;
+  if (!dot && !mc) return {};
+  const { getServiceSupabase } = await import('./supabase/service');
+  const svc = getServiceSupabase();
+  if (!svc) return {};
+  let query = svc
+    .from('carrier_snapshots')
+    .select('data,captured_at')
+    .order('captured_at', { ascending: false })
+    .limit(Math.max(1, Math.min(50, depth)));
+  if (dot) query = query.eq('dot', dot);
+  else if (mc) query = query.eq('mc', mc);
+  const { data, error } = await query;
+  if (error || !data) return {};
+  const merged: Record<string, { value: any; capturedAt: string }> = {};
+  for (const row of data as any[]) {
+    for (const [k, v] of Object.entries((row.data || {}) as Record<string, any>)) {
+      if (v == null || v === '' || k in merged) continue;
+      merged[k] = { value: v, capturedAt: row.captured_at };
+    }
+  }
+  return merged;
+}
+
 // Read the timeline for one carrier, newest first.
 export async function getCarrierHistory(args: { dot?: string; mc?: string; limit?: number }): Promise<CarrierSnapshotRow[]> {
   const { dot, mc } = args;

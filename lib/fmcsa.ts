@@ -1,3 +1,12 @@
+import {
+  selectNameMatch,
+  scoreCompany,
+  isStrongMatch,
+  MAX_CANDIDATES,
+  type NameCandidateInput,
+  type MatchStrength,
+} from './name-match';
+
 export type RiskFlag = {
   sev: 'critical' | 'warning' | 'info';
   title: string;
@@ -24,9 +33,28 @@ export type CarrierReport = {
   contractAuthority?: string;
   authorityAge?: string;
   authorityGrantDate?: string;
+  // Operating-authority history from FMCSA's public AuthHist datasets on
+  // data.transportation.gov (QCMobile itself has no grant date). Filled by
+  // lib/fmcsa-authority-history after the registry lookup. `checked` false
+  // means the history couldn't be fetched, so age is unknown, not "new".
+  authorityHistory?: {
+    checked: boolean;
+    firstGrantDate?: string;     // YYYY-MM-DD, earliest GRANTED action
+    ageMonths?: number;          // months since firstGrantDate
+    activeSince?: string;        // start of the current unbroken authority period
+    reactivatedDate?: string;    // set when that period began after a long gap
+    dormantMonths?: number;      // length of the gap before reactivatedDate
+    error?: string;
+  };
   safetyRating?: string;
   safetyRatingDate?: string;
+  // True only when FMCSA lists an out-of-service order AND does not allow
+  // the carrier to operate. QCMobile keeps `oosDate` after an order is
+  // lifted, so the date alone isn't enough. Undefined = the source didn't say.
   outOfService?: boolean;
+  oosDate?: string;
+  allowedToOperate?: boolean;
+  usdotStatusCode?: string;      // QCMobile `statusCode`, raw
   insuranceSummary?: string;
   bipdOnFile?: number;
   bipdRequired?: number;
@@ -44,6 +72,12 @@ export type CarrierReport = {
   driverOosRateNat?: number;
   vehicleOosRate?: number;
   vehicleOosRateNat?: number;
+  // 24-month roadside inspection counts behind the OOS rates (QCMobile
+  // driverInsp / driverOosInsp / vehicleInsp / vehicleOosInsp).
+  driverInspections?: number;
+  driverOosInspections?: number;
+  vehicleInspections?: number;
+  vehicleOosInspections?: number;
   operation?: string;
   addressCheck?: {
     configured: boolean;
@@ -175,7 +209,25 @@ export type CarrierReport = {
     error?: string;
   };
   source: 'fmcsa' | 'mock';
+  // When this record was pulled from its source. For a cached or archived
+  // copy that is the original pull, not the time of this scan.
   fetchedAt: string;
+  // Where the FMCSA fields came from. 'fmcsa-live' = FMCSA's QCMobile API
+  // answered this scan. Anything else means it didn't and the report uses an
+  // older copy: 'socrata' = FMCSA's daily public data file, 'cache' = our
+  // last saved FMCSA response, 'archive' = an earlier carrier_snapshots
+  // record. Unset on mock/demo data.
+  dataSource?: DataSource;
+  // Date the FMCSA data is from (ISO). Same as fetchedAt for live data.
+  dataAsOf?: string;
+  // Fields this fetch lacked that were filled from an earlier saved record,
+  // with that record's date. The report marks them as such.
+  backfilled?: { field: string; asOf: string }[];
+  // How the company was found: by MC or DOT number, by the single strong
+  // match for a typed name, or picked by the user from a list of name matches.
+  matchedBy?: 'mc' | 'dot' | 'name' | 'name-choice';
+  // What the user typed. For 'name-choice', the name searched before picking.
+  searchedFor?: string;
   score: number;
   verdict: 'low' | 'medium' | 'high';
   flags: RiskFlag[];
@@ -394,11 +446,30 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
   const broker = authorityLabel(c.brokerAuthorityStatus);
   const contract = authorityLabel(c.contractAuthorityStatus);
 
-  const allowedY = String(c.allowedToOperate ?? '').toUpperCase() === 'Y';
-  const oos = Boolean(c.oosDate);
+  // Out-of-service. QCMobile returns `allowedToOperate` (Y/N) and `oosDate`;
+  // FMCSA's element docs say oosDate is empty when allowedToOperate = Y, but
+  // in practice the date can stay on the record after an order is lifted.
+  // So: allowed to operate → not OOS, whatever the date says. Not allowed +
+  // an OOS date (or the documented `outOfService` = Y) → OOS. Not allowed
+  // with no OOS date usually means an inactive USDOT number, not an OOS
+  // order. Neither field present (fallback sources) → unknown.
+  const allowedRaw = String(c.allowedToOperate ?? c.allowToOperate ?? '').toUpperCase();
+  const allowedY = allowedRaw === 'Y';
+  const oosDate: string | undefined = c.oosDate || c.outOfServiceDate || undefined;
+  const oosFlagRaw = String(c.outOfService ?? '').toUpperCase();
+  const oos: boolean | undefined = allowedY
+    ? false
+    : oosFlagRaw === 'Y' || (allowedRaw === 'N' && Boolean(oosDate))
+      ? true
+      : allowedRaw === 'N' || oosFlagRaw === 'N'
+        ? false
+        : undefined;
 
+  // QCMobile has no authority grant date; lib/fmcsa-authority-history fills
+  // it in after the lookup. These keys only exist on reshaped fallback rows.
   const granted = c.authorityGrantedDate ?? c.firstAuthorityDate ?? c.originalAuthorityDate ?? null;
   const months = monthsBetween(granted);
+  const mcs150Raw = String(c.mcs150Outdated ?? '').toUpperCase();
 
   return {
     name: c.legalName || c.dbaName || 'Unknown carrier',
@@ -420,14 +491,19 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
     safetyRating: c.safetyRating || 'Not rated',
     safetyRatingDate: c.safetyRatingDate || undefined,
     outOfService: oos,
+    oosDate: oosDate ? String(oosDate) : undefined,
+    allowedToOperate: allowedRaw === 'Y' ? true : allowedRaw === 'N' ? false : undefined,
+    usdotStatusCode: c.statusCode ? String(c.statusCode) : undefined,
     bipdOnFile: bipd,
     bipdRequired: toNum(c.bipdRequiredAmount),
     cargoOnFile: cargo,
     cargoRequired: cargoReq || undefined,
     bondOnFile: bond,
     insuranceSummary: buildInsuranceSummary(bipd, cargo, cargoReq),
+    // QCMobile only has the Y/N `mcs150Outdated`; no filing date. Missing
+    // field → undefined (unknown), not "up to date".
     mcs150Date: c.mcs150Date || undefined,
-    mcs150Outdated: String(c.mcs150Outdated ?? '').toUpperCase() === 'Y',
+    mcs150Outdated: mcs150Raw === 'Y' ? true : mcs150Raw === 'N' ? false : undefined,
     drivers: toNum(c.totalDrivers),
     powerUnits: toNum(c.totalPowerUnits),
     crashTotal: toNum(c.crashTotal),
@@ -437,6 +513,10 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
     driverOosRateNat: toNum(c.driverOosRateNationalAverage),
     vehicleOosRate: toNum(c.vehicleOosRate),
     vehicleOosRateNat: toNum(c.vehicleOosRateNationalAverage),
+    driverInspections: toNum(c.driverInsp),
+    driverOosInspections: toNum(c.driverOosInsp),
+    vehicleInspections: toNum(c.vehicleInsp),
+    vehicleOosInspections: toNum(c.vehicleOosInsp),
     operation: c.carrierOperation?.carrierOperationDesc || undefined,
     source: 'fmcsa',
     fetchedAt: new Date().toISOString(),
@@ -492,7 +572,19 @@ function isFullFmcsaResponse(raw: any): boolean {
   );
 }
 
-async function readCachedFmcsa(key: string): Promise<{ response: any; ageMs: number } | null> {
+export type DataSource = 'fmcsa-live' | 'socrata' | 'cache' | 'archive';
+
+// Records where a report's FMCSA fields came from and the date they're from.
+function withSource(report: CarrierReport, dataSource: DataSource, asOf?: string | null): CarrierReport {
+  report.dataSource = dataSource;
+  if (asOf) report.dataAsOf = asOf;
+  // normalize() stamps fetchedAt = now. A cached or archived copy was
+  // fetched when it was saved.
+  if (asOf && (dataSource === 'cache' || dataSource === 'archive')) report.fetchedAt = asOf;
+  return report;
+}
+
+async function readCachedFmcsa(key: string): Promise<{ response: any; ageMs: number; cachedAt: string } | null> {
   try {
     // Dynamic import to keep the Edge-free boundary sane.
     const { getServiceSupabase } = await import('./supabase/service');
@@ -505,7 +597,7 @@ async function readCachedFmcsa(key: string): Promise<{ response: any; ageMs: num
       .limit(1)
       .maybeSingle();
     if (!data) return null;
-    return { response: data.response, ageMs: Date.now() - new Date(data.cached_at).getTime() };
+    return { response: data.response, ageMs: Date.now() - new Date(data.cached_at).getTime(), cachedAt: String(data.cached_at) };
   } catch {
     return null;
   }
@@ -539,7 +631,11 @@ async function snapshotFallback(query: ParsedQuery): Promise<CarrierReport | nul
     const snap = await findCarrierFromSnapshot(args);
     if (!snap) return null;
     const d: any = snap.data || {};
+    // dataSource/dataAsOf/fetchedAt carry the snapshot's own date, so the
+    // report says how old this is instead of passing as a live fetch.
     return {
+      dataSource: 'archive',
+      dataAsOf: snap.capturedAt,
       name: snap.name || d.name || 'Unknown carrier',
       dba: d.dba ?? undefined,
       mc: snap.mc ?? undefined,
@@ -565,7 +661,7 @@ async function snapshotFallback(query: ParsedQuery): Promise<CarrierReport | nul
       crashTotal: d.crashTotal ?? undefined,
       fatalCrash: d.fatalCrash ?? undefined,
       source: 'fmcsa',
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: snap.capturedAt || new Date().toISOString(),
       score: 0,
       verdict: 'low',
       flags: [],
@@ -585,6 +681,9 @@ function pathFor(query: ParsedQuery): string {
 export type LookupOpts = {
   preferActiveBroker?: boolean;
   addressHint?: string;
+  // Skip the AuthHist (authority age) fetch — for batch jobs that only
+  // compare registry fields, e.g. the watchlist cron.
+  skipAuthorityHistory?: boolean;
 };
 
 // Public entry point: runs the lookup chain, then fires a snapshot record
@@ -594,7 +693,10 @@ export type LookupOpts = {
 export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): Promise<CarrierReport> {
   const carrier = await lookupCarrierImpl(query, opts);
   // Fire-and-forget — never block the user lookup on a snapshot write.
-  void (async () => {
+  // Only live FMCSA data is a new observation. Re-recording a cached or
+  // archived copy would stamp old data with today's date, and Socrata's
+  // partial rows would register missing crash fields as changes.
+  if (carrier.dataSource === 'fmcsa-live') void (async () => {
     try {
       const { recordSnapshot } = await import('./carrier-snapshots');
       await recordSnapshot(carrier);
@@ -602,7 +704,16 @@ export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): 
       console.warn('[fmcsa] snapshot recording failed:', err instanceof Error ? err.message : err);
     }
   })();
-  return carrier;
+  // QCMobile has no authority grant date; authority age and reactivation
+  // come from FMCSA's AuthHist datasets. Added to a copy after the snapshot
+  // is queued, so a failed history fetch never registers as a field change.
+  if (opts.skipAuthorityHistory) return carrier;
+  try {
+    const { withAuthorityHistory } = await import('./fmcsa-authority-history');
+    return await withAuthorityHistory(carrier);
+  } catch {
+    return carrier;
+  }
 }
 
 async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Promise<CarrierReport> {
@@ -636,7 +747,7 @@ async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Pro
       const normalized = normalize(raw, query);
       if (!normalized) throw new Error('Carrier not found in FMCSA response');
       console.log('[fmcsa] source=FMCSA-primary id-lookup', { kind: query.kind, value: query.value, full: isFullFmcsaResponse(raw) });
-      return normalized;
+      return withSource(normalized, 'fmcsa-live', normalized.fetchedAt);
     } catch (err) {
       console.warn('[fmcsa] FMCSA primary id-lookup failed:', err instanceof Error ? err.message : err);
       // 2. FMCSA primary failed — try Socrata. Socrata's payload is partial
@@ -644,7 +755,7 @@ async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Pro
       //    `socrata:` keyspace and never let it masquerade as full FMCSA
       //    data under the canonical `mc:` / `dot:` keys.
       try {
-        const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
+        const { isSocrataConfigured, lookupOnSocrata, socrataDataAsOf } = await import('./fmcsa-socrata');
         if (isSocrataConfigured()) {
           const raw2 = await lookupOnSocrata(query, {
             preferActiveBroker: opts.preferActiveBroker,
@@ -655,7 +766,8 @@ async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Pro
             if (normalized2) {
               await writeCachedFmcsa(`socrata:${key}`, raw2);
               console.log('[fmcsa] source=Socrata id-lookup', { kind: query.kind, value: query.value });
-              return normalized2;
+              // Dated by FMCSA's last refresh of the public file, not now.
+              return withSource(normalized2, 'socrata', await socrataDataAsOf());
             }
           }
         }
@@ -671,7 +783,7 @@ async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Pro
         const normalizedCached = normalize(cached.response, query);
         if (normalizedCached) {
           console.warn('[fmcsa] FMCSA + Socrata both down — serving stale cache for', key);
-          return normalizedCached;
+          return withSource(normalizedCached, 'cache', cached.cachedAt);
         }
       }
 
@@ -679,7 +791,7 @@ async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Pro
       const socrataCached = await readCachedFmcsa(`socrata:${key}`);
       if (socrataCached) {
         const normalized3 = normalize(socrataCached.response, query);
-        if (normalized3) return normalized3;
+        if (normalized3) return withSource(normalized3, 'cache', socrataCached.cachedAt);
       }
 
       // 5. Truly final fallback: serve from carrier_snapshots. We have
@@ -699,167 +811,235 @@ async function lookupCarrierImpl(query: ParsedQuery, opts: LookupOpts = {}): Pro
   }
 
   // -------- NAME lookups --------
-  // Strict order: FMCSA primary → Socrata (with FMCSA-by-resolved-id retry
-  // for richer data) → DB fallback (last successful resolution for this
-  // name+opts). Users are paying — we always try to return *something*.
-  const nameKey = nameCacheKey(query.value, opts);
+  return lookupByName(query.value, opts, webKey);
+}
 
-  // 1. FMCSA primary first.
-  try {
-    const raw = await fmcsaFetch(pathFor(query), webKey);
-    const normalized = normalize(raw, query);
-    if (normalized) {
-      // Cache the full FMCSA payload under canonical id keys AND under the
-      // name+opts key for last-resort fallback.
-      if (normalized.mc) await writeCachedFmcsa(`mc:${normalized.mc}`, raw);
-      if (normalized.dot) await writeCachedFmcsa(`dot:${normalized.dot}`, raw);
-      await writeCachedFmcsa(nameKey, raw);
-      console.log('[fmcsa] source=FMCSA-primary name-lookup', { name: query.value, full: isFullFmcsaResponse(raw) });
-      return normalized;
-    }
-  } catch (err) {
-    console.warn('[fmcsa] FMCSA name lookup failed, trying Socrata:', err instanceof Error ? err.message : err);
+// A name can belong to many registered companies ("Summit Logistics" is 50+
+// FMCSA records), so a name search never just takes the first result:
+//   1. FMCSA's name search and the Socrata copy of the registry run in
+//      parallel. Their results are merged and scored against what the user
+//      typed (lib/name-match: normalized words, corporate suffixes ignored).
+//   2. Exactly one strong match → that company is looked up by MC/DOT
+//      through the id chain above (live → Socrata → cache → archive).
+//      Several → AmbiguousNameError, so the user picks.
+//   3. No strong match → the web-search resolver (trade names). A company it
+//      finds is accepted only when its registered name resembles the search;
+//      otherwise it is offered as a candidate for the user to confirm.
+//   4. Registries unreachable → the last resolution saved for this name.
+async function lookupByName(name: string, opts: LookupOpts, webKey: string): Promise<CarrierReport> {
+  const nameKey = nameCacheKey(name, opts);
+  const ctx = { preferActiveBroker: opts.preferActiveBroker, addressHint: opts.addressHint };
+
+  const [fmcsaRows, socrata] = await Promise.all([
+    fmcsaFetch(pathFor({ kind: 'name', value: name }), webKey)
+      .then((raw) => carrierEntries(raw).map(fmcsaCandidate))
+      .catch((err) => {
+        console.warn('[fmcsa] FMCSA name search failed:', err instanceof Error ? err.message : err);
+        return null;
+      }),
+    import('./fmcsa-socrata')
+      .then(({ isSocrataConfigured, searchSocrataByName }) => (isSocrataConfigured() ? searchSocrataByName(name) : null))
+      .catch((err) => {
+        console.warn('[fmcsa] Socrata name search failed:', err instanceof Error ? err.message : err);
+        return null;
+      }),
+  ]);
+  const registryAnswered = fmcsaRows != null || socrata != null;
+  // FMCSA rows first: for a company both sources list, the live fields win.
+  const selection = selectNameMatch(name, [...(fmcsaRows || []), ...(socrata?.rows || [])], ctx);
+  console.log('[fmcsa] name search', {
+    name,
+    fmcsaRows: fmcsaRows ? fmcsaRows.length : 'failed',
+    socrataRows: socrata ? socrata.rows.length : 'n/a',
+    result: selection.kind,
+  });
+
+  if (selection.kind === 'unique') {
+    const report = await lookupNameMatch(name, selection.match, opts);
+    await writeCachedFmcsa(nameKey, { resolution: { mc: report.mc ?? null, dot: report.dot ?? null, name: report.name } });
+    return markNameMatch(report, name);
+  }
+  if (selection.kind === 'ambiguous') {
+    throw new AmbiguousNameError(name, selection.candidates.map((c) => toNameCandidate(c, c.strength)), {
+      total: selection.total,
+      more: Boolean(socrata?.truncated),
+    });
   }
 
-  // 2. Socrata fallback — much better at name disambiguation than FMCSA's
-  //    /name/ endpoint. If Socrata resolves a name to an MC/DOT, retry FMCSA
-  //    primary by that id to upgrade to a full payload (crashes, OOS rates,
-  //    fatal-crash counts). Only fall back to the partial Socrata data if
-  //    FMCSA is fully unavailable.
-  try {
-    const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
-    if (isSocrataConfigured()) {
-      const socRaw = await lookupOnSocrata(query, {
-        preferActiveBroker: opts.preferActiveBroker,
-        addressHint: opts.addressHint,
-      });
-      if (socRaw) {
-        const socNormalized = normalize(socRaw, query);
-        if (socNormalized) {
-          // Try FMCSA primary by the resolved MC or DOT for full data.
-          const idQuery: ParsedQuery | null = socNormalized.mc
-            ? { kind: 'mc', value: socNormalized.mc }
-            : socNormalized.dot
-              ? { kind: 'dot', value: socNormalized.dot }
-              : null;
-          if (idQuery) {
-            try {
-              const fullRaw = await fmcsaFetch(pathFor(idQuery), webKey);
-              const fullNormalized = normalize(fullRaw, idQuery);
-              if (fullNormalized) {
-                if (fullNormalized.mc) await writeCachedFmcsa(`mc:${fullNormalized.mc}`, fullRaw);
-                if (fullNormalized.dot) await writeCachedFmcsa(`dot:${fullNormalized.dot}`, fullRaw);
-                await writeCachedFmcsa(nameKey, fullRaw);
-                console.log('[fmcsa] source=Socrata-name+FMCSA-by-id', { name: query.value, resolvedMc: fullNormalized.mc, resolvedDot: fullNormalized.dot });
-                return fullNormalized;
-              }
-            } catch (idErr) {
-              console.warn('[fmcsa] FMCSA-by-resolved-id failed, using Socrata data:', idErr instanceof Error ? idErr.message : idErr);
-            }
-          }
-
-          // FMCSA enrichment failed — serve Socrata data. Cache under the
-          // socrata: namespace (per-id) and under the name key.
-          if (socNormalized.mc) await writeCachedFmcsa(`socrata:mc:${socNormalized.mc}`, socRaw);
-          if (socNormalized.dot) await writeCachedFmcsa(`socrata:dot:${socNormalized.dot}`, socRaw);
-          await writeCachedFmcsa(nameKey, socRaw);
-          return socNormalized;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('[fmcsa] Socrata name fallback failed:', err instanceof Error ? err.message : err);
+  if (!registryAnswered) {
+    const cached = await nameFromCache(name, nameKey, opts);
+    if (cached) return cached;
   }
 
-  // 3. Brave-Search alias resolver — when a user searches by a TRADE name
-  //    that doesn't match the FMCSA legal_name / dba_name (e.g.,
-  //    "Super Ego Logistics" → registered as "GRAY FALCON UNITED LLC"),
-  //    Brave can usually find the MC/DOT in news articles, FMCSA registry
-  //    pages, and broker directories. Once we have an id we re-enter the
-  //    lookup pipeline by MC/DOT to get the full payload.
+  const web = await resolveViaWebSearch(name, opts);
+  if (web.match) {
+    await writeCachedFmcsa(nameKey, { resolution: { mc: web.match.mc ?? null, dot: web.match.dot ?? null, name: web.match.name } });
+    return markNameMatch(web.match, name);
+  }
+
+  const candidates = [
+    ...web.candidates,
+    ...selection.near.map((c) => toNameCandidate(c, c.strength)),
+  ].filter((c, i, all) => all.findIndex((o) => o.query === c.query) === i);
+  if (candidates.length) {
+    throw new AmbiguousNameError(name, candidates.slice(0, MAX_CANDIDATES), {
+      total: candidates.length,
+      exactMatchFound: false,
+      needsConfirmation: web.candidates.some((c) => c.match === 'unrelated'),
+    });
+  }
+  // Both registries failing is an outage, not "no such company": a plain
+  // Error makes the verify route answer 503 instead of 404.
+  if (!registryAnswered) throw new Error(`FMCSA's name search didn't respond for "${name}".`);
+  throw new NotFoundByNameError(name);
+}
+
+function markNameMatch(report: CarrierReport, name: string): CarrierReport {
+  report.matchedBy = 'name';
+  report.searchedFor = name;
+  return report;
+}
+
+// Carrier objects in an FMCSA response (`content` is an array for name and
+// docket searches, an object for DOT lookups).
+function carrierEntries(json: any): any[] {
+  const content = json?.content;
+  if (!content) return [];
+  return (Array.isArray(content) ? content : [content])
+    .map((e: any) => e?.carrier ?? e)
+    .filter((c: any) => c && typeof c === 'object' && (c.legalName || c.dbaName));
+}
+
+function fmcsaCandidate(c: any): NameCandidateInput {
+  const allowed = String(c.allowedToOperate ?? '').toUpperCase();
+  const auth = (k: string) => String(c[k] ?? '').toUpperCase() === 'A';
+  const brokerActive = auth('brokerAuthorityStatus');
+  const docket = c.docketNumber != null ? String(c.docketNumber).replace(/\D/g, '').replace(/^0+/, '') : '';
+  const dot = c.dotNumber != null ? String(c.dotNumber).replace(/\D/g, '').replace(/^0+/, '') : '';
+  return {
+    name: String(c.legalName || c.dbaName),
+    dba: c.legalName && c.dbaName ? String(c.dbaName) : undefined,
+    mc: docket || undefined,
+    dot: dot || undefined,
+    city: c.phyCity || undefined,
+    state: c.phyState || undefined,
+    zip: c.phyZipcode ? String(c.phyZipcode) : undefined,
+    status: allowed === 'Y' ? 'Allowed to operate' : allowed === 'N' ? 'Not allowed to operate' : undefined,
+    active: allowed === 'Y' || brokerActive || auth('commonAuthorityStatus') || auth('contractAuthorityStatus'),
+    brokerActive,
+    via: 'fmcsa',
+  };
+}
+
+// Full record for the one company a name matched, by MC (else DOT). The
+// record that comes back must still resemble the search: a docket can map
+// to a different company in the live registry than in the Socrata copy.
+async function lookupNameMatch(name: string, match: NameCandidateInput, opts: LookupOpts): Promise<CarrierReport> {
+  const ids: ParsedQuery[] = [];
+  if (match.mc) ids.push({ kind: 'mc', value: match.mc });
+  if (match.dot) ids.push({ kind: 'dot', value: match.dot });
+  let lastErr: unknown = null;
+  let mismatch = false;
+  for (const id of ids) {
+    try {
+      const report = await lookupCarrierImpl(id, opts);
+      if (isStrongMatch(scoreCompany(name, report.name, report.dba))) return report;
+      mismatch = true;
+      console.warn('[fmcsa] name match lookup returned a different company', { name, id, got: report.name });
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (lastErr && !mismatch) throw lastErr;
+  throw new AmbiguousNameError(name, [toNameCandidate(match, 'partial')], { exactMatchFound: false });
+}
+
+// Last resolution saved for this name, used only when both registries are
+// unreachable. New rows store the resolved id and go through the id chain
+// (which labels the data's source and date). Legacy rows held a whole FMCSA
+// name-search response, which is re-scored; legacy single records are
+// ignored because nothing recorded whether that name was ambiguous.
+async function nameFromCache(name: string, nameKey: string, opts: LookupOpts): Promise<CarrierReport | null> {
+  const cached = await readCachedFmcsa(nameKey);
+  if (!cached) return null;
+  const res = cached.response?.resolution;
+  try {
+    if (res && (res.mc || res.dot)) {
+      const id: ParsedQuery = res.mc ? { kind: 'mc', value: String(res.mc) } : { kind: 'dot', value: String(res.dot) };
+      const report = await lookupCarrierImpl(id, opts);
+      return isStrongMatch(scoreCompany(name, report.name, report.dba)) ? markNameMatch(report, name) : null;
+    }
+    const entries = carrierEntries(cached.response);
+    if (entries.length < 2) return null;
+    const sel = selectNameMatch(name, entries.map(fmcsaCandidate), {
+      preferActiveBroker: opts.preferActiveBroker,
+      addressHint: opts.addressHint,
+    });
+    if (sel.kind !== 'unique') return null;
+    const entry = entries.find((e) => String(e.dotNumber ?? '').replace(/^0+/, '') === sel.match.dot);
+    const report = entry ? normalize({ content: { carrier: entry } }, { kind: 'name', value: name }) : null;
+    return report ? markNameMatch(withSource(report, 'cache', cached.cachedAt), name) : null;
+  } catch (err) {
+    console.warn('[fmcsa] name cache fallback failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+// Trade names: web results often cite the MC/DOT of a company whose
+// registered name differs from what users call it ("Super Ego Logistics" →
+// GRAY FALCON UNITED LLC). The most-cited numbers are looked up; one whose
+// registered name resembles the search is accepted, the rest come back as
+// candidates the user has to confirm.
+async function resolveViaWebSearch(name: string, opts: LookupOpts): Promise<{ match?: CarrierReport; candidates: NameCandidate[] }> {
   try {
     const { isNameResolverConfigured, resolveNameToMc } = await import('./name-to-mc-resolver');
-    if (isNameResolverConfigured()) {
-      const resolved = await resolveNameToMc(query.value);
-      if (resolved.found && (resolved.mc || resolved.dot)) {
-        console.log('[fmcsa] source=Brave-name-resolver', { name: query.value, resolvedMc: resolved.mc, resolvedDot: resolved.dot, evidence: resolved.evidence.length });
-        const idQuery: ParsedQuery = resolved.mc
-          ? { kind: 'mc', value: resolved.mc }
-          : { kind: 'dot', value: resolved.dot! };
-        try {
-          const idRaw = await fmcsaFetch(pathFor(idQuery), webKey);
-          const idNormalized = normalize(idRaw, idQuery);
-          if (idNormalized) {
-            if (idNormalized.mc) await writeCachedFmcsa(`mc:${idNormalized.mc}`, idRaw);
-            if (idNormalized.dot) await writeCachedFmcsa(`dot:${idNormalized.dot}`, idRaw);
-            await writeCachedFmcsa(nameKey, idRaw);
-            return idNormalized;
-          }
-        } catch (idErr) {
-          // FMCSA primary still down? Try Socrata by the resolved id.
-          try {
-            const { isSocrataConfigured, lookupOnSocrata } = await import('./fmcsa-socrata');
-            if (isSocrataConfigured()) {
-              const socRaw = await lookupOnSocrata(idQuery, opts);
-              if (socRaw) {
-                const socNormalized = normalize(socRaw, idQuery);
-                if (socNormalized) {
-                  if (socNormalized.mc) await writeCachedFmcsa(`socrata:mc:${socNormalized.mc}`, socRaw);
-                  if (socNormalized.dot) await writeCachedFmcsa(`socrata:dot:${socNormalized.dot}`, socRaw);
-                  await writeCachedFmcsa(nameKey, socRaw);
-                  return socNormalized;
-                }
-              }
-            }
-          } catch { /* fall through to cache */ }
-
-          // Both live sources for the resolved id failed. We almost
-          // certainly have a prior FMCSA response cached under `mc:` or
-          // `dot:` from an earlier scan — serve that rather than 503'ing.
-          // Paid users hate seeing "FMCSA temporarily unavailable" when
-          // we have perfectly good data on hand.
-          const cachedById = await readCachedFmcsa(cacheKeyFor(idQuery));
-          if (cachedById) {
-            const cachedNorm = normalize(cachedById.response, idQuery);
-            if (cachedNorm) {
-              console.warn('[fmcsa] FMCSA + Socrata down for resolved id — serving cached', cacheKeyFor(idQuery));
-              return cachedNorm;
-            }
-          }
-          // Final shot: Socrata-quality cache.
-          const cachedSoc = await readCachedFmcsa(`socrata:${cacheKeyFor(idQuery)}`);
-          if (cachedSoc) {
-            const cachedNorm = normalize(cachedSoc.response, idQuery);
-            if (cachedNorm) {
-              console.warn('[fmcsa] All live down — serving Socrata-cached', `socrata:${cacheKeyFor(idQuery)}`);
-              return cachedNorm;
-            }
-          }
-          console.warn('[fmcsa] Brave-resolved id lookup failed:', idErr instanceof Error ? idErr.message : idErr);
-        }
-      }
+    if (!isNameResolverConfigured()) return { candidates: [] };
+    const resolved = await resolveNameToMc(name);
+    if (!resolved.found) return { candidates: [] };
+    const reports = await Promise.all(
+      resolved.ids.slice(0, 3).map((id) => lookupCarrierImpl({ kind: id.kind, value: id.value }, opts).catch(() => null)),
+    );
+    const seen = new Set<string>();
+    const found: { report: CarrierReport; strength: MatchStrength }[] = [];
+    for (const report of reports) {
+      if (!report || report.source === 'mock') continue;
+      const key = report.dot || `mc:${report.mc}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push({ report, strength: scoreCompany(name, report.name, report.dba).strength });
     }
+    const strong = found.filter((f) => isStrongMatch(f.strength));
+    console.log('[fmcsa] web-search name resolver', {
+      name,
+      ids: resolved.ids.slice(0, 3),
+      found: found.map((f) => ({ name: f.report.name, strength: f.strength })),
+    });
+    if (strong.length === 1) return { match: strong[0].report, candidates: [] };
+    return {
+      candidates: found.map((f) => toNameCandidate(
+        reportCandidate(f.report),
+        isStrongMatch(f.strength) ? f.strength : 'unrelated',
+      )),
+    };
   } catch (err) {
     console.warn('[fmcsa] name-to-mc resolver failed:', err instanceof Error ? err.message : err);
+    return { candidates: [] };
   }
+}
 
-  // 4. Last resort: DB cache by name+opts. Returns whatever was last
-  //    successfully resolved for this exact lookup context.
-  const cachedByName = await readCachedFmcsa(nameKey);
-  if (cachedByName) {
-    const normalizedFromCache = normalize(cachedByName.response, query);
-    if (normalizedFromCache) {
-      console.warn('[fmcsa] Both FMCSA and Socrata down — serving last-known cache for', nameKey);
-      return normalizedFromCache;
-    }
-  }
-
-  // Distinguish "not found" from "upstream is down" — the verify route uses
-  // the error code to choose between a 404-style "no such carrier" message
-  // and a 503 "try again" message. We've already exhausted FMCSA primary,
-  // Socrata, the Brave name-resolver, AND our cache; a name that survives
-  // all four likely doesn't exist in FMCSA under that exact spelling.
-  throw new NotFoundByNameError(query.value);
+function reportCandidate(r: CarrierReport): NameCandidateInput {
+  // fmtAddress joins street, city, state, ZIP; only trust positions when all four are there.
+  const parts = (r.address || '').split(', ');
+  return {
+    name: r.name,
+    dba: r.dba,
+    mc: r.mc,
+    dot: r.dot,
+    city: parts.length === 4 ? parts[1] : undefined,
+    state: parts.length === 4 ? parts[2] : undefined,
+    status: r.brokerAuthority === 'Active' ? 'Active broker authority' : r.authorityStatus ? `Authority ${r.authorityStatus.toLowerCase()}` : undefined,
+    via: 'web-search',
+  };
 }
 
 export class NotFoundByNameError extends Error {
@@ -870,6 +1050,83 @@ export class NotFoundByNameError extends Error {
     this.name = 'NotFoundByNameError';
     this.searched = searched;
   }
+}
+
+// One company a name search could mean. Carries the same kind/value/query
+// fields as QueryCandidate: searching `query` picks this company.
+export type NameCandidate = {
+  name: string;
+  dba?: string;
+  mc?: string;
+  dot?: string;
+  city?: string;
+  state?: string;
+  status?: string;
+  kind: 'mc' | 'dot';
+  value: string;
+  query: string;
+  // How closely the registered name matches the search. 'unrelated' = web
+  // results tie the searched name to this company, but its registered legal
+  // name and DBA are different.
+  match: 'exact' | 'strong' | 'partial' | 'unrelated';
+  via: 'fmcsa' | 'socrata' | 'web-search';
+};
+
+function toNameCandidate(c: NameCandidateInput, strength: MatchStrength | 'unrelated'): NameCandidate {
+  const kind: 'mc' | 'dot' = c.mc ? 'mc' : 'dot';
+  const value = String(c.mc || c.dot);
+  return {
+    name: c.name,
+    dba: c.dba || undefined,
+    mc: c.mc || undefined,
+    dot: c.dot || undefined,
+    city: c.city || undefined,
+    state: c.state || undefined,
+    status: c.status || undefined,
+    kind,
+    value,
+    query: `${kind === 'mc' ? 'MC' : 'DOT'}-${value}`,
+    match: strength === 'exact' || strength === 'strong' || strength === 'unrelated' ? strength : 'partial',
+    via: c.via ?? 'fmcsa',
+  };
+}
+
+// A typed name matched several companies, or none closely enough to accept
+// without asking. The verify routes answer 409 `ambiguous_name` with the list.
+export class AmbiguousNameError extends Error {
+  readonly code = 'ambiguous_name';
+  readonly searched: string;
+  readonly candidates: NameCandidate[];
+  // Every plausible match; `candidates` holds the closest MAX_CANDIDATES.
+  readonly total: number;
+  // False when no registered name matched; the list holds near names and
+  // companies linked to the name only by web results.
+  readonly exactMatchFound: boolean;
+  readonly needsConfirmation: boolean;
+  constructor(
+    searched: string,
+    candidates: NameCandidate[],
+    opts: { total?: number; more?: boolean; exactMatchFound?: boolean; needsConfirmation?: boolean } = {},
+  ) {
+    const total = Math.max(opts.total ?? candidates.length, candidates.length);
+    const exactMatchFound = opts.exactMatchFound ?? true;
+    const needsConfirmation = Boolean(opts.needsConfirmation);
+    super(ambiguousNameMessage(searched, candidates.length, total, Boolean(opts.more), exactMatchFound, needsConfirmation));
+    this.name = 'AmbiguousNameError';
+    this.searched = searched;
+    this.candidates = candidates;
+    this.total = total;
+    this.exactMatchFound = exactMatchFound;
+    this.needsConfirmation = needsConfirmation;
+  }
+}
+
+function ambiguousNameMessage(searched: string, shown: number, total: number, more: boolean, exactMatchFound: boolean, needsConfirmation: boolean): string {
+  if (!exactMatchFound) {
+    return `No company is registered as "${searched}". ${shown === 1 ? 'This is the closest match we found' : 'These are the closest matches we found'}${needsConfirmation ? ', some only through web search results under a different registered name' : ''}. Pick one only if you know it's the company you mean.`;
+  }
+  const count = `${total}${more ? '+' : ''}`;
+  return `"${searched}" matches ${count} registered companies${total > shown ? ` (showing the ${shown} closest)` : ''}. Pick the one you mean, or search by MC or DOT number.`;
 }
 
 export function mockCarrier(query: ParsedQuery): CarrierReport {
