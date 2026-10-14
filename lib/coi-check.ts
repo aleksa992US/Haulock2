@@ -9,6 +9,7 @@ import {
 } from './fmcsa-insurance';
 import { analyzePdfForensics, type PdfForensics } from './pdf-forensics';
 import { PipelineError } from './rate-con-pipeline';
+import { repairWithAcord25Text } from './acord25-parse';
 
 // Compares a certificate of insurance (COI) with public FMCSA data and the
 // PDF's own metadata. Wording rules (legal): every check states what was
@@ -373,6 +374,10 @@ export async function runCoiCheckFromText(args: {
   if (!ex.is_coi) {
     throw new PipelineError('This doesn’t look like a certificate of insurance (ACORD 25). Upload the COI PDF the carrier sent you.', 422);
   }
+  // The model misreads ACORD 25 layouts (insured in an insurer slot, the
+  // city as the insured, missing INSR LTR letters). Correct it with what
+  // the fixed-layout text shows unambiguously.
+  ex = repairWithAcord25Text(ex, args.ocrText);
   return buildCoiReport(ex, args);
 }
 
@@ -404,6 +409,43 @@ export async function buildCoiReport(
   });
 }
 
+// Second safety net, once the carrier is known from FMCSA: an "insurer"
+// that is really the carrier itself is the insured (drop it), and an
+// insured name that is just the city from the insured's address is a
+// misread (treat as unread rather than as a different company).
+export function repairAgainstCarrier(ex: CoiExtraction, carrier: CarrierReport | null): CoiExtraction {
+  if (!carrier) return ex;
+  const isCarrier = (n: string | null | undefined) => Boolean(n) && (namesAgree(n, carrier.name, INSURED_NOISE) || namesAgree(n, carrier.dba, INSURED_NOISE));
+  const insurers = (ex.insurers || []).filter((i) => !isCarrier(i.name));
+  const policies = ex.policies.map((p) => (isCarrier(p.insurer_name) ? { ...p, insurer_name: null, naic: null } : p));
+  let insured = ex.insured_name;
+  if (insured && !isCarrier(insured) && ex.insured_address) {
+    const words = insured.trim().split(/\s+/);
+    const inAddress = new RegExp(`\\b${insured.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(ex.insured_address);
+    if (words.length <= 2 && inAddress) insured = null;
+  }
+  return { ...ex, insurers, policies, insured_name: insured };
+}
+
+// Notes the model adds that describe its own reading trouble or normal
+// practice, not something wrong with the document: a missing INSR LTR it
+// couldn't see, a NAIC "missing" for a name that wasn't an insurer, or a
+// certificate dated the day before renewal policies start.
+const NOT_DOCUMENT_ISSUES = /INSR\s*LTR|no letter|insurer identification|identif(y|ication of) the insurer|(one|1) day (after|before)|effective .* after (the )?certificate date|certificate (is )?dated (before|prior)/i;
+
+function documentIssues(ex: CoiExtraction): string[] {
+  const insurerNames = new Set((ex.insurers || []).map((i) => i.name.toUpperCase()));
+  return (ex.irregularities || []).filter((note) => {
+    if (NOT_DOCUMENT_ISSUES.test(note)) return false;
+    if (/NAIC/i.test(note)) {
+      // Only keep "no NAIC" if it's about a listed insurer that really lacks one.
+      const listedWithout = (ex.insurers || []).some((i) => !i.naic && note.toUpperCase().includes(i.name.toUpperCase()));
+      return listedWithout && insurerNames.size > 0;
+    }
+    return true;
+  });
+}
+
 // Pure comparison of the certificate against the carrier record, its FMCSA
 // filings and the PDF metadata. No network calls.
 export function compareCoi(
@@ -417,8 +459,8 @@ export function compareCoi(
     policyLookupTried?: string[];
   },
 ): CoiReport {
-  const ex = sanitizeCoiExtraction(rawEx);
   const { carrier, insurance, forensics } = ctx;
+  const ex = repairAgainstCarrier(sanitizeCoiExtraction(rawEx), carrier);
   const filings = insurance.filings;
   const args = { filename: ctx.filename };
 
@@ -607,7 +649,7 @@ export function compareCoi(
   }
 
   // 8) Oddities Claude noticed in the text itself.
-  for (const note of ex.irregularities.slice(0, 3)) {
+  for (const note of documentIssues(ex).slice(0, 3)) {
     add('warn', 'Document detail to double-check', note, COI_SRC);
   }
 
