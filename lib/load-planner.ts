@@ -11,6 +11,8 @@
 //   Diesel  — EIA API v2 (EIA_API_KEY); without a key, EIA's weekly
 //             on-highway diesel table on eia.gov.
 
+import { findUsPlace, suggestUsPlaces, US_STATES } from './us-places';
+
 const TIMEOUT_MS = 9000;
 const ROAD_FACTOR = 1.18; // typical road miles per straight-line mile in the US
 const UA = 'Haulock load planner (https://haulock.com)';
@@ -58,10 +60,10 @@ const placeCache = new Map<string, { at: number; value: PlannerPoint | null }>()
 const PLACE_TTL_MS = 24 * 60 * 60 * 1000;
 
 async function orsGeocode(q: string, key: string): Promise<PlannerPoint | null> {
-  const p = new URLSearchParams({ text: q, size: '1', 'boundary.country': 'US,CA,MX' });
+  const p = new URLSearchParams({ text: q, size: '1', 'boundary.country': 'US' });
   const j = await fetchJson(`https://api.openrouteservice.org/geocode/search?${p}`, { headers: { Authorization: key, Accept: 'application/json' } });
   const f = j?.features?.[0];
-  if (!f) return null;
+  if (!f || (f.properties?.country_a && f.properties.country_a !== 'USA')) return null;
   const [lng, lat] = f.geometry.coordinates;
   return { lat, lng, label: f.properties?.label || q, state: stateCode(f.properties?.region_a) || stateCode(f.properties?.region) };
 }
@@ -74,35 +76,91 @@ async function googleGeocode(q: string, key: string): Promise<PlannerPoint | nul
   });
   const pl = j?.places?.[0];
   if (!pl?.location) return null;
+  const country = (pl.addressComponents || []).find((c: any) => (c.types || []).includes('country'));
+  if (country && country.shortText !== 'US') return null;
   const st = (pl.addressComponents || []).find((c: any) => (c.types || []).includes('administrative_area_level_1'));
   return { lat: pl.location.latitude, lng: pl.location.longitude, label: pl.formattedAddress || q, state: stateCode(st?.shortText) };
 }
 
+// U.S. Census Bureau geocoder: official, free, no key, US street addresses
+// only (matched against the Census street database). Returns no match for
+// an address that doesn't exist.
+async function censusGeocode(q: string): Promise<PlannerPoint | null> {
+  const p = new URLSearchParams({ address: q, benchmark: 'Public_AR_Current', format: 'json' });
+  const j = await fetchJson(`https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?${p}`);
+  const m = j?.result?.addressMatches?.[0];
+  if (!m?.coordinates) return null;
+  const st = stateCode(m.addressComponents?.state);
+  const label = String(m.matchedAddress || q).toLowerCase().replace(/\b([a-z])/g, (x) => x.toUpperCase())
+    .replace(/\b(Nw|Ne|Sw|Se)\b/g, (x) => x.toUpperCase())
+    .replace(/,\s*([A-Z][a-z])(?=,\s*\d{5}|\s*$)/, (_x, st) => `, ${st.toUpperCase()}`);
+  return { lat: Number(m.coordinates.y), lng: Number(m.coordinates.x), label, state: st };
+}
+
 async function nominatimGeocode(q: string): Promise<PlannerPoint | null> {
-  const p = new URLSearchParams({ q, format: 'jsonv2', limit: '1', countrycodes: 'us,ca,mx', addressdetails: '1' });
+  const p = new URLSearchParams({ q, format: 'jsonv2', limit: '1', countrycodes: 'us', addressdetails: '1' });
   const j = await fetchJson(`https://nominatim.openstreetmap.org/search?${p}`, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
   const r = Array.isArray(j) ? j[0] : null;
   if (!r) return null;
   const a = r.address || {};
+  if (a.country_code && a.country_code !== 'us') return null;
   const iso = String(a['ISO3166-2-lvl4'] || '').split('-')[1];
   const label = [a.city || a.town || a.village || a.hamlet || a.county, stateCode(a.state) || a.state, a.postcode].filter(Boolean).join(', ') || r.display_name;
   return { lat: Number(r.lat), lng: Number(r.lon), label, state: stateCode(iso) || stateCode(a.state) };
 }
 
+// Canadian provinces, or "Canada" / "Mexico" in the text.
+const FOREIGN = /(?:,|\s)(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\.?\s*(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d)?$|\b(canada|mexico|méxico)\b/i;
+export class OutsideUsError extends Error {}
+
+// Geocoders return their closest guess even for nonsense; keep a result
+// only when it shares a place word with what was typed.
+const STOP = new Set(['street', 'st', 'avenue', 'ave', 'road', 'rd', 'drive', 'dr', 'suite', 'ste', 'highway', 'hwy', 'north', 'south', 'east', 'west', 'usa', 'the']);
+function sharesPlaceWord(q: string, label: string): boolean {
+  const words = (x: string) => new Set(x.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter((w) => w.length >= 3 && !STOP.has(w)));
+  const a = words(q), b = words(label);
+  return Array.from(a).some((w) => b.has(w));
+}
+
+// US only: a city, ZIP or "City, ST" comes from our own list; street
+// addresses go to a geocoder restricted to the US.
 export async function geocode(query: string): Promise<PlannerPoint | null> {
   const q = query.replace(/\s+/g, ' ').trim();
   if (!q) return null;
+  if (FOREIGN.test(q)) throw new OutsideUsError('outside the US');
+  // A street address (house number first) is matched to the street; a
+  // city, ZIP or "City, ST" comes straight from our list.
+  const isStreet = /\d+\s+[A-Za-z]/.test(q.split(',')[0] || '');
+  if (!isStreet) {
+    const local = findUsPlace(q);
+    if (local) return { lat: local.lat, lng: local.lng, label: local.label, state: local.state };
+    // Just a city name ("Dallas"): the largest US place with that name,
+    // the same one the suggestion list shows first.
+    const top = suggestUsPlaces(q, 1)[0];
+    if (top && !/,/.test(q) && top.label.split(',')[0].toLowerCase() === q.toLowerCase()) return { lat: top.lat, lng: top.lng, label: top.label, state: top.state };
+  }
   const key = q.toLowerCase();
   const hit = placeCache.get(key);
   if (hit && Date.now() - hit.at < PLACE_TTL_MS) return hit.value;
   const providers: (() => Promise<PlannerPoint | null>)[] = [];
+  if (isStreet) providers.push(() => censusGeocode(q));
   if (process.env.ORS_API_KEY) providers.push(() => orsGeocode(q, process.env.ORS_API_KEY!));
   if (process.env.GOOGLE_PLACES_API_KEY) providers.push(() => googleGeocode(q, process.env.GOOGLE_PLACES_API_KEY!));
   providers.push(() => nominatimGeocode(q));
   let value: PlannerPoint | null = null;
   let failures = 0;
   for (const p of providers) {
-    try { value = await p(); if (value) break; } catch { failures += 1; }
+    try {
+      value = await p();
+      if (value && !(value.state && US_STATES.has(value.state))) value = null; // outside the 50 states + DC
+      if (value && !sharesPlaceWord(q, value.label)) value = null;          // a guess, not a match
+      if (value) break;
+    } catch { failures += 1; }
+  }
+  // Street not matched: use the town or ZIP it's in, and say so.
+  if (!value && isStreet) {
+    const town = findUsPlace(q) || findUsPlace(q.split(',').slice(-2).join(','));
+    if (town) value = { lat: town.lat, lng: town.lng, label: `${town.label} (street not matched)`, state: town.state };
   }
   // Every provider failing is "try again", not "no such place".
   if (!value && failures === providers.length) throw new Error('Address lookup is unavailable right now.');

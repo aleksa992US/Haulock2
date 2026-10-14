@@ -29,6 +29,7 @@ export type EventName =
   | 'verify_completed'
   | 'rate_con_uploaded'
   | 'pdf_forensics_scanned'
+  | 'load_planned'
   | 'coi_checked'
   | 'scan_email_copied'
   | 'report_shared_email'

@@ -9099,6 +9099,10 @@ function LoadPlanner({ navigate }: { navigate: any }) {
   const lookupsRes = useCachedFetch<{ lookups: any[] }>('lookups:200', '/api/lookups?limit=200');
   const [origin, setOrigin] = useState('');
   const [originCoords, setOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
+  // A suggestion picked from the list (exact US place); typing clears it.
+  const [originPlace, setOriginPlace] = useState<any>(null);
+  const [pickupPlace, setPickupPlace] = useState<any>(null);
+  const [deliveryPlace, setDeliveryPlace] = useState<any>(null);
   const [locating, setLocating] = useState(false);
   const [pickup, setPickup] = useState('');
   const [delivery, setDelivery] = useState('');
@@ -9126,8 +9130,8 @@ function LoadPlanner({ navigate }: { navigate: any }) {
       let d: any = null;
       try { d = JSON.parse(sessionStorage.getItem('haulock:plannerPrefill') || 'null'); sessionStorage.removeItem('haulock:plannerPrefill'); } catch {}
       if (!d) return;
-      if (d.pickup) setPickup(String(d.pickup));
-      if (d.delivery) setDelivery(String(d.delivery));
+      if (d.pickup) { setPickup(String(d.pickup)); setPickupPlace(null); }
+      if (d.delivery) { setDelivery(String(d.delivery)); setDeliveryPlace(null); }
       if (d.rate) setRate(String(d.rate));
       setPlan(null);
     };
@@ -9144,7 +9148,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
     if (!navigator.geolocation) { setError('This browser can’t share its location. Type a city, ZIP or address instead.'); return; }
     setLocating(true); setError(null);
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setOrigin('My current location'); setLocating(false); },
+      (pos) => { setOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setOriginPlace(null); setOrigin('My current location'); setLocating(false); },
       () => { setLocating(false); setError('Location wasn’t shared. Type the driver’s city, ZIP or address instead.'); },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     );
@@ -9159,8 +9163,9 @@ function LoadPlanner({ navigate }: { navigate: any }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          origin: originCoords && origin === 'My current location' ? { ...originCoords, label: 'Driver’s current location' } : origin,
-          pickup, delivery,
+          origin: originCoords && origin === 'My current location' ? { ...originCoords, label: 'Driver’s current location' } : originPlace || origin,
+          pickup: pickupPlace || pickup,
+          delivery: deliveryPlace || delivery,
         }),
       });
       const j = await r.json();
@@ -9218,7 +9223,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
                   const l = rateCons.find((x: any) => x.id === e.target.value);
                   const rc = l?.data?.rateCon;
                   if (!rc) return;
-                  setPickup(rc.origin || ''); setDelivery(rc.destination || '');
+                  setPickup(rc.origin || ''); setDelivery(rc.destination || ''); setPickupPlace(null); setDeliveryPlace(null);
                   if (rc.rate_amount) setRate(String(rc.rate_amount));
                   setPlan(null);
                 }}
@@ -9233,7 +9238,9 @@ function LoadPlanner({ navigate }: { navigate: any }) {
           <div>
             <label className={label}>Driver&apos;s location now</label>
             <div className="flex gap-2">
-              <input className={input} value={origin} onChange={(e) => { setOrigin(e.target.value); setOriginCoords(null); }} placeholder="City, ZIP or address (optional)" />
+              <div className="flex-1 min-w-0">
+                <PlaceInput className={input} value={origin} picked={Boolean(originPlace || originCoords)} onText={(v) => { setOrigin(v); setOriginCoords(null); setOriginPlace(null); }} onPick={(pl) => { setOrigin(pl.label); setOriginPlace(pl); setOriginCoords(null); }} placeholder="US city, ZIP or address (optional)" />
+              </div>
               <button type="button" onClick={useMyLocation} disabled={locating} title="Use this device’s location" className="px-3 border border-[#0B1E3F]/15 rounded-xl hover:bg-[#0B1E3F]/5 disabled:opacity-60 flex-shrink-0">
                 {locating ? <div className="w-4 h-4 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <Navigation className="w-4 h-4" />}
               </button>
@@ -9242,11 +9249,11 @@ function LoadPlanner({ navigate }: { navigate: any }) {
           </div>
           <div>
             <label className={label}>Pickup</label>
-            <input className={input} value={pickup} onChange={(e) => setPickup(e.target.value)} placeholder="e.g. Joliet, IL or 60436" required />
+            <PlaceInput className={input} value={pickup} picked={Boolean(pickupPlace)} onText={(v) => { setPickup(v); setPickupPlace(null); }} onPick={(pl) => { setPickup(pl.label); setPickupPlace(pl); }} placeholder="Start typing a US city or ZIP" required />
           </div>
           <div>
             <label className={label}>Delivery</label>
-            <input className={input} value={delivery} onChange={(e) => setDelivery(e.target.value)} placeholder="e.g. Dallas, TX 75201" required />
+            <PlaceInput className={input} value={delivery} picked={Boolean(deliveryPlace)} onText={(v) => { setDelivery(v); setDeliveryPlace(null); }} onPick={(pl) => { setDelivery(pl.label); setDeliveryPlace(pl); }} placeholder="Start typing a US city or ZIP" required />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -9291,6 +9298,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
           {rateCons.length === 0 && (
             <button type="button" onClick={() => navigate('verify', { tab: 'ratecon' })} className="w-full text-xs text-[#0B1E3F]/55 hover:text-[#0B1E3F] underline">Scan a rate con to fill this in</button>
           )}
+          <div className="text-[10px] text-[#0B1E3F]/40 text-center">US loads only · city &amp; ZIP list from GeoNames (CC BY 4.0)</div>
         </form>
 
         {/* Map + numbers */}
@@ -9361,6 +9369,76 @@ function LoadPlanner({ navigate }: { navigate: any }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Type-ahead for US cities and ZIP codes (our own GeoNames list, /api/planner/suggest).
+function PlaceInput({ value, onText, onPick, placeholder, required, picked, className }: {
+  value: string; onText: (v: string) => void; onPick: (p: any) => void; placeholder: string; required?: boolean; picked?: boolean; className: string;
+}) {
+  const [items, setItems] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const seq = React.useRef(0);
+  const listId = React.useId();
+
+  useEffect(() => {
+    const q = value.trim();
+    if (q.length < 2 || picked || q === 'My current location') { setItems([]); return; }
+    const my = ++seq.current;
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/planner/suggest?q=${encodeURIComponent(q)}`);
+        const j = await r.json();
+        if (my === seq.current) { setItems(j.places || []); setActive(-1); }
+      } catch { /* keep typing; the server can still look it up */ }
+    }, 120);
+    return () => clearTimeout(t);
+  }, [value, picked]);
+
+  const choose = (p: any) => { onPick(p); setOpen(false); setItems([]); };
+  return (
+    <div className="relative">
+      <input
+        className={`${className} ${picked ? 'pr-9' : ''}`}
+        value={value}
+        onChange={(e) => { onText(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(e) => {
+          if (!open || items.length === 0) return;
+          if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(items.length - 1, a + 1)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+          else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(items[active]); }
+          else if (e.key === 'Escape') setOpen(false);
+        }}
+        placeholder={placeholder}
+        required={required}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open && items.length > 0}
+        aria-controls={listId}
+        aria-autocomplete="list"
+      />
+      {picked && <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#16A34A] pointer-events-none" />}
+      {open && items.length > 0 && (
+        <ul id={listId} role="listbox" className="absolute z-30 left-0 right-0 mt-1 bg-white border border-[#0B1E3F]/15 rounded-xl shadow-lg overflow-hidden max-h-72 overflow-y-auto">
+          {items.map((p, i) => (
+            <li
+              key={`${p.label}-${p.lat}-${p.lng}`}
+              role="option"
+              aria-selected={i === active}
+              onMouseDown={(e) => { e.preventDefault(); choose(p); }}
+              onMouseEnter={() => setActive(i)}
+              className={`px-3.5 py-2 text-sm cursor-pointer flex items-center justify-between gap-3 ${i === active ? 'bg-[#0B1E3F]/5' : ''}`}
+            >
+              <span className="flex items-center gap-2 min-w-0"><MapPin className="w-3.5 h-3.5 text-[#0B1E3F]/40 flex-shrink-0" /><span className="truncate">{p.label}</span></span>
+              {p.detail && !p.zip && <span className="text-[11px] text-[#0B1E3F]/45 whitespace-nowrap">{p.detail}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -11859,6 +11937,11 @@ function CarrierReport({ report, navigate }: any) {
               <h2 className="text-xl font-semibold text-[#0B1E3F]">Rate con extraction</h2>
               <div className="text-sm text-[#0B1E3F]/60 mt-1">What Claude pulled from the PDF — we verify the broker above.</div>
             </div>
+            {(r.rateCon.origin || r.rateCon.destination) && (
+              <button onClick={() => navigate('planner', { pickup: r.rateCon.origin || '', delivery: r.rateCon.destination || '', rate: r.rateCon.rate_amount || '' })} className="px-3.5 py-1.5 border border-[#0B1E3F]/15 rounded-full text-xs font-medium hover:bg-[#0B1E3F]/5 flex items-center gap-1.5">
+                <RouteIcon className="w-3.5 h-3.5" /> Plan this load
+              </button>
+            )}
             <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${r.rateCon.fraud_score >= 61 ? 'bg-[#DC2626]/10 text-[#DC2626]' : r.rateCon.fraud_score >= 31 ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#16A34A]/10 text-[#16A34A]'}`}>
               AI fraud score · {r.rateCon.fraud_score}/100
             </div>

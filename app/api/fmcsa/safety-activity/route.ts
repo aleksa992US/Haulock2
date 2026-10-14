@@ -11,9 +11,14 @@ export const maxDuration = 30;
 // through us).
 export async function GET(req: Request) {
   const supabase = getServerSupabase();
-  if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData?.user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // Local demo mode (no Supabase, not production) skips sign-in so the
+  // panel can be tried on localhost.
+  if (supabase) {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  } else if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+  }
 
   const dot = new URL(req.url).searchParams.get('dot')?.replace(/\D/g, '') || '';
   if (!dot || dot.length > 9) return NextResponse.json({ error: 'A USDOT number is required' }, { status: 400 });
