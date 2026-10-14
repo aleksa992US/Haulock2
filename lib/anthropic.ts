@@ -238,22 +238,76 @@ Return ONLY a JSON object, no prose, no code fences:
 
 const COVERAGES: CoiCoverage[] = ['auto_liability', 'cargo', 'general_liability', 'workers_comp', 'umbrella', 'other'];
 
-export async function analyzeCoi(ocrText: string): Promise<CoiExtraction> {
+// COI reading uses the current Opus model and SEES the certificate (PDF or
+// image) — OCR text flattens the ACORD 25's two-column layout, so a
+// text-only read kept putting the insured in an insurer slot or taking a
+// city/ZIP as the insured's name. The OCR text is still sent alongside.
+const COI_MODEL = 'claude-opus-5-5';
+const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+
+type CoiFile = { bytes: Buffer | Uint8Array; mime?: string };
+
+function coiFileBlock(file: CoiFile | undefined): Anthropic.ContentBlockParam | null {
+  if (!file?.bytes || file.bytes.length === 0 || file.bytes.length > MAX_DOCUMENT_BYTES) return null;
+  const data = Buffer.from(file.bytes).toString('base64');
+  const mime = (file.mime || '').toLowerCase();
+  if (mime.includes('pdf')) return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } };
+  if (mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/webp' || mime === 'image/gif') {
+    return { type: 'image', source: { type: 'base64', media_type: (mime === 'image/jpg' ? 'image/jpeg' : mime) as 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data } };
+  }
+  return null;
+}
+
+export async function analyzeCoi(ocrText: string, file?: CoiFile): Promise<CoiExtraction> {
   const client = getClient();
   if (!client) throw new Error('ANTHROPIC_API_KEY is not set');
   const trimmed = ocrText.length > 20000 ? ocrText.slice(0, 20000) : ocrText;
+  const fileBlock = coiFileBlock(file);
 
-  const resp = await client.messages.create({
-    model: MODEL,
-    max_tokens: 1500,
-    system: COI_PROMPT,
-    messages: [{ role: 'user', content: `Extract this certificate of insurance and return the JSON:\n\n---\n${trimmed}\n---` }],
-  });
-
-  const textBlock = resp.content.find((b: any) => b.type === 'text') as any;
-  if (!textBlock?.text) throw new Error('Claude returned no text content');
-  const raw = textBlock.text.trim();
-  const jsonStr = raw.startsWith('{') ? raw : raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  let raw: string | null = null;
+  if (fileBlock) {
+    try {
+      const resp = await client.messages.create({
+        model: COI_MODEL,
+        max_tokens: 16000,
+        output_config: { effort: 'medium' },
+        system: COI_PROMPT,
+        messages: [{
+          role: 'user',
+          content: [
+            fileBlock,
+            {
+              type: 'text',
+              text: `Extract this certificate of insurance and return the JSON. Read the layout from the document itself: the INSURED box, the INSURER(S) AFFORDING COVERAGE box and each row's INSR LTR column. The OCR text below is a flattened copy that can interleave columns; use it only to check spelling and numbers.\n\nOCR text:\n---\n${trimmed}\n---`,
+            },
+          ],
+        }],
+      });
+      if (resp.stop_reason === 'refusal') throw new Error('refused');
+      const block = resp.content.find((b) => b.type === 'text');
+      raw = block && block.type === 'text' ? block.text.trim() : null;
+    } catch (err) {
+      // Fall back to the text-only read below rather than failing the check.
+      console.warn('[coi] document read failed, using OCR text only:', err instanceof Error ? err.message : err);
+      raw = null;
+    }
+  }
+  if (!raw) {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      system: COI_PROMPT,
+      messages: [{ role: 'user', content: `Extract this certificate of insurance and return the JSON:\n\n---\n${trimmed}\n---` }],
+    });
+    const textBlock = resp.content.find((b: any) => b.type === 'text') as any;
+    if (!textBlock?.text) throw new Error('Claude returned no text content');
+    raw = String(textBlock.text).trim();
+  }
+  // Take the JSON object out of the reply (tolerates code fences or a
+  // sentence around it).
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  const jsonStr = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
   let parsed: any;
   try {
     parsed = JSON.parse(jsonStr);

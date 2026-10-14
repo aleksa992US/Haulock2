@@ -91,39 +91,46 @@ export function parseAcord25Text(text: string): Acord25Parse {
     if (key.length < 4) return null;
     const at = lines.findIndex((l) => squash(l).includes(key));
     if (at < 0) return null;
+    // Only a letter on the policy number's own line ("B TINCA1444040-25 …").
+    // Walking up the text to find one proved unreliable: OCR column order
+    // differs between engines, and a wrong letter is worse than none.
     const own = lines[at].match(/^([A-F])\s+\S/);
     if (own && !/^INSURER/i.test(lines[at])) return own[1].toUpperCase();
-    // Walk up to the row's lone INSR LTR letter, stopping at the previous
-    // policy row or the table header.
-    for (let j = at - 1; j >= Math.max(0, at - 12); j--) {
-      const l = lines[j];
-      if (/^(COVERAGES|INSR|TYPE OF INSURANCE)\b/i.test(l)) break;
-      if (/\d{2}\/\d{2}\/\d{4}\s+\d{2}\/\d{2}\/\d{4}/.test(l)) break; // another row's dates
-      const m = l.match(/^([A-F])(?:\s+|$)(?!:)/);
-      if (m && !/^INSURER/i.test(l)) return m[1].toUpperCase();
-    }
     return null;
   };
 
   return { insurers, insuredName, letterForPolicy };
 }
 
-// Correct the model's extraction with what the text shows unambiguously.
+// True when an "insured name" is clearly not a company: empty, a ZIP or
+// "IL 60453", or just the city from the insured's address ("Dyer").
+export function implausibleInsuredName(name: string | null | undefined, address?: string | null): boolean {
+  const n = String(name || '').trim();
+  if (n.length < 3) return true;
+  if (/\d{5}/.test(n) || /^[A-Z]{2}(\s+\d|$)/.test(n)) return true;
+  if (!/[A-Za-z]{2,}/.test(n)) return true;
+  const words = n.split(/\s+/);
+  if (address && words.length <= 2 && new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(address)) return true;
+  return false;
+}
+
+// Correct the model's extraction only where the text is unambiguous AND the
+// model's reading is clearly wrong or missing. The model now reads the PDF
+// itself, so this is a safety net, never an override of a sane reading.
 export function repairWithAcord25Text(ex: CoiExtraction, text: string): CoiExtraction {
   const p = parseAcord25Text(text);
   const out: CoiExtraction = { ...ex };
-  // The INSURER box is authoritative when we could read it.
-  if (p.insurers.length > 0) out.insurers = p.insurers;
-  if (p.insuredName) {
-    const modelName = squash(ex.insured_name || '');
-    const parsed = squash(p.insuredName);
-    if (!modelName || (!parsed.includes(modelName) && !modelName.includes(parsed))) out.insured_name = p.insuredName;
+  const modelInsurers = ex.insurers || [];
+  const parsedClean = p.insurers.length >= 2 && p.insurers.every((i) => i.naic);
+  const modelWeak = modelInsurers.length === 0 || modelInsurers.some((i) => !i.naic);
+  if (parsedClean && modelWeak) out.insurers = p.insurers;
+  if (p.insuredName && implausibleInsuredName(ex.insured_name, ex.insured_address) && !implausibleInsuredName(p.insuredName, ex.insured_address)) {
+    out.insured_name = p.insuredName;
   }
   out.policies = (ex.policies || []).map((pol) => {
+    if (pol.insurer_letter) return pol;
     const letter = p.letterForPolicy(pol.policy_number);
-    const listed = letter ? p.insurers.find((x) => x.letter === letter) : undefined;
-    // Re-point the row at its INSURER line; sanitizeCoiExtraction then fills
-    // the name/NAIC from that line.
+    const listed = letter ? (out.insurers || []).find((x) => x.letter === letter) : undefined;
     return listed ? { ...pol, insurer_letter: letter, insurer_name: listed.name, naic: listed.naic } : pol;
   });
   return out;

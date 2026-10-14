@@ -9288,7 +9288,8 @@ function VerifyTool({ navigate }: any) {
 function useLaunchFlags(): { coi: boolean; scanEmail: boolean; ready: boolean } {
   const usage = useCachedFetch<{ isAdmin?: boolean }>('usage', '/api/usage');
   const admin = Boolean(usage.data?.isAdmin);
-  return { coi: COI_CHECK_ON || admin, scanEmail: SCAN_EMAIL_ON || admin, ready: COI_CHECK_ON || usage.data != null };
+  // scanEmail has no admin override: forwarding isn't set up (lib/features.ts).
+  return { coi: COI_CHECK_ON || admin, scanEmail: SCAN_EMAIL_ON, ready: COI_CHECK_ON || usage.data != null };
 }
 
 const SCAN_EMAIL = process.env.NEXT_PUBLIC_SCAN_EMAIL || 'scan@haulock.com';
@@ -9488,6 +9489,9 @@ function CoiResultBody({ report }: { report: any }) {
             : `Not compared — ${notComparedReason}${fails > 0 ? ` · ${fails} problem${fails === 1 ? '' : 's'} on the certificate` : ''}`}
           {warns > 0 ? ` · ${warns} to confirm` : ''}
           {compared && r.dataAsOf ? ` · checked against FMCSA data updated ${fmtDate(r.dataAsOf)}` : ''}
+          {r.recheckedAt && (
+            <span className="block mt-1 text-xs text-[#0B1E3F]/55">Re-checked against FMCSA on {fmtDate(r.recheckedAt)}, using the certificate as it was read the first time. Upload it again for a fresh reading.</span>
+          )}
         </div>
       </div>
 
@@ -12223,6 +12227,21 @@ function SearchHistory({ navigate }: any) {
 
   const onRescan = async (l: any) => {
     setRescanId(l.id); setError(null);
+    // COI rows: re-compare the saved certificate with today's FMCSA data.
+    if (l.source === 'coi') {
+      try {
+        const r = await fetch('/api/coi/recheck', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: l.id }) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error || `Re-check failed (${r.status})`);
+        invalidateCache('lookups:200');
+        navigate('report', data);
+      } catch (err: any) {
+        setError(err?.message || 'Re-check failed');
+      } finally {
+        setRescanId(null);
+      }
+      return;
+    }
     // Re-scan the exact company the row resolved to (prefixed MC/DOT); the
     // saved free-text query could be a name that now matches someone else.
     const q = (l.mc ? `MC-${String(l.mc).replace(/\D/g, '')}` : l.dot ? `DOT-${String(l.dot).replace(/\D/g, '')}` : (l.query || '')).trim();
@@ -12409,9 +12428,20 @@ function HistoryGroup({ group, navigate, onRescan, rescanId, onDelete, onDeleteG
             </button>
           )}
           <button onClick={() => navigate('report', l.data)} className="px-3 py-1.5 text-xs bg-[#0B1E3F]/5 text-[#0B1E3F] hover:bg-[#0B1E3F]/10 rounded-full transition">View</button>
-          <button onClick={() => onRescan(l)} disabled={rescanId === l.id} className="px-3 py-1.5 text-xs bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 rounded-full transition flex items-center gap-1 disabled:opacity-60" title="Runs a fresh FMCSA lookup — uses 1 credit">
-            {rescanId === l.id ? (<><div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" /> Scanning…</>) : (<>Scan again</>)}
-          </button>
+          {l.source === 'coi' ? (
+            // A COI row re-checks the certificate against today's FMCSA
+            // filings (saved reading — the PDF isn't stored), not an MC lookup.
+            <>
+              <button onClick={() => onRescan(l)} disabled={rescanId === l.id} className="px-3 py-1.5 text-xs bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 rounded-full transition flex items-center gap-1 disabled:opacity-60" title="Compares this certificate with today's FMCSA filings again. Doesn't use a COI credit.">
+                {rescanId === l.id ? (<><div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" /> Checking…</>) : (<>Re-check COI</>)}
+              </button>
+              <button onClick={() => navigate('verify', { tab: 'coi' })} className="px-3 py-1.5 text-xs bg-[#0B1E3F]/5 text-[#0B1E3F] hover:bg-[#0B1E3F]/10 rounded-full transition" title="Upload the certificate again for a fresh reading">Upload again</button>
+            </>
+          ) : (
+            <button onClick={() => onRescan(l)} disabled={rescanId === l.id} className="px-3 py-1.5 text-xs bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90 rounded-full transition flex items-center gap-1 disabled:opacity-60" title="Runs a fresh FMCSA lookup — uses 1 credit">
+              {rescanId === l.id ? (<><div className="w-3 h-3 border border-white/30 border-t-white rounded-full animate-spin" /> Scanning…</>) : (<>Scan again</>)}
+            </button>
+          )}
           <button onClick={() => onDeleteGroup(group)} disabled={groupBusy} className="w-8 h-8 flex items-center justify-center rounded-full text-[#0B1E3F]/50 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-60" title={count > 1 ? `Remove all ${count} lookups for this carrier (does not restore monthly quota)` : 'Remove from history (does not restore monthly quota)'}>
             {groupBusy ? <div className="w-3 h-3 border border-[#DC2626]/40 border-t-[#DC2626] rounded-full animate-spin" /> : <Trash2 className="w-4 h-4" />}
           </button>

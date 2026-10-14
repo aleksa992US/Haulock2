@@ -9,7 +9,7 @@ import {
 } from './fmcsa-insurance';
 import { analyzePdfForensics, type PdfForensics } from './pdf-forensics';
 import { PipelineError } from './rate-con-pipeline';
-import { repairWithAcord25Text } from './acord25-parse';
+import { repairWithAcord25Text, implausibleInsuredName } from './acord25-parse';
 
 // Compares a certificate of insurance (COI) with public FMCSA data and the
 // PDF's own metadata. Wording rules (legal): every check states what was
@@ -367,7 +367,7 @@ export async function runCoiCheckFromText(args: {
 }): Promise<CoiReport> {
   let ex: CoiExtraction;
   try {
-    ex = await analyzeCoi(args.ocrText);
+    ex = await analyzeCoi(args.ocrText, args.bytes ? { bytes: args.bytes, mime: args.mime } : undefined);
   } catch (e: any) {
     throw new PipelineError(e?.message || 'Could not read the certificate', 502);
   }
@@ -385,7 +385,9 @@ export async function runCoiCheckFromText(args: {
 // with a known extraction.
 export async function buildCoiReport(
   rawEx: CoiExtraction,
-  args: { bytes?: Buffer; mime?: string; filename?: string; mc?: string | null; dot?: string | null },
+  // `forensics`: the PDF metadata result saved with an earlier check, for a
+  // re-check where the file itself is no longer available.
+  args: { bytes?: Buffer; mime?: string; filename?: string; mc?: string | null; dot?: string | null; forensics?: PdfForensics | null },
   deps: Partial<CoiDeps> = {},
 ): Promise<CoiReport> {
   const d: CoiDeps = { ...DEFAULT_DEPS, ...deps };
@@ -393,7 +395,7 @@ export async function buildCoiReport(
   const isPdf = /pdf/i.test(args.mime || '') && args.bytes;
   const [resolution, forensics] = await Promise.all([
     resolveCarrier(ex, args.mc, args.dot, d),
-    isPdf ? analyzePdfForensics(args.bytes!).catch(() => null) : Promise.resolve(null),
+    isPdf ? analyzePdfForensics(args.bytes!).catch(() => null) : Promise.resolve(args.forensics ?? null),
   ]);
   const { carrier } = resolution;
   const insurance: InsuranceFilingsResult = carrier
@@ -418,32 +420,21 @@ export function repairAgainstCarrier(ex: CoiExtraction, carrier: CarrierReport |
   const isCarrier = (n: string | null | undefined) => Boolean(n) && (namesAgree(n, carrier.name, INSURED_NOISE) || namesAgree(n, carrier.dba, INSURED_NOISE));
   const insurers = (ex.insurers || []).filter((i) => !isCarrier(i.name));
   const policies = ex.policies.map((p) => (isCarrier(p.insurer_name) ? { ...p, insurer_name: null, naic: null } : p));
+  // A ZIP, "IL 60453" or the address's city is a misread, not a company.
   let insured = ex.insured_name;
-  if (insured && !isCarrier(insured) && ex.insured_address) {
-    const words = insured.trim().split(/\s+/);
-    const inAddress = new RegExp(`\\b${insured.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(ex.insured_address);
-    if (words.length <= 2 && inAddress) insured = null;
-  }
+  if (insured && !isCarrier(insured) && implausibleInsuredName(insured, ex.insured_address)) insured = null;
   return { ...ex, insurers, policies, insured_name: insured };
 }
 
-// Notes the model adds that describe its own reading trouble or normal
-// practice, not something wrong with the document: a missing INSR LTR it
-// couldn't see, a NAIC "missing" for a name that wasn't an insurer, or a
-// certificate dated the day before renewal policies start.
-const NOT_DOCUMENT_ISSUES = /INSR\s*LTR|no letter|insurer identification|identif(y|ication of) the insurer|(one|1) day (after|before)|effective .* after (the )?certificate date|certificate (is )?dated (before|prior)/i;
+// The model's free-text "irregularities" are mostly about its own reading
+// (blank INSURER E/F, a letter it couldn't see, where an address "may"
+// belong) or normal practice (a certificate dated before renewals start,
+// workers' comp renewing on a different date). Only notes that point at the
+// document itself being wrong or altered are shown.
+const DOCUMENT_PROBLEM = /\b(alter(ed|ation)|edit(ed|ing)|tamper|white[- ]?out|overwrit|font|mismatch(ed)? (font|text)|expir\w* (date )?(is )?before (the )?effective|effective (date )?(is )?after (the )?expir|limit\w* .*below|cancel(l)?ed|void|not (a )?valid|invalid (date|policy))\b/i;
 
 function documentIssues(ex: CoiExtraction): string[] {
-  const insurerNames = new Set((ex.insurers || []).map((i) => i.name.toUpperCase()));
-  return (ex.irregularities || []).filter((note) => {
-    if (NOT_DOCUMENT_ISSUES.test(note)) return false;
-    if (/NAIC/i.test(note)) {
-      // Only keep "no NAIC" if it's about a listed insurer that really lacks one.
-      const listedWithout = (ex.insurers || []).some((i) => !i.naic && note.toUpperCase().includes(i.name.toUpperCase()));
-      return listedWithout && insurerNames.size > 0;
-    }
-    return true;
-  });
+  return (ex.irregularities || []).filter((note) => DOCUMENT_PROBLEM.test(note));
 }
 
 // Pure comparison of the certificate against the carrier record, its FMCSA
@@ -488,8 +479,17 @@ export function compareCoi(
     }
     if (ex.insured_name) {
       const agrees = namesAgree(ex.insured_name, carrier.name, INSURED_NOISE) || namesAgree(ex.insured_name, carrier.dba, INSURED_NOISE);
+      // A short name with no company word ("Dyer", "IL") on a certificate
+      // already tied to this carrier by its own policy number is almost
+      // always a misread of the INSURED box, not a different company.
+      const companyish = /\b(LLC|L\.L\.C|INC|CORP|CORPORATION|CO|COMPANY|LTD|LP|GROUP|TRUCKING|TRANSPORT\w*|LOGISTICS|FREIGHT|EXPRESS|LINES?|CARRIERS?|HAULING|ENTERPRISES?|SERVICES?|SOLUTIONS|TRANS)\b/i.test(ex.insured_name);
+      const likelyMisread = Boolean(byPolicy) && !companyish && ex.insured_name.trim().split(/\s+/).length <= 2;
       if (agrees) {
         add('pass', 'Insured company matches the FMCSA record', `"${ex.insured_name}" matches ${carrierLabel}.`, FMCSA_CARRIER_SRC);
+      } else if (likelyMisread) {
+        add('warn', 'Insured name unclear — check the INSURED box',
+          `We read the insured as "${ex.insured_name}", which doesn't look like a company name. The policy number ties this certificate to ${carrierLabel}; open the PDF and confirm the INSURED box shows that company.`,
+          COI_SRC);
       } else {
         add('fail', 'Insured company differs from the FMCSA record',
           `The certificate is issued to "${ex.insured_name}", but the FMCSA record for ${byPolicy ? 'the carrier that filed this policy' : 'this number'} is ${carrierLabel}${carrier.dba ? ` (DBA ${carrier.dba})` : ''}. Confirm you have the right carrier and the right certificate.`,
