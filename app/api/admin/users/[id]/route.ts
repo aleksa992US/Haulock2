@@ -5,6 +5,7 @@ import { isAdmin, invalidateAdminCache } from '@/lib/admin';
 import { PLANS } from '@/lib/plans';
 import { getStripe } from '@/lib/stripe';
 import { applyUserPlan } from '@/lib/teams';
+import { cancelLiveHaulockSubscriptions } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -69,34 +70,21 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
-  // Cancel any active Stripe subscriptions for this user before deleting their
-  // login — otherwise Stripe would keep charging their card after the account
-  // is gone, and the webhook wouldn't be able to find them to downgrade.
-  const cancelledSubs: string[] = [];
+  // Cancel their Haulock subscriptions before deleting the login, or Stripe
+  // keeps charging a deleted account. If Stripe fails, stop: nothing is
+  // deleted, so the admin can retry.
+  let cancelledSubs: string[] = [];
   const stripe = getStripe();
   if (stripe) {
+    const { data: target } = await svc.auth.admin.getUserById(params.id);
     try {
-      const { data: target } = await svc.auth.admin.getUserById(params.id);
-      const meta = target.user?.user_metadata || {};
-      const email = target.user?.email;
-      let customerId: string | null = (meta.stripe_customer_id as string) || null;
-      if (!customerId && email) {
-        const found = await stripe.customers.list({ email, limit: 1 });
-        customerId = found.data[0]?.id || null;
-      }
-      if (customerId) {
-        const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 20 });
-        for (const s of subs.data) {
-          if (s.status === 'active' || s.status === 'trialing' || s.status === 'past_due' || s.status === 'unpaid') {
-            try {
-              await stripe.subscriptions.cancel(s.id);
-              cancelledSubs.push(s.id);
-            } catch { /* keep going */ }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[admin delete] Stripe cleanup failed:', err);
+      cancelledSubs = await cancelLiveHaulockSubscriptions(stripe, {
+        customerId: (target.user?.user_metadata?.stripe_customer_id as string) || null,
+        email: target.user?.email || null,
+      });
+    } catch (err: any) {
+      console.error('[admin delete] Stripe cancel failed:', err?.message);
+      return NextResponse.json({ error: `Couldn't cancel their Stripe subscription (${err?.message || 'Stripe error'}). Nothing was deleted.` }, { status: 502 });
     }
   }
 

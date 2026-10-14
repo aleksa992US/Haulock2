@@ -8019,6 +8019,39 @@ function AdminPage({ navigate }: any) {
     }
   };
 
+  // Preview what the Stripe sync would change, then run it on confirm.
+  const [syncing, setSyncing] = useState(false);
+  const syncWithStripe = async () => {
+    setSyncing(true); setError(null); setNotice(null);
+    try {
+      const preview = await fetch('/api/cron/billing-sync?dry=1').then(async (r) => {
+        const j = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(j?.error || `Sync failed (${r.status})`);
+        return j;
+      });
+      const fixable = (preview.actions || []).filter((a: any) => a.kind !== 'review');
+      const lines = (preview.actions || []).map((a: any) =>
+        a.kind === 'set_plan' ? `• ${a.email || a.userId}: ${a.from} → ${a.to} (${a.reason})`
+        : a.kind === 'cancel_orphan' ? `• Cancel ${a.customerEmail || a.subscriptionId}'s ${a.plan || ''} subscription (${a.reason})`
+        : `• Check by hand: ${a.customerEmail || a.subscriptionId} (${a.reason})`);
+      if (!fixable.length) {
+        setNotice(lines.length ? `Haulock and Stripe match. Needs a look: ${lines.join(' ')}` : 'Haulock and Stripe already match. Nothing to change.');
+        return;
+      }
+      const held = (preview.held || []).length ? `\n\nOn hold:\n${preview.held.join('\n')}` : '';
+      if (!window.confirm(`Sync with Stripe will make these changes:\n\n${lines.join('\n')}${held}\n\nContinue?`)) return;
+      const r = await fetch('/api/cron/billing-sync');
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || `Sync failed (${r.status})`);
+      setNotice(`Synced with Stripe: ${j.done.length} change${j.done.length === 1 ? '' : 's'} made.${j.errors.length ? ` ${j.errors.length} failed: ${j.errors.join('; ')}` : ''}${j.held.length ? ` On hold: ${j.held.join('; ')}` : ''}`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const deleteUser = async (u: any) => {
     const label = u.email || u.name || u.id;
     setPendingId(u.id); setError(null);
@@ -8150,7 +8183,12 @@ function AdminPage({ navigate }: any) {
           <h1 className="text-4xl serif italic text-[#0B1E3F]">Operator console.</h1>
           <p className="text-[#0B1E3F]/60 mt-2 text-sm">Users, billing, FMCSA observability, data growth, and storage — one place.</p>
         </div>
-        <button onClick={load} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 w-fit">Refresh users</button>
+        <div className="flex gap-2">
+          <button onClick={syncWithStripe} disabled={syncing} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 disabled:opacity-60 w-fit" title="Make every account's plan match Stripe, and cancel subscriptions of deleted accounts. Shows the changes first.">
+            {syncing ? 'Checking…' : 'Sync with Stripe'}
+          </button>
+          <button onClick={load} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 w-fit">Refresh users</button>
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -8486,7 +8524,22 @@ function AdminPage({ navigate }: any) {
                                   Plan:
                                   <select
                                     value={u.plan}
-                                    onChange={(e) => patchUser(u.id, { plan: e.target.value })}
+                                    onChange={(e) => {
+                                      // Moving a paying customer to Free has to stop Stripe too.
+                                      if (e.target.value === 'free' && b?.subscriptionId && ['paying', 'canceling', 'past_due'].includes(b.status)) {
+                                        setCancelTarget({
+                                          subscriptionId: b.subscriptionId,
+                                          userId: u.id,
+                                          who: u.name || u.email,
+                                          plan: b.plan,
+                                          price: b.amountCents != null ? `${fmtCents(b.amountCents, b.currency)}/${b.billing === 'annual' ? 'yr' : 'mo'}` : null,
+                                          periodEnd: b.status === 'canceling' ? b.endsAt : b.periodEnd,
+                                          canceling: b.status === 'canceling',
+                                        });
+                                        return;
+                                      }
+                                      patchUser(u.id, { plan: e.target.value });
+                                    }}
                                     disabled={pendingId === u.id}
                                     className="px-3 py-1.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-xs text-[#0B1E3F] focus:outline-none"
                                   >

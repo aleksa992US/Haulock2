@@ -5,7 +5,8 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { getPlan, monthStart } from '@/lib/plans';
 import { getStripe } from '@/lib/stripe';
-import { customerIdOf, lifetimeBySubscription, listHaulockSubscriptions, paidSubscriptionIds, summarizeBilling, type UserBilling } from '@/lib/billing';
+import { lifetimeBySubscription, listHaulockSubscriptions, paidSubscriptionIds, summarizeBilling, type UserBilling } from '@/lib/billing';
+import { groupSubscriptionsByUser } from '@/lib/billing-sync';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -93,26 +94,9 @@ export async function GET() {
     try {
       const { subs } = await listHaulockSubscriptions(stripe, ['data.latest_invoice', 'data.customer']);
       const paidIds = await paidSubscriptionIds(stripe, subs);
-      const userByCustomer = new Map<string, string>();
-      for (const u of authUsers) {
-        const cid = u.user_metadata?.stripe_customer_id;
-        if (cid) userByCustomer.set(cid, u.id);
-      }
-      // A user_id tag can point at an account that was deleted and signed up
-      // again, so fall back to the Stripe customer id, then its email.
-      const knownIds = new Set(authUsers.map((u) => u.id));
-      const userByEmail = new Map<string, string>();
-      for (const u of authUsers) if (u.email) userByEmail.set(String(u.email).toLowerCase(), u.id);
-      const subsByUser = new Map<string, Stripe.Subscription[]>();
-      for (const s of subs) {
-        const tagged = s.metadata?.user_id;
-        const custEmail = (s.customer as any)?.email;
-        const uid = (tagged && knownIds.has(tagged) ? tagged : null)
-          || userByCustomer.get(customerIdOf(s) || '')
-          || (custEmail ? userByEmail.get(String(custEmail).toLowerCase()) : undefined);
-        if (!uid) continue;
-        subsByUser.set(uid, [...(subsByUser.get(uid) || []), s]);
-      }
+      const { byUser: subsByUser } = groupSubscriptionsByUser(subs, authUsers.map((u) => ({
+        id: u.id, email: u.email || null, stripeCustomerId: u.user_metadata?.stripe_customer_id || null,
+      })));
       const lifetime = await lifetimeBySubscription(stripe, Array.from(paidIds));
       billingByUser = new Map();
       for (const [uid, list] of subsByUser) billingByUser.set(uid, summarizeBilling(list, paidIds, lifetime));

@@ -30,6 +30,9 @@
     },
     "app/api/admin/sales/campaigns/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/cron/billing-sync/route.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
@@ -52,6 +55,10 @@
     {
       "path": "/api/cron/free-user-nurture",
       "schedule": "0 14 * * 2"
+    },
+    {
+      "path": "/api/cron/billing-sync",
+      "schedule": "0 12 * * *"
     }
   ]
 }

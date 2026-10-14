@@ -86,6 +86,33 @@ export async function paidSubscriptionIds(stripe: Stripe, subs: Stripe.Subscript
   return paid;
 }
 
+// Cancels, right away, every live Haulock subscription on the customer (by
+// id) and on any customer with this email. Run before deleting an account,
+// so a deleted account can't keep being charged. Only touches subscriptions
+// tagged product=haulock (the Stripe account is shared). Throws if Stripe
+// fails, so the caller can stop instead of deleting.
+export async function cancelLiveHaulockSubscriptions(
+  stripe: Stripe,
+  opts: { customerId?: string | null; email?: string | null },
+): Promise<string[]> {
+  const customerIds = new Set<string>(opts.customerId ? [opts.customerId] : []);
+  if (opts.email) {
+    const found = await stripe.customers.list({ email: opts.email, limit: 10 });
+    for (const c of found.data) customerIds.add(c.id);
+  }
+  const canceled: string[] = [];
+  for (const cid of Array.from(customerIds)) {
+    const subs = await stripe.subscriptions.list({ customer: cid, status: 'all', limit: 100 });
+    for (const s of subs.data) {
+      if (s.metadata?.product !== 'haulock') continue;
+      if (!['active', 'trialing', 'past_due', 'unpaid'].includes(s.status)) continue;
+      await stripe.subscriptions.cancel(s.id);
+      canceled.push(s.id);
+    }
+  }
+  return canceled;
+}
+
 export type Lifetime = { paid: number; refunded: number };
 
 // Money each subscription has collected, in cents: paid invoices, and what
