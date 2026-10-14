@@ -23,6 +23,32 @@ export function subscriptionBilling(s: Stripe.Subscription): Billing | null {
   return interval === 'year' ? 'annual' : interval === 'month' ? 'monthly' : null;
 }
 
+// The Stripe customer id saved on the account, but only if that customer
+// really belongs to this user. The id sits in user_metadata, which the user
+// can edit, so on its own it could point at someone else's customer (their
+// billing portal, saved card and subscriptions). Haulock customers carry
+// metadata.user_id; older ones without it must at least share the email.
+// Returns null when the id is missing, unknown or someone else's; rethrows
+// other Stripe errors so callers don't act on a guess.
+export async function ownedCustomerId(
+  stripe: Stripe,
+  user: { id: string; email?: string | null; user_metadata?: any },
+): Promise<string | null> {
+  const id = user.user_metadata?.stripe_customer_id;
+  if (typeof id !== 'string' || !/^cus_[A-Za-z0-9]+$/.test(id)) return null;
+  let customer: Stripe.Customer | Stripe.DeletedCustomer;
+  try {
+    customer = await stripe.customers.retrieve(id);
+  } catch (err: any) {
+    if (err?.code === 'resource_missing') return null;
+    throw err;
+  }
+  if ((customer as Stripe.DeletedCustomer).deleted) return null;
+  const c = customer as Stripe.Customer;
+  if (c.metadata?.user_id) return c.metadata.user_id === user.id ? id : null;
+  return c.email && user.email && c.email.toLowerCase() === user.email.toLowerCase() ? id : null;
+}
+
 export function customerIdOf(s: Stripe.Subscription): string | null {
   const c: any = s.customer;
   return typeof c === 'string' ? c : c?.id || null;

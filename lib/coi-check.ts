@@ -151,13 +151,21 @@ export function normalizeNaic(v: unknown): string | null {
   return /^\d{5}$/.test(s) ? s : null;
 }
 
-// MM/DD/YYYY (as printed on ACORD forms) → YYYY-MM-DD; ISO passes through.
+// MM/DD/YYYY (as printed on ACORD forms, also with - or . and 2-digit
+// years) → YYYY-MM-DD; ISO passes through. Anything else is null: dates are
+// compared as strings, and a raw "12/31/26" sorted before today and read as
+// a false "expired".
 function isoOrNull(v: string | null | undefined): string | null {
   const s = String(v ?? '').trim();
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : s;
+  const m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${year}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
 }
 
 const bareName = (s: string | null | undefined) => String(s || '').toUpperCase().replace(INSURED_NOISE, ' ').replace(/[^A-Z0-9]/g, '');
@@ -510,8 +518,11 @@ export function compareCoi(
     if (carrier.outOfService) {
       add('fail', 'FMCSA lists the carrier as out of service', `${carrierLabel} has an out-of-service order on its FMCSA record.`, FMCSA_CARRIER_SRC);
     }
+    // Common or contract authority both let a carrier haul; a contract-only
+    // carrier has common authority "N" and failed this check before.
+    const contractActive = /^active/i.test(String(carrier.contractAuthority || ''));
     const auth = carrier.commonAuthority || carrier.authorityStatus;
-    if (auth && !/^active/i.test(auth)) {
+    if (auth && !/^active/i.test(auth) && !contractActive) {
       add('fail', `Operating authority: ${auth}`, `FMCSA shows the carrier's operating authority as ${auth.toLowerCase()}. Insurance alone doesn't make a carrier authorized to haul.`, FMCSA_CARRIER_SRC);
     }
   }

@@ -42,7 +42,7 @@ export default async function Image() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <div
             style={{
-              display: 'inline-flex',
+              display: 'flex',
               alignSelf: 'flex-start',
               padding: '8px 18px',
               borderRadius: 999,
@@ -56,8 +56,12 @@ export default async function Image() {
           >
             Freight fraud protection
           </div>
+          {/* Satori needs display:flex on any div with more than one child;
+              without it the image route threw and shares had no preview. */}
           <div
             style={{
+              display: 'flex',
+              flexDirection: 'column',
               fontSize: 76,
               fontWeight: 700,
               lineHeight: 1.05,
@@ -65,8 +69,7 @@ export default async function Image() {
               maxWidth: 1000,
             }}
           >
-            Verify any broker or carrier.
-            <br />
+            <span>Verify any broker or carrier.</span>
             <span style={{ color: '#FF6B35', fontStyle: 'italic', fontWeight: 500 }}>
               Stop freight fraud.
             </span>
@@ -93,9 +96,9 @@ export default async function Image() {
             borderTop: '1px solid rgba(255, 255, 255, 0.12)',
           }}
         >
-          <span>✓ For carriers and brokers</span>
-          <span>✓ 14 data sources</span>
-          <span>✓ PDF tamper check</span>
+          <span>• For carriers and brokers</span>
+          <span>• 14 data sources</span>
+          <span>• PDF tamper check</span>
         </div>
       </div>
     ),

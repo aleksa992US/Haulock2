@@ -3,7 +3,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { removeContact, isAudienceConfigured } from '@/lib/resend-audience';
 import { getStripe } from '@/lib/stripe';
-import { cancelLiveHaulockSubscriptions } from '@/lib/billing';
+import { cancelLiveHaulockSubscriptions, ownedCustomerId } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,7 +23,9 @@ export async function DELETE() {
   const stripe = getStripe();
   if (stripe) {
     try {
-      await cancelLiveHaulockSubscriptions(stripe, { customerId: me.user_metadata?.stripe_customer_id, email: me.email });
+      // Only this user's own customer (the stored id is user-editable); the
+      // email lookup covers customers created before the id was saved.
+      await cancelLiveHaulockSubscriptions(stripe, { customerId: await ownedCustomerId(stripe, me), email: me.email });
     } catch (err: any) {
       console.error('[api/profile/delete] stripe cancel failed:', err?.message);
       return NextResponse.json({ error: "We couldn't cancel your subscription, so your account was not deleted. Please try again or contact support." }, { status: 502 });

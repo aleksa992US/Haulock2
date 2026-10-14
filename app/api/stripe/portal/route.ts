@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe';
+import { ownedCustomerId } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export async function POST() {
   const me = userData?.user;
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const customerId = me.user_metadata?.stripe_customer_id as string | undefined;
+  const customerId = await ownedCustomerId(stripe, me);
   if (!customerId) {
     return NextResponse.json({ error: 'No Stripe customer on file — subscribe first.' }, { status: 400 });
   }

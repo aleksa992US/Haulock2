@@ -449,6 +449,8 @@ function buildInsuranceSummary(bipd?: number, cargo?: number, cargoReq?: boolean
   return parts.join(' · ') || undefined;
 }
 
+const SAFETY_RATING_CODES: Record<string, string> = { S: 'Satisfactory', C: 'Conditional', U: 'Unsatisfactory' };
+
 export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
   const c = pickCarrier(raw);
   if (!c) return null;
@@ -504,7 +506,9 @@ export function normalize(raw: any, query: ParsedQuery): CarrierReport | null {
     contractAuthority: contract,
     authorityGrantDate: granted ?? undefined,
     authorityAge: humanAge(months),
-    safetyRating: c.safetyRating || 'Not rated',
+    // QCMobile sends the rating as a letter; the risk flag, UI and PDF
+    // expect the word.
+    safetyRating: SAFETY_RATING_CODES[String(c.safetyRating || '').toUpperCase()] || c.safetyRating || 'Not rated',
     safetyRatingDate: c.safetyRatingDate || undefined,
     outOfService: oos,
     oosDate: oosDate ? String(oosDate) : undefined,

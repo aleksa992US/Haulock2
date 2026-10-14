@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { isResendConfigured, sendEmail, reportShareTemplate } from '@/lib/email';
 import { buildReportPdf, reportPdfFilename } from '@/lib/report-pdf';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { checkSimpleRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,18 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function POST(req: Request) {
   if (!isResendConfigured()) {
     return NextResponse.json({ error: 'Email is not configured. Set RESEND_API_KEY.' }, { status: 503 });
+  }
+
+  // Signed-in users only, rate-limited: otherwise anyone could send
+  // Haulock-branded mail with their own text to any address.
+  const supabase = getServerSupabase();
+  if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+  const { data: userData } = await supabase.auth.getUser();
+  const me = userData?.user;
+  if (!me) return NextResponse.json({ error: 'Sign in to email a report.' }, { status: 401 });
+  const rl = checkSimpleRateLimit({ bucket: 'report-email', identity: me.id, max: 20, windowMs: 60 * 60_000 });
+  if (!rl.ok) {
+    return NextResponse.json({ error: 'Too many report emails — try again later.' }, { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } });
   }
 
   let body: any;
@@ -40,14 +53,8 @@ export async function POST(req: Request) {
   // Sender identity — pulled from the signed-in user. Used for "From: Sender Name"
   // attribution in the email body and to set Reply-To so the recipient can
   // respond directly to the person who shared the report.
-  const supabase = getServerSupabase();
-  let senderName: string | undefined;
-  let senderEmail: string | undefined;
-  if (supabase) {
-    const { data } = await supabase.auth.getUser();
-    senderEmail = data?.user?.email;
-    senderName = data?.user?.user_metadata?.full_name || data?.user?.user_metadata?.name || undefined;
-  }
+  const senderEmail: string | undefined = me.email;
+  const senderName: string | undefined = me.user_metadata?.full_name || me.user_metadata?.name || undefined;
 
   const { getEmailSiteUrl } = await import('@/lib/email');
   const siteUrl = getEmailSiteUrl();

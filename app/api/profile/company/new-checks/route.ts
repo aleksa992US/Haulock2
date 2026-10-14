@@ -3,7 +3,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
-import { NOTIFY_DELAY_MS, companyChecksSince, currentVerification, ownIds } from '@/lib/company-profile';
+import { NOTIFY_DELAY_MS, companyChecksSince, currentVerification } from '@/lib/company-profile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,7 +34,8 @@ export async function GET(req: Request) {
     const { data: members } = await svc.from('team_members').select('user_id').eq('team_id', ctx.team.id);
     exclude = Array.from(new Set([...exclude, ...(members || []).map((m: any) => m.user_id)]));
   }
-  const { mc, dot } = ownIds(user);
-  const count = await companyChecksSince(svc, { mc, dot: verification.dot || dot }, exclude, since, until);
+  // Only the verified company's ids: the profile MC/DOT are user-editable,
+  // and mixing another company's MC with the verified DOT exposed its counts.
+  const count = await companyChecksSince(svc, { mc: verification.mc, dot: verification.dot }, exclude, since, until);
   return NextResponse.json({ enabled: true, count, until });
 }

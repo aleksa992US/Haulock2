@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveTeamContext } from '@/lib/teams';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { generateKey } from '@/lib/api-keys';
 import { isAdmin } from '@/lib/admin';
@@ -34,7 +35,8 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   // Plan gate: Free users cannot create keys. Admins bypass for testing.
-  const planId = String(user.user_metadata?.plan || 'free').toLowerCase();
+  // Team members get the team's plan, like every other limit check.
+  const planId = (await resolveTeamContext(user.id, user.user_metadata?.plan)).effectivePlan.id;
   if (!PAID_PLANS_FOR_API.has(planId) && !(await isAdmin(user.email))) {
     return NextResponse.json({
       error: 'API access requires the Carrier plan or higher.',

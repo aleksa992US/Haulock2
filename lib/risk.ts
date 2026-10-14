@@ -2,6 +2,12 @@ import type { CarrierReport, RiskFlag } from './fmcsa';
 import { roleNoun } from './recommendation';
 import { isRecentReactivation, humanMonths } from './fmcsa-authority-history';
 
+// Findings whose advice is "do not book/tender" (no active authority, out
+// of service, no liability insurance, no broker bond) score the High-risk
+// threshold, so any one of them alone gives a High verdict instead of
+// "Proceed with caution".
+const BLOCKER_PTS = 61;
+
 export function scoreCarrier(c: CarrierReport): CarrierReport {
   const flags: RiskFlag[] = [...c.flags];
 
@@ -32,7 +38,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       sev: 'critical',
       title: 'No active operating authority',
       desc: `FMCSA shows no active carrier or broker authority${parts ? ` (${parts})` : c.authorityStatus ? ` (status: ${c.authorityStatus})` : ''}.`,
-      pts: 50,
+      pts: BLOCKER_PTS,
       details: 'A company needs active carrier authority to haul interstate freight, or active broker authority to arrange it. Without either, a load could be seized, and you have no federal protection if something goes wrong or you aren\'t paid.',
       recommendation: 'Do not book or tender. Ask for their MC number again and re-check, in case you were given the wrong one.',
     });
@@ -46,7 +52,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       sev: 'critical',
       title: 'Carrier is out of service',
       desc: `FMCSA lists an out-of-service order${c.oosDate ? ` dated ${c.oosDate}` : ''} and shows the carrier as not allowed to operate.`,
-      pts: 40,
+      pts: BLOCKER_PTS,
       details: 'While an out-of-service order is in effect, the carrier may not operate commercial motor vehicles in interstate commerce. FMCSA issues these orders for reasons such as an unsatisfactory safety rating, an imminent-hazard finding, or unpaid civil penalties, and lifts them once the cause is resolved.',
       metrics: [
         ...(c.oosDate ? [{ label: 'OOS order date', value: c.oosDate }] : []),
@@ -106,7 +112,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         sev: 'critical',
         title: 'No liability insurance on file',
         desc: 'FMCSA shows $0 BIPD insurance. Federal minimum is $750K.',
-        pts: 40,
+        pts: BLOCKER_PTS,
         details: 'BIPD (Bodily Injury & Property Damage) insurance is federally required for all motor carriers. Without it, any claim against the carrier is uninsured and the shipper, broker, or carrier-of-record could be liable.',
         metrics: [
           { label: 'BIPD on file', value: '$0' },
@@ -169,7 +175,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         sev: 'critical',
         title: 'No surety bond on file',
         desc: 'Brokers are federally required to maintain a $75,000 surety bond (BMC-84) or trust fund (BMC-85).',
-        pts: 40,
+        pts: BLOCKER_PTS,
         details: 'The BMC-84 surety bond protects carriers and shippers when a broker fails to pay. A broker with no bond on file is operating illegally and carriers have no recourse if they stiff you.',
         metrics: [
           { label: 'Bond on file', value: bondLabel },

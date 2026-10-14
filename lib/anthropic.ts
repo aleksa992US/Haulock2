@@ -135,7 +135,11 @@ export async function analyzeRateCon(ocrText: string): Promise<RateConExtraction
   const textBlock = resp.content.find((b: any) => b.type === 'text') as any;
   if (!textBlock?.text) throw new Error('Claude returned no text content');
   const raw = textBlock.text.trim();
-  const jsonStr = raw.startsWith('{') ? raw : raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  // Take the JSON object out of the reply, as analyzeCoi does: stripping
+  // only a leading fence failed on any sentence before the JSON.
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  const jsonStr = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
 
   let parsed: any;
   try {
@@ -282,8 +286,12 @@ export async function analyzeCoi(ocrText: string, file?: CoiFile): Promise<CoiEx
             },
           ],
         }],
-      });
+        // The COI route has 60s in all (OCR, this read, FMCSA lookups). The
+        // SDK default (minutes, plus 2 retries) let a slow read run into the
+        // platform kill, so the text-only fallback below never got its turn.
+      }, { timeout: 30_000, maxRetries: 0 });
       if (resp.stop_reason === 'refusal') throw new Error('refused');
+      if (resp.stop_reason === 'max_tokens') throw new Error('output cut off at max_tokens');
       const block = resp.content.find((b) => b.type === 'text');
       raw = block && block.type === 'text' ? block.text.trim() : null;
     } catch (err) {
@@ -298,7 +306,7 @@ export async function analyzeCoi(ocrText: string, file?: CoiFile): Promise<CoiEx
       max_tokens: 1500,
       system: COI_PROMPT,
       messages: [{ role: 'user', content: `Extract this certificate of insurance and return the JSON:\n\n---\n${trimmed}\n---` }],
-    });
+    }, { timeout: 15_000, maxRetries: 1 });
     const textBlock = resp.content.find((b: any) => b.type === 'text') as any;
     if (!textBlock?.text) throw new Error('Claude returned no text content');
     raw = String(textBlock.text).trim();

@@ -2,11 +2,10 @@ import { NextResponse } from 'next/server';
 import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, NotFoundByNameError, AmbiguousNameError } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServerSupabase } from '@/lib/supabase/server';
-import { monthStart } from '@/lib/plans';
 import { checkAddress } from '@/lib/places';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
-import { getServiceSupabase } from '@/lib/supabase/service';
+import { countMonthlyLookups } from '@/lib/usage';
 import { findCarrierWebsite, assessWebsiteOwnership } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
@@ -52,6 +51,10 @@ export async function GET(req: Request) {
   if (supabase) {
     const { data: userData } = await supabase.auth.getUser();
     user = userData?.user;
+    // Every caller in the app is signed in. Without a user, the rate limit
+    // and plan cap below are skipped, so an anonymous caller could run
+    // unlimited paid scans (Places, Brave, web search).
+    if (!user) return NextResponse.json({ error: 'Sign in to run a lookup.', code: 'auth_required' }, { status: 401 });
   }
 
   // Per-user lookup cache: return the most recent saved row for this MC/DOT
@@ -68,6 +71,11 @@ export async function GET(req: Request) {
       .select('*')
       .eq('user_id', user.id)
       .eq(col, parsed.value)
+      // Plain lookups only: a COI, PDF or rate con row for the same MC is a
+      // different payload, and a lookup run with a sender email carries
+      // that email's look-alike findings.
+      .eq('source', 'quick')
+      .is('email_query', null)
       .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(1);
@@ -134,21 +142,9 @@ export async function GET(req: Request) {
     const plan = ctx.effectivePlan;
     const cap = plan.limits.fmcsaLookups;
     if (cap != null) {
-      let countableIds: string[] = [user.id];
-      if (ctx.team) {
-        const svc = getServiceSupabase();
-        if (svc) {
-          const { data: members } = await svc.from('team_members').select('user_id').eq('team_id', ctx.team.id);
-          countableIds = (members || []).map((m: any) => m.user_id);
-        }
-      }
-      const since = monthStart().toISOString();
-      const { count } = await supabase
-        .from('lookups')
-        .select('id', { count: 'exact', head: true })
-        .in('user_id', countableIds)
-        .eq('source', 'quick')
-        .gte('created_at', since);
+      // Service-role count: RLS hides teammates' rows from the user's
+      // client, which gave every team member the full team quota.
+      const count = await countMonthlyLookups(user.id, ctx, 'quick');
       if ((count ?? 0) >= cap) {
         return NextResponse.json({
           error: `Your ${ctx.team ? 'team' : 'account'} has used all ${cap} lookups on the ${plan.label} plan this month.`,
@@ -284,8 +280,10 @@ export async function GET(req: Request) {
         return null;
       }),
     ),
+    // QCMobile rarely returns a phone; the census does. Wait for it so the
+    // shared-phone match has a number to search on.
     timed('chameleon',
-      findChameleonLinks(carrier).catch((e) => {
+      censusPromise.then((cen) => findChameleonLinks(!carrier.phone && cen?.phone ? { ...carrier, phone: cen.phone } : carrier)).catch((e) => {
         console.error('[verify] chameleon detection FAILED', e?.message);
         return [];
       }),

@@ -107,6 +107,13 @@ function toIso(d: Date | undefined | null): string | null {
   return d.toISOString();
 }
 
+// pdf-lib's getCreationDate/getModificationDate throw on a date string
+// without the "D:" form (some generators) and on encrypted files, whose Info
+// strings stay encrypted. That threw the whole check; treat it as no date.
+function safeDate(read: () => Date | undefined): string | null {
+  try { return toIso(read() ?? null); } catch { return null; }
+}
+
 function getText(getter: () => string | undefined): string | null {
   try {
     const v = getter();
@@ -838,7 +845,7 @@ function printDoc(doc: PDFDocument): DocPrint {
   return {
     pages,
     producer: getText(() => doc.getProducer()),
-    modified: toIso(doc.getModificationDate() ?? null),
+    modified: safeDate(() => doc.getModificationDate()),
     formValues: formValues(doc),
   };
 }
@@ -935,8 +942,8 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
     });
   };
 
-  const creationDate = toIso(doc.getCreationDate() ?? null);
-  const modificationDate = toIso(doc.getModificationDate() ?? null);
+  const creationDate = safeDate(() => doc.getCreationDate());
+  const modificationDate = safeDate(() => doc.getModificationDate());
   const producer = getText(() => doc.getProducer());
   const creator = getText(() => doc.getCreator());
   const author = getText(() => doc.getAuthor());
@@ -969,9 +976,16 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   const baseEofs = raw.linearized && eofs.length >= 2 ? 2 : 1;
   const laterSaves = Math.max(0, eofs.length - baseEofs);
   const revisions: RevisionInfo[] = [];
+  // Byte offset where each entry of `revisions` ends (same index).
+  let revisionEnds: number[] = [];
   if (laterSaves > 0 && !encryptedContent) {
     // Rebuild each version from the bytes up to its %%EOF and compare.
-    const ends = eofs.slice(baseEofs - 1).slice(-MAX_REVISIONS);
+    // Always keep the real original plus the latest saves: keeping only the
+    // last 8 labelled a later save "Original" and hid any edit made before
+    // it behind a run of trivial re-saves.
+    const allEnds = eofs.slice(baseEofs - 1);
+    const ends = allEnds.length > MAX_REVISIONS ? [allEnds[0], ...allEnds.slice(-(MAX_REVISIONS - 1))] : allEnds;
+    revisionEnds = ends;
     const prints: (DocPrint | null)[] = [];
     for (let i = 0; i < ends.length; i++) {
       if (i === ends.length - 1) { prints.push(finalPrint); continue; }
@@ -1106,7 +1120,10 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   if (raw.signatures.length) {
     const lastCovered = Math.max(...raw.signatures.map((s) => s.coveredEnd));
     const fileEnd = eofs.length ? eofs[eofs.length - 1] : buffer.length;
-    const changedAfter = revisions.some((r) => r.kind === 'content' || r.kind === 'markup') && fileEnd - lastCovered > 64;
+    // Only versions saved after the signed bytes count: an edit made before
+    // signing (then signed, then e.g. an LTV save) is covered by the signature.
+    const changedAfter = fileEnd - lastCovered > 64 && revisions.some((r, i) =>
+      (r.kind === 'content' || r.kind === 'markup') && (revisionEnds[i] ?? 0) > lastCovered + 2);
     if (fileEnd - lastCovered > 64) {
       flag({
         sev: changedAfter ? 'critical' : 'warning', code: 'CHANGED_AFTER_SIGNING',

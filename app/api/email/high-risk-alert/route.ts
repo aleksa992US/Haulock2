@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { sendEmail, highRiskAlertTemplate, isResendConfigured, type AlertReport } from '@/lib/email';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { checkSimpleRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,10 @@ export async function POST(req: Request) {
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user?.email) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // The report comes from the client and notification_email isn't verified,
+  // so cap how often one account can trigger this email.
+  const rl = checkSimpleRateLimit({ bucket: 'high-risk-alert', identity: user.id, max: 10, windowMs: 60 * 60_000 });
+  if (!rl.ok) return NextResponse.json({ skipped: 'rate_limited' }, { status: 429 });
 
   const body = await req.json().catch(() => null) as { report?: AlertReport } | null;
   const report = body?.report;

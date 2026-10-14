@@ -63,6 +63,22 @@ function consumePostLoginRedirect(): string | null {
 
 // Lazy-mount each page once and toggle visibility with display:none on subsequent navigations.
 // Keeps state, scroll position, and avoids re-firing useEffect fetches on every tab switch.
+// Document uploads go through a Vercel function, which rejects request
+// bodies over 4.5 MB with a plain-text 413 before our route runs; timeouts
+// come back as a plain-text 504. Check size up front, and read error bodies
+// without assuming JSON (that showed "Unexpected token…" to the user).
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+function assertUploadSize(f: File) {
+  if (f.size > MAX_UPLOAD_BYTES) throw new Error(`That file is ${(f.size / 1024 / 1024).toFixed(1)} MB. Files must be under 4 MB — try a PDF export instead of a phone scan, or a smaller image.`);
+}
+async function uploadJson(r: Response): Promise<any> {
+  const j = await r.json().catch(() => null);
+  if (j) return j;
+  if (r.status === 413) return { error: 'That file is too large to upload. Files must be under 4 MB.' };
+  if (r.status === 504) return { error: 'The check took too long and timed out. Please try again.' };
+  return { error: `Request failed (${r.status})` };
+}
+
 function PageSlot({ routeId, current, children }: { routeId: string; current: string; children: React.ReactNode }) {
   const isActive = routeId === current;
   const [hasMounted, setHasMounted] = useState(isActive);
@@ -5142,7 +5158,7 @@ function Plan({ user, setPlan }: any) {
           );
         })}
       </div>
-      <div className="text-xs mono text-[#0B1E3F]/50">Payments are not yet enabled. Choosing a paid plan saves the selection to your profile only — billing will be added before launch.</div>
+      <div className="text-xs mono text-[#0B1E3F]/50">Payments are processed by Stripe. Cancel any time: paid access continues to the end of the period you paid for. Payments aren&rsquo;t refunded.</div>
 
       <LeaveAccountSection user={user} current={current} onSwitchToFree={() => choose('free')} />
     </div>
@@ -7163,7 +7179,12 @@ function SalesPage() {
   const exportCsv = () => {
     const rows = selectedLeads.length ? selectedLeads : shown;
     const cols = ['email', 'name', 'company', 'mc', 'plan', 'segment', 'stage', 'lookupsTotal', 'lookupsThisMonth', 'createdAt', 'lastActiveAt', 'lastEmailedAt', 'followUpAt', 'notes'];
-    const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    // Leading = + - @ (or tab/CR) would run as a formula in Excel/Sheets;
+    // names, companies and notes are user-entered.
+    const esc = (v: any) => {
+      const str = String(v ?? '');
+      return `"${(/^[=+\-@\t\r]/.test(str) ? `'${str}` : str).replace(/"/g, '""')}"`;
+    };
     const csv = [cols.join(','), ...rows.map((l) => cols.map((c) => esc(c === 'segment' ? SALES_SEGMENTS[l.segment as SalesSegment]?.label : l[c])).join(','))].join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
@@ -9444,7 +9465,9 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const alertsRes = useCachedFetch<{ unseenCount: number }>('alerts', '/api/alerts', { refreshMs: 60_000 });
   const alertCount = alertsRes.data?.unseenCount || 0;
   const usageRes = useCachedFetch<{ plan: any; usage: any; isAdmin?: boolean }>('usage', '/api/usage');
-  const usagePlan = getPlan(user?.plan || usageRes.data?.plan?.id);
+  // /api/usage returns the plan the server enforces (a team's plan wins);
+  // the user's own metadata says Free for members of a paying team.
+  const usagePlan = getPlan(usageRes.data?.plan?.id || user?.plan);
   const usageNums = usageRes.data?.usage || { fmcsaLookups: 0, rateConScans: 0 };
   // /api/usage takes a moment, so remember the last answer per user on this
   // device and show Admin / Sales immediately. The server still checks
@@ -9771,7 +9794,8 @@ function loadPlannerSettings(): PlannerSettings {
 }
 
 const money = (n: number, cents = false) => (isFinite(n) ? n : 0).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
-const numIn = (v: string) => { const n = Number(String(v).replace(/[$,\s]/g, '')); return isFinite(n) && n > 0 ? n : 0; };
+// Accepts "$1,400", "88%", "0.65/mi" — those used to read as 0.
+const numIn = (v: string) => { const n = Number(String(v).replace(/[$,%\s]|\/\s*mi(le)?$/gi, '')); return isFinite(n) && n > 0 ? n : 0; };
 
 function PlannerStep({ n, title, hint, highlight, children }: { n: number; title: string; hint?: string; highlight?: boolean; children: React.ReactNode }) {
   return (
@@ -9814,6 +9838,8 @@ function LoadPlanner({ navigate }: { navigate: any }) {
   const [commitTick, setCommitTick] = useState(0);
   const commit = () => setCommitTick((n) => n + 1);
   const lastPlannedKey = React.useRef('');
+  const busyRef = React.useRef(false);
+  const replanAfterBusy = React.useRef(false);
   // Fair-use pause (after many plans in a few minutes) and the Free plan's
   // monthly limit, both set by /api/planner/route.
   const [cooldownUntil, setCooldownUntil] = useState(0);
@@ -9874,8 +9900,9 @@ function LoadPlanner({ navigate }: { navigate: any }) {
     try {
       const fd = new FormData();
       fd.append('file', f);
+      assertUploadSize(f);
       const r = await fetch('/api/rate-con/scan', { method: 'POST', body: fd });
-      const j = await r.json().catch(() => ({}));
+      const j = await uploadJson(r);
       if (!r.ok) {
         if (r.status === 402) throw new Error(`${j?.error || 'You’ve used this month’s rate con scans.'} You can still type the load in.`);
         // Missing server keys only happens on a local copy (production has them).
@@ -9910,9 +9937,14 @@ function LoadPlanner({ navigate }: { navigate: any }) {
   });
   const calculate = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (busy || Date.now() < cooldownUntil) return;
+    if (Date.now() < cooldownUntil) return;
+    // A place settled while a route was loading (e.g. the truck location
+    // picked right after delivery): plan again once this one finishes,
+    // instead of dropping the change.
+    if (busyRef.current) { replanAfterBusy.current = true; return; }
     const body = routeBody();
     lastPlannedKey.current = JSON.stringify(body);
+    busyRef.current = true;
     setBusy(true); setError(null); setLimitHit(null);
     try {
       const r = await fetch('/api/planner/route', {
@@ -9920,7 +9952,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({ error: r.status === 504 ? 'Routing took too long. Please try again.' : undefined }));
       if (r.status === 429 && j?.code === 'cooldown') {
         lastPlannedKey.current = ''; // re-plan once the pause is over
         setCooldownUntil(Date.now() + (Number(j.retryAfter) || 30) * 1000);
@@ -9930,11 +9962,17 @@ function LoadPlanner({ navigate }: { navigate: any }) {
       if (!r.ok) throw new Error(j?.error || `Couldn’t plan the route (${r.status})`);
       if (j.usage) setPlanUsage({ used: j.usage.used, limit: j.usage.limit });
       setPlan(j);
+      invalidateCache('usage'); // the dashboard's "plans left" count
       track('load_planned', { routing: j.routingSource, hasOrigin: Boolean(j.hasOrigin) });
     } catch (err: any) {
       setError(err?.message || 'Couldn’t plan the route');
     } finally {
+      busyRef.current = false;
       setBusy(false);
+      if (replanAfterBusy.current) {
+        replanAfterBusy.current = false;
+        setCommitTick((t) => t + 1); // the effect below re-plans if places changed
+      }
     }
   };
 
@@ -9991,7 +10029,13 @@ function LoadPlanner({ navigate }: { navigate: any }) {
   // out of the driver's pay instead.
   const net = revenue - companyFuel - driverCost - otherCost;
   const driverNet = driverCost - fuelCost;
-  const costPerMile = totalMiles ? (companyFuel + driverCost + otherCost) / totalMiles : 0;
+  // The rate per mile where what's left is $0. With pay as a % of the rate,
+  // pay grows with the rate, so solve rate = (fuel + other) / (1 - pct).
+  const payPct = settings.payType === 'percent' ? Math.min(100, numIn(settings.driverPct)) / 100 : 0;
+  const costPerMile = !totalMiles ? 0
+    : settings.payType === 'percent'
+      ? (payPct < 1 ? (companyFuel + otherCost) / (1 - payPct) / totalMiles : 0)
+      : (companyFuel + driverCost + otherCost) / totalMiles;
   const payLabel = settings.payType === 'percent'
     ? (numIn(settings.driverPct) ? `${numIn(settings.driverPct)}% of the rate` : '')
     : settings.payType === 'flat'
@@ -10240,7 +10284,10 @@ function LoadPlanner({ navigate }: { navigate: any }) {
                     <div><div className="text-[10px] mono uppercase tracking-wider text-white/55">Owner-operator keeps</div><div className={`text-lg font-semibold ${driverNet >= 0 ? 'text-[#86EFAC]' : 'text-[#FCA5A5]'}`}>{driverCost ? `${money(driverNet)}${totalMiles ? ` · ${money(driverNet / totalMiles, true)}/mi` : ''}` : 'Set their pay in step 3'}</div></div>
                   </div>
                 )}
-                {!driverCost && !otherCost && revenue > 0 && !driverBuysFuel && <div className="mt-3 text-[11px] text-white/55">Fuel only so far. Add driver pay in step 3 for the real number.</div>}
+                {/* No diesel price (EIA didn't answer, none typed in): fuel counts
+                    as $0, so say so instead of showing an inflated number. */}
+                {!fuelPrice && totalMiles > 0 && revenue > 0 && <div className="mt-3 text-[12px] text-[#FCD34D]">This week&apos;s diesel price didn&apos;t load, so fuel isn&apos;t counted above. Enter a diesel price under &ldquo;More&rdquo; in step 3.</div>}
+                {!driverCost && !otherCost && revenue > 0 && !driverBuysFuel && companyFuel > 0 && <div className="mt-3 text-[11px] text-white/55">Fuel only so far. Add driver pay in step 3 for the real number.</div>}
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -10534,7 +10581,7 @@ function Dashboard({ navigate, user }: any) {
   const ownRes = useCachedFetch<any>('own-score', '/api/profile/own-score');
   const lookups = lookupsRes.data?.lookups ?? null;
   const usage = usageRes.data;
-  const plan = getPlan(user?.plan || usage?.plan?.id);
+  const plan = getPlan(usage?.plan?.id || user?.plan);
   const isAdmin = Boolean(usage?.isAdmin);
   const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, pdfForensics: 0, coiChecks: 0, watchlist: 0, loadPlans: 0 };
   const showCoi = COI_CHECK_ON || isAdmin;
@@ -11009,8 +11056,9 @@ function VerifyTool({ navigate }: any) {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      assertUploadSize(file);
       const res = await fetch('/api/rate-con/scan', { method: 'POST', body: fd });
-      const data = await res.json();
+      const data = await uploadJson(res);
       if (!res.ok) {
         if (res.status === 402) throw new Error(data?.error || 'Monthly rate con scan limit reached. Upgrade your plan.');
         throw new Error(data?.error || `Scan failed (${res.status})`);
@@ -11367,7 +11415,7 @@ function VerifyTool({ navigate }: any) {
                 <span className="inline-block px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">
                   Choose file
                 </span>
-                <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 10MB</div>
+                <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 4 MB</div>
               </>
             )}
           </label>
@@ -11461,8 +11509,9 @@ function CoiCheckPanel({ navigate }: { navigate: any }) {
       fd.append('file', f);
       const mcDigits = mc.replace(/[^0-9]/g, '');
       if (mcDigits) fd.append('mc', mcDigits);
+      assertUploadSize(f);
       const r = await fetch('/api/coi/check', { method: 'POST', body: fd });
-      const j = await r.json();
+      const j = await uploadJson(r);
       if (!r.ok) {
         if (r.status === 402) throw new Error(j?.error || 'Monthly COI check limit reached. Upgrade your plan.');
         throw new Error(j?.error || `Check failed (${r.status})`);
@@ -11522,7 +11571,7 @@ function CoiCheckPanel({ navigate }: { navigate: any }) {
             </div>
             <div className="text-sm text-[#0B1E3F]/60 mb-6">{loading ? 'Usually 10–20 seconds.' : 'ACORD 25 PDF works best — PDFs also get the edit check.'}</div>
             {!loading && <span className="inline-block px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Choose file</span>}
-            <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 10MB</div>
+            <div className="mt-4 text-xs mono text-[#0B1E3F]/40">PDF · PNG · JPG · max 4 MB</div>
           </label>
         </>
       )}
@@ -11695,8 +11744,9 @@ function PdfForensicsPanel() {
     try {
       const fd = new FormData();
       fd.append('file', f);
+      assertUploadSize(f);
       const r = await fetch('/api/pdf-forensics', { method: 'POST', body: fd });
-      const j = await r.json();
+      const j = await uploadJson(r);
       if (!r.ok) throw new Error(j?.error || `Analysis failed (${r.status})`);
       setResult(j);
       if (j?.fileSha256) saveLocalPdf(j.fileSha256, f);
@@ -11735,7 +11785,7 @@ function PdfForensicsPanel() {
         <div className="text-lg font-medium text-[#0B1E3F] mb-1">
           {loading ? 'Taking the PDF apart…' : file ? file.name : 'Drop a PDF to check if it was tampered with'}
         </div>
-        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 15 MB · checked, never stored on our servers</div>
+        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 4 MB · checked, never stored on our servers</div>
         {!loading && <div className="mt-4 inline-block px-5 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Choose PDF</div>}
       </label>
 
@@ -12309,26 +12359,31 @@ function entityBadge(r: any): { label: string; bg: string; color: string; icon: 
 
 // COI checks are saved to history like any other scan; route them to their
 // own view so the carrier report never receives a COI payload.
+// The empty state lives here, not in CarrierReport: the report page stays
+// mounted (PageSlot), so CarrierReport returning early before its hooks
+// crashed React when a report arrived after the empty state had rendered.
 function Report({ report, navigate }: any) {
+  if (!report) return <NoReport navigate={navigate} />;
   if (report?.kind === 'coi') return <CoiReportView report={report} navigate={navigate} />;
   if (isForensicsReport(report)) return <ForensicsReportView report={report} navigate={navigate} />;
   return <CarrierReport report={report} navigate={navigate} />;
 }
 
-function CarrierReport({ report, navigate }: any) {
-  if (!report) {
-    return (
-      <div className="py-20 px-6 text-center text-[#0B1E3F]">
-        <Search className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
-        <h1 className="text-2xl serif italic mb-2">No report to show yet</h1>
-        <p className="text-[#0B1E3F]/60 mb-6 max-w-md mx-auto">Run a Verify lookup or open one from your History to see its report here.</p>
-        <div className="flex items-center justify-center gap-2">
-          <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
-          <button onClick={() => navigate('history')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Open history</button>
-        </div>
+function NoReport({ navigate }: any) {
+  return (
+    <div className="py-20 px-6 text-center text-[#0B1E3F]">
+      <Search className="w-12 h-12 mx-auto mb-4 text-[#0B1E3F]/30" />
+      <h1 className="text-2xl serif italic mb-2">No report to show yet</h1>
+      <p className="text-[#0B1E3F]/60 mb-6 max-w-md mx-auto">Run a Verify lookup or open one from your History to see its report here.</p>
+      <div className="flex items-center justify-center gap-2">
+        <button onClick={() => navigate('verify')} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Verify a broker or carrier</button>
+        <button onClick={() => navigate('history')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Open history</button>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+function CarrierReport({ report, navigate }: any) {
   const r = report;
   const verdict = r.verdict || (r.score >= 61 ? 'high' : r.score >= 31 ? 'medium' : 'low');
   const isBad = verdict === 'high';
@@ -12553,7 +12608,7 @@ function CarrierReport({ report, navigate }: any) {
             {rescanError && <div className="mt-2 text-sm text-[#DC2626]">{rescanError}</div>}
             {exportError && <div className="mt-2 text-sm text-[#DC2626]">{exportError}</div>}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={() => setEmailOpen(true)} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition flex items-center gap-2" title="Email this report (PDF attached) via Resend">
               <Mail className="w-4 h-4" /> Email
             </button>
@@ -12608,12 +12663,15 @@ function CarrierReport({ report, navigate }: any) {
             const brokerActive = r.brokerAuthority === 'Active';
             const ok: string[] = [];
             if (carrierActive || brokerActive) ok.push(`${carrierActive && brokerActive ? 'Carrier & broker' : carrierActive ? 'Carrier' : 'Broker'} authority active`);
-            if (r.authorityAge && !/reactivated/i.test(r.authorityAge)) ok.push(`${r.authorityAge} of authority`);
+            // Scored flags on the same topic win over a green "checked out" chip.
+            const flagged = (re: RegExp) => scored.some((f: any) => re.test(String(f.title || '')));
+            if (r.authorityAge && !/reactivated/i.test(r.authorityAge) && !flagged(/^Authority (age under|recently reactivated)/)) ok.push(`${r.authorityAge} of authority`);
             if (carrierActive && r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.bipdRequired != null && r.bipdOnFile < r.bipdRequired)) ok.push(`$${(r.bipdOnFile * 1000).toLocaleString()} liability on file`);
             if (brokerActive && r.bondOnFile != null && r.bondOnFile >= 75) ok.push('Broker bond on file');
             if (r.outOfService === false) ok.push('Not out of service');
-            if (r.sms?.fetched && !Object.values(r.sms.basics || {}).some((b: any) => b?.alert)) ok.push('No FMCSA safety alerts');
-            if (r.addressCheck?.found && !r.addressCheck.isMailbox) ok.push('Address checks out');
+            // No "No FMCSA safety alerts" chip: FMCSA hides the alert symbol for
+            // property carriers in its public view, so its absence proves nothing.
+            if (r.addressCheck?.found && !r.addressCheck.isMailbox && !flagged(/^(Address |Business at this address)/)) ok.push('Address checks out');
             if (r.webPresence?.verified) ok.push('Website confirmed');
             if (r.webReputation?.ok && (r.webReputation.hits || []).length === 0) ok.push('No fraud reports online');
             return (<>
@@ -16232,7 +16290,7 @@ function BillingTab({ user, navigate, planId: metaPlanId, plan: metaPlan, upgrad
                 <div className="text-3xl serif italic text-[#0B1E3F]">{plan.label}</div>
                 <div className="text-[#0B1E3F]/60">· {plan.price}</div>
               </div>
-              <div className="text-sm text-[#0B1E3F]/60">{planId === 'free' ? '3 lookups / month · no card required' : 'Will become active when Stripe billing launches'}</div>
+              <div className="text-sm text-[#0B1E3F]/60">{planId === 'free' ? '3 lookups / month · no card required' : 'Billed through Stripe'}</div>
             </>
           ) : (
             <>

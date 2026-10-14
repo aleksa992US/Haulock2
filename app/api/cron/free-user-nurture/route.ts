@@ -44,12 +44,23 @@ async function run(req: Request) {
   const siteUrl = getEmailSiteUrl();
   const upgradeUrl = `${siteUrl}/checkout/carrier?promoCode=${PROMO_CODE}`;
 
-  // Pull every user. Vercel + Supabase Auth caps listUsers at 1000/page,
-  // which is plenty for the foreseeable future. If we ever exceed that we'll
-  // need to paginate.
-  const { data: usersData, error: usersErr } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
-  const users = usersData?.users || [];
+  // Pull every user, page by page (Supabase Auth caps listUsers at 1000).
+  const users: any[] = [];
+  for (let page = 1; ; page += 1) {
+    const { data: usersData, error: usersErr } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+    if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
+    const batch = usersData?.users || [];
+    users.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  // Members of a paying team aren't on Free even though their own
+  // metadata says so; they shouldn't get "you're on Free" emails.
+  const { data: memberRows } = await svc.from('team_members').select('user_id, teams ( plan )');
+  const teamPlanByUser = new Map<string, string>();
+  for (const m of (memberRows || []) as any[]) {
+    const t = Array.isArray(m.teams) ? m.teams[0] : m.teams;
+    if (t?.plan) teamPlanByUser.set(m.user_id, t.plan);
+  }
 
   const cooldownIso = new Date(Date.now() - COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const minAgeIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
@@ -84,7 +95,7 @@ async function run(req: Request) {
     if (!u?.email) { skip('no-email'); continue; }
     const email = String(u.email).toLowerCase();
     const meta = u.user_metadata || {};
-    const plan = meta.plan || 'free';
+    const plan = teamPlanByUser.get(u.id) || meta.plan || 'free';
 
     if (plan !== 'free') { skip('paid-plan'); continue; }
     if (!u.email_confirmed_at) { skip('email-not-confirmed'); continue; }

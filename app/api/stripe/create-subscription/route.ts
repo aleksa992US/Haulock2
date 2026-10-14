@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isLiveSubscription, ownedCustomerId } from '@/lib/billing';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe, priceIdFor, HAULOCK_TAG, type Billing, type PaidPlan } from '@/lib/stripe';
@@ -62,7 +63,8 @@ export async function POST(req: Request) {
 
   // Reuse an existing Stripe customer id stored on the user, or create one.
   const svc = getServiceSupabase();
-  let customerId: string | null = (me.user_metadata?.stripe_customer_id as string) || null;
+  // The stored id is only reused if that customer is really this user's.
+  let customerId: string | null = await ownedCustomerId(stripe, me);
   if (!customerId) {
     const customer = await stripe.customers.create({
       email: me.email,
@@ -95,6 +97,16 @@ export async function POST(req: Request) {
       }
     }
   } catch { /* non-fatal — don't block new checkout */ }
+
+  // Already paying: a second checkout would start a second subscription and
+  // charge twice. Plan changes go through the billing portal instead.
+  const existing = await stripe.subscriptions.list({ customer: customerId!, status: 'all', limit: 20 });
+  if (existing.data.some((s) => s.metadata?.product === 'haulock' && isLiveSubscription(s))) {
+    return NextResponse.json({
+      error: 'You already have an active Haulock subscription. Change plans from Plan & billing → Manage billing.',
+      code: 'already_subscribed',
+    }, { status: 409 });
+  }
 
   const subscription = await stripe.subscriptions.create({
     customer: customerId!,

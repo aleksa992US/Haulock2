@@ -93,6 +93,11 @@ export async function GET(req: Request) {
       .select('*')
       .eq('user_id', user.id)
       .eq(col, parsed.value)
+      // Plain lookups only: a COI, PDF or rate con row for the same MC is a
+      // different payload, and a lookup run with a sender email carries
+      // that email's look-alike findings.
+      .eq('source', 'quick')
+      .is('email_query', null)
       .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(1);

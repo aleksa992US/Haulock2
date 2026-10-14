@@ -649,7 +649,7 @@ ${divider()}
   ${args.sources.slice(0, 5).map((s) => `<li style="margin-bottom:6px;"><a href="${escapeHtml(s.url)}" style="color:#0B1E3F;text-decoration:underline;">${escapeHtml(s.title)}</a></li>`).join('')}
 </ul>`;
   const body = `
-${h1(args.title)}
+${h1(escapeHtml(args.title))}
 ${args.bodyHtml}
 ${button(args.siteUrl, 'Verify a broker on Haulock →')}
 ${sourcesHtml}
@@ -954,7 +954,7 @@ export function affiliateApplicationTemplate(args: {
     : '';
   const body = `
 <div style="display:inline-block;padding:4px 10px;background:rgba(11,30,63,0.08);color:#0B1E3F;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">New affiliate application</div>
-${h1(`${italicAccent(args.name)} wants to promote Haulock.`)}
+${h1(`${italicAccent(escapeHtml(args.name))} wants to promote Haulock.`)}
 <div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:20px 22px;margin:0 0 24px 0;">
   ${row('Name', args.name)}
   ${row('Email', args.email)}
@@ -1203,7 +1203,7 @@ export function payoutRequestedTemplate(args: {
   const amount = `$${(args.amountCents / 100).toFixed(2)}`;
   const body = `
 <div style="display:inline-block;padding:4px 10px;background:rgba(255,107,53,0.12);color:#FF6B35;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">Payout requested</div>
-${h1(`${italicAccent(args.affiliateName)} requested ${amount}.`)}
+${h1(`${italicAccent(escapeHtml(args.affiliateName))} requested ${amount}.`)}
 <div style="background:rgba(11,30,63,0.04);border-radius:12px;padding:20px 22px;margin:0 0 24px 0;">
   <div style="margin:0 0 12px 0;"><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Amount</div><div style="font-size:22px;font-weight:600;color:#0B1E3F;">${escapeHtml(amount)}</div></div>
   <div style="margin:0 0 12px 0;"><div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin-bottom:4px;">Affiliate</div><div style="font-size:15px;color:#0B1E3F;">${escapeHtml(args.affiliateName)} &middot; ${escapeHtml(args.affiliateEmail)}</div></div>
@@ -1239,7 +1239,7 @@ export function payoutSentTemplate(args: {
 </div>` : '';
   const body = `
 <div style="display:inline-block;padding:4px 10px;background:rgba(22,163,74,0.12);color:#16A34A;border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">Payout sent</div>
-${h1(`${args.affiliateName.split(' ')[0]}, your ${italicAccent(amount)} is on the way.`)}
+${h1(`${escapeHtml(args.affiliateName.split(' ')[0])}, your ${italicAccent(amount)} is on the way.`)}
 <div style="background:linear-gradient(135deg,#16A34A 0%,#15803d 100%);border-radius:14px;padding:22px 24px;margin:0 0 24px 0;color:#ffffff;">
   <div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.7);margin-bottom:6px;">Sent</div>
   <div style="font-size:30px;font-weight:700;color:#ffffff;line-height:1.1;">${escapeHtml(amount)}</div>
@@ -1328,7 +1328,7 @@ export function inboundScanReplyTemplate(args: {
     if (reply.mode === 'full') {
       body += button(`${siteUrl}/history`, 'Open in your Haulock history →');
     } else {
-      body += p(`This is a preview. Full email reports, with every finding and the complete FMCSA record, are included on paid plans.${hasAccount ? '' : ' A free account lets you run broker lookups and COI checks in the app.'}${reply.remaining > 0 ? ` You have ${reply.remaining} free email check${reply.remaining === 1 ? '' : 's'} left this month.` : ''}`);
+      body += p(`This is a preview. Full email reports, with every finding and the complete FMCSA record, are included on paid plans.${hasAccount ? '' : ' A free account lets you run broker lookups and PDF edit checks in the app.'}${reply.remaining > 0 ? ` You have ${reply.remaining} free email check${reply.remaining === 1 ? '' : 's'} left this month.` : ''}`);
       body += button(hasAccount ? `${siteUrl}/plan` : signup, hasAccount ? 'See plans →' : 'Create a free account →');
     }
     body += divider();
