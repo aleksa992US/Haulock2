@@ -71,6 +71,7 @@ export type SafetyActivity = {
     recent: CrashEvent[];
   };
   byMonth: { month: string; clean: number; violations: number; oos: number; crashes: number }[];
+  last30: { inspections: number; withViolations: number; oos: number; crashes: number };
 };
 
 const LEVELS: Record<number, string> = {
@@ -95,9 +96,13 @@ const iso = (v: unknown) => {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
 };
 const num = (v: unknown) => { const n = Number(v); return isFinite(n) ? n : 0; };
+// "WAVERLY NE" → "Waverly NE", "S 2500 I35E HWY" → "S 2500 I35E Hwy".
 const title = (s: unknown) => {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return t === t.toUpperCase() ? t.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()) : t;
+  if (!t || /^(not reported|unknown|none)$/i.test(t)) return '';
+  if (t !== t.toUpperCase()) return t;
+  const words = t.split(' ');
+  return words.map((w, i) => (/\d/.test(w) || (w.length === 2 && (i === words.length - 1 || words.length === 1)) ? w : w.charAt(0) + w.slice(1).toLowerCase())).join(' ');
 };
 
 async function socrata(dataset: string, params: Record<string, string>): Promise<any[]> {
@@ -236,6 +241,14 @@ export async function fetchSafetyActivity(dotIn: string | number, months = 24): 
     if (e.vehicleOos > 0) vehicleOos++;
   }
   for (const c of crashes) { const b = bucket(c.date); if (b) b.crashes++; }
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const ins30 = inspections.filter((e) => e.date >= d30);
+  const last30 = {
+    inspections: ins30.length,
+    withViolations: ins30.filter((e) => e.violations > 0 && e.oos === 0).length,
+    oos: ins30.filter((e) => e.oos > 0).length,
+    crashes: crashes.filter((c) => c.date >= d30).length,
+  };
 
   const value: SafetyActivity = {
     dot, months, since: iso(since), fetchedAt: new Date().toISOString(),
@@ -256,6 +269,7 @@ export async function fetchSafetyActivity(dotIn: string | number, months = 24): 
       recent: crashes.slice(0, 15),
     },
     byMonth,
+    last30,
   };
   cache.set(key, { at: Date.now(), value });
   return value;
