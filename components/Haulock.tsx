@@ -9565,7 +9565,9 @@ function CarrierReport({ report, navigate }: any) {
       setEmailSending(false);
     }
   };
-  const rescanQuery = r.mc || r.dot;
+  // Always prefixed: bare digits can be an MC for one company and a DOT for
+  // another, which made Scan again ask "which one?" or load the wrong record.
+  const rescanQuery = r.mc ? `MC-${String(r.mc).replace(/\D/g, '')}` : r.dot ? `DOT-${String(r.dot).replace(/\D/g, '')}` : null;
   const onExportPdf = async () => {
     if (exporting) return;
     setExporting(true); setExportError(null);
@@ -9763,8 +9765,21 @@ function CarrierReport({ report, navigate }: any) {
           { icon: Clock, label: 'Authority age', val: r.authorityAge || '—', warn: r.authorityAge && /reactivated/i.test(r.authorityAge) },
         ]} />
         <DetailPanel title="FMCSA authority & insurance" items={[
-          { label: 'Operating authority', val: r.authorityStatus || '—', good: r.authorityStatus === 'Active', warn: r.authorityStatus && r.authorityStatus !== 'Active' },
-          { label: 'Broker authority', val: r.brokerAuthority || '—', good: r.brokerAuthority === 'Active' },
+          // Carrier authority (common or contract) and broker authority are
+          // separate roles; red only when NEITHER is active.
+          ...(() => {
+            const carrierActive = r.commonAuthority === 'Active' || r.contractAuthority === 'Active';
+            const brokerActive = r.brokerAuthority === 'Active';
+            const known = Boolean(r.commonAuthority || r.contractAuthority || r.brokerAuthority || r.authorityStatus);
+            const noneActive = known && !carrierActive && !brokerActive && !(r.authorityStatus === 'Active' && !r.commonAuthority && !r.contractAuthority && !r.brokerAuthority);
+            const carrierVal = carrierActive
+              ? `Active${r.commonAuthority === 'Active' && r.contractAuthority === 'Active' ? ' (common & contract)' : r.contractAuthority === 'Active' ? ' (contract)' : ''}`
+              : r.commonAuthority || r.contractAuthority || (r.brokerAuthority ? 'Not authorized' : r.authorityStatus) || '—';
+            return [
+              { label: 'Carrier authority', val: carrierVal, good: carrierActive, warn: noneActive },
+              { label: 'Broker authority', val: r.brokerAuthority || '—', good: brokerActive, warn: noneActive },
+            ];
+          })(),
           { label: 'Safety rating', val: r.safetyRating || 'Not rated' },
           { label: 'Out-of-service', val: r.outOfService ? 'Yes' : 'No', good: r.outOfService === false, warn: r.outOfService === true },
           { label: 'Insurance on file', val: r.insuranceSummary || '—', warn: r.bipdOnFile === 0 || (r.cargoRequired && r.cargoOnFile === 0), good: r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.cargoRequired && r.cargoOnFile === 0) },
@@ -11784,7 +11799,9 @@ function SearchHistory({ navigate }: any) {
 
   const onRescan = async (l: any) => {
     setRescanId(l.id); setError(null);
-    const q = (l.query || l.mc || l.dot || '').trim();
+    // Re-scan the exact company the row resolved to (prefixed MC/DOT); the
+    // saved free-text query could be a name that now matches someone else.
+    const q = (l.mc ? `MC-${String(l.mc).replace(/\D/g, '')}` : l.dot ? `DOT-${String(l.dot).replace(/\D/g, '')}` : (l.query || '')).trim();
     const e = (l.email_query || '').trim();
     if (!q) { setError('Saved query is empty — open the report and re-run from Verify.'); setRescanId(null); return; }
     setScanQuery(q);
