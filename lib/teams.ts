@@ -38,16 +38,23 @@ export async function resolveTeamContext(userId: string, userMetaPlan?: string |
 // Writes a plan everywhere the app reads it: the user's own metadata and the
 // team they own (resolveTeamContext prefers the team's plan). Updating only
 // the metadata left canceled owners on paid limits through their team.
-export async function applyUserPlan(userId: string, plan: string): Promise<void> {
+//
+// `manual` marks a paid plan an admin granted without Stripe (a comp), so
+// the admin page doesn't flag it as unpaid. It lives in app_metadata, which
+// only the service role can write; user_metadata is editable by the user.
+export async function applyUserPlan(userId: string, plan: string, opts: { manual?: boolean } = {}): Promise<void> {
   const svc = getServiceSupabase();
   if (!svc) throw new Error('Service role not configured');
   const { data, error } = await svc.auth.admin.getUserById(userId);
   if (error || !data?.user) throw new Error(error?.message || 'User not found');
   const prev = data.user.user_metadata || {};
-  if (prev.plan !== plan) {
-    const { error: updErr } = await svc.auth.admin.updateUserById(userId, {
-      user_metadata: { ...prev, plan, plan_changed_at: new Date().toISOString() },
-    });
+  const prevApp = data.user.app_metadata || {};
+  const manualPlan = opts.manual && plan !== 'free' ? plan : null;
+  const update: Record<string, any> = {};
+  if (prev.plan !== plan) update.user_metadata = { ...prev, plan, plan_changed_at: new Date().toISOString() };
+  if ((prevApp.manual_plan ?? null) !== manualPlan) update.app_metadata = { ...prevApp, manual_plan: manualPlan };
+  if (Object.keys(update).length) {
+    const { error: updErr } = await svc.auth.admin.updateUserById(userId, update);
     if (updErr) throw new Error(updErr.message);
   }
   const { error: teamErr } = await svc.from('teams').update({ plan }).eq('owner_user_id', userId);

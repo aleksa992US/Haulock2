@@ -7781,7 +7781,7 @@ type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsle
 
 type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
 type RoleFilter = 'all' | 'admin' | 'affiliate' | 'regular';
-type BillingFilter = 'all' | 'paying' | 'canceling' | 'past_due' | 'canceled' | 'never' | 'mismatch';
+type BillingFilter = 'all' | 'paying' | 'canceling' | 'past_due' | 'canceled' | 'never' | 'manual' | 'mismatch';
 
 const fmtBillingDate = (ts: number | null) =>
   ts ? new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -7802,6 +7802,49 @@ function BillingBadge({ b }: { b: any }) {
   const l = look[b.status];
   if (!l) return null;
   return <span className={`px-2 py-0.5 text-[10px] mono uppercase tracking-wider rounded-full ${l.cls}`} title={l.title}>{l.text}</span>;
+}
+
+// Short Stripe status for the Users table; dates live in their own columns.
+function BillingCell({ b }: { b: any }) {
+  if (!b || b.status === 'never') return <span className="text-[#0B1E3F]/30">—</span>;
+  const plan = b.plan ? getPlan(b.plan).label : 'Paid';
+  const price = b.amountCents != null
+    ? ` · ${new Intl.NumberFormat('en-US', { style: 'currency', currency: b.currency || 'USD', minimumFractionDigits: 0 }).format(b.amountCents / 100)}/${b.billing === 'annual' ? 'yr' : 'mo'}`
+    : '';
+  if (b.status === 'paying') return <span className="text-[#16A34A] font-medium">Paying{price}</span>;
+  if (b.status === 'canceling') return <span className="text-[#B45309] font-medium" title="Canceled; keeps paid access until the period ends">Canceling{price}</span>;
+  if (b.status === 'past_due') return <span className="text-[#B45309] font-medium" title="Card declined; Stripe is retrying">Payment failed{price}</span>;
+  return <span className="text-[#0B1E3F]/55">Canceled · was {plan}</span>;
+}
+
+type UserSortKey = 'name' | 'plan' | 'billing' | 'subscribed' | 'canceled' | 'lookups' | 'lastSeen';
+
+// Columns of the admin Users table. firstDir is the direction a column sorts
+// in on its first click (dates and counts newest/biggest first).
+const USER_COLUMNS: { key: UserSortKey; label: string; align?: 'right'; firstDir: 1 | -1 }[] = [
+  { key: 'name',       label: 'User',        firstDir: 1 },
+  { key: 'plan',       label: 'Plan now',    firstDir: -1 },
+  { key: 'billing',    label: 'Stripe',      firstDir: -1 },
+  { key: 'subscribed', label: 'Subscribed',  firstDir: -1 },
+  { key: 'canceled',   label: 'Canceled',    firstDir: -1 },
+  { key: 'lookups',    label: 'Lookups / mo', align: 'right', firstDir: -1 },
+  { key: 'lastSeen',   label: 'Last seen',   align: 'right', firstDir: -1 },
+];
+
+const PLAN_RANK: Record<string, number> = { free: 0, carrier: 1, team: 2, fleet: 3 };
+const BILLING_RANK: Record<string, number> = { canceled: 1, past_due: 2, canceling: 3, paying: 4 };
+
+function userSortValue(u: any, key: UserSortKey): string | number | null {
+  const b = u.billing;
+  switch (key) {
+    case 'name': return String(u.name || u.email || '').toLowerCase();
+    case 'plan': return PLAN_RANK[u.plan] ?? 0;
+    case 'billing': return BILLING_RANK[b?.status] ?? null;
+    case 'subscribed': return b?.firstSubscribedAt ?? null;
+    case 'canceled': return b?.status === 'canceled' ? (b.endedAt ?? b.canceledAt) : b?.status === 'canceling' ? b.endsAt : null;
+    case 'lookups': return u.usage?.lookupsThisMonth ?? 0;
+    case 'lastSeen': return u.lastSignInAt ? Date.parse(u.lastSignInAt) : null;
+  }
 }
 
 // Subscription history for a user who canceled (or is about to): when they
@@ -7946,20 +7989,30 @@ function AdminPage({ navigate }: any) {
     // "Paying" includes canceling users: they've paid through the period end.
     if (billingFilter === 'mismatch' && !u.planMismatch) return false;
     if (billingFilter === 'paying' && u.billing?.status !== 'paying' && u.billing?.status !== 'canceling') return false;
-    if (!['all', 'mismatch', 'paying'].includes(billingFilter) && u.billing?.status !== billingFilter) return false;
+    if (billingFilter === 'manual' && !u.manualPlan) return false;
+    if (!['all', 'mismatch', 'paying', 'manual'].includes(billingFilter) && u.billing?.status !== billingFilter) return false;
     return true;
   });
 
   // Pagination — filters run across the full set, then we slice the
   // 10-per-page window. Reset to page 1 whenever any filter changes so the
   // results always start at the top of the matching subset.
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 50;
   const [userPage, setUserPage] = useState(1);
-  useEffect(() => { setUserPage(1); }, [filter, planFilter, roleFilter, billingFilter]);
-  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const [userSort, setUserSort] = useState<{ key: UserSortKey; dir: 1 | -1 }>({ key: 'lastSeen', dir: -1 });
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  useEffect(() => { setUserPage(1); }, [filter, planFilter, roleFilter, billingFilter, userSort]);
+  // Rows without a value (e.g. no subscription date) always sink to the bottom.
+  const sorted = [...shown].sort((a, b) => {
+    const va = userSortValue(a, userSort.key);
+    const vb = userSortValue(b, userSort.key);
+    if (va == null || vb == null) return va == null && vb == null ? 0 : va == null ? 1 : -1;
+    return (typeof va === 'string' ? va.localeCompare(vb as string) : va - (vb as number)) * userSort.dir;
+  });
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(userPage, pageCount);
   const pageStart = (safePage - 1) * PAGE_SIZE;
-  const visible = shown.slice(pageStart, pageStart + PAGE_SIZE);
+  const visible = sorted.slice(pageStart, pageStart + PAGE_SIZE);
 
   const totals = (users || []).reduce((acc, u) => ({
     users: acc.users + 1,
@@ -8020,22 +8073,24 @@ function AdminPage({ navigate }: any) {
       {tab === 'overview' && (
         <div className="space-y-8">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <button
-              onClick={() => showUsers('paying')}
-              disabled={users == null || !!billingError}
-              className="p-4 bg-white border border-[#16A34A]/30 rounded-xl text-left hover:border-[#16A34A]/60 transition disabled:hover:border-[#16A34A]/30"
-              title={billingError ? `Stripe unavailable: ${billingError}` : 'Users with a live Stripe subscription. Click to list them.'}
-            >
-              <div className="text-[10px] mono uppercase tracking-wider text-[#16A34A]">Paying now</div>
-              <div className="text-2xl font-semibold mt-1">{users == null || billingError ? '—' : totals.paying}</div>
+            <div className="p-4 bg-white border border-[#16A34A]/30 rounded-xl">
+              <button
+                onClick={() => showUsers('paying')}
+                disabled={users == null || !!billingError}
+                className="block w-full text-left group"
+                title={billingError ? `Stripe unavailable: ${billingError}` : 'Users with a live Stripe subscription. Click to list them.'}
+              >
+                <div className="text-[10px] mono uppercase tracking-wider text-[#16A34A]">Paying now</div>
+                <div className="text-2xl font-semibold mt-1 group-hover:underline">{users == null || billingError ? '—' : totals.paying}</div>
+              </button>
               {users != null && !billingError && (totals.canceling > 0 || totals.mismatch > 0) && (
                 <div className="text-[10px] mono mt-1 text-[#0B1E3F]/55">
-                  {totals.canceling > 0 && <span>{totals.canceling} canceling</span>}
+                  {totals.canceling > 0 && <button onClick={() => showUsers('canceling')} className="hover:underline">{totals.canceling} canceling</button>}
                   {totals.canceling > 0 && totals.mismatch > 0 && ' · '}
-                  {totals.mismatch > 0 && <span className="text-[#DC2626]">{totals.mismatch} need fix</span>}
+                  {totals.mismatch > 0 && <button onClick={() => showUsers('mismatch')} className="text-[#DC2626] hover:underline">{totals.mismatch} need fix</button>}
                 </div>
               )}
-            </button>
+            </div>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Users</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.users}</div></div>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Admins</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.admins}</div></div>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Lookups this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.lookupsThisMonth}</div></div>
@@ -8090,7 +8145,7 @@ function AdminPage({ navigate }: any) {
               || (u.mc || '').includes(f));
             const planCounts: Record<PlanFilter, number> = { all: baseSet.length, free: 0, carrier: 0, team: 0, fleet: 0 };
             const roleCounts: Record<RoleFilter, number> = { all: baseSet.length, admin: 0, affiliate: 0, regular: 0 };
-            const billingCounts: Record<BillingFilter, number> = { all: baseSet.length, paying: 0, canceling: 0, past_due: 0, canceled: 0, never: 0, mismatch: 0 };
+            const billingCounts: Record<BillingFilter, number> = { all: baseSet.length, paying: 0, canceling: 0, past_due: 0, canceled: 0, never: 0, manual: 0, mismatch: 0 };
             for (const u of baseSet) {
               const p = ((u.plan || 'free').toLowerCase() as PlanFilter);
               if (p === 'free' || p === 'carrier' || p === 'team' || p === 'fleet') planCounts[p] += 1;
@@ -8100,6 +8155,7 @@ function AdminPage({ navigate }: any) {
               const bs = u.billing?.status as BillingFilter | undefined;
               if (bs && bs in billingCounts) billingCounts[bs] += 1;
               if (bs === 'canceling') billingCounts.paying += 1;
+              if (u.manualPlan) billingCounts.manual += 1;
               if (u.planMismatch) billingCounts.mismatch += 1;
             }
             const Pill = ({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) => (
@@ -8140,6 +8196,7 @@ function AdminPage({ navigate }: any) {
                     <Pill active={billingFilter === 'past_due'}  onClick={() => setBillingFilter('past_due')}  label="Payment failed" count={billingCounts.past_due} />
                     <Pill active={billingFilter === 'canceled'}  onClick={() => setBillingFilter('canceled')}  label="Canceled"       count={billingCounts.canceled} />
                     <Pill active={billingFilter === 'never'}     onClick={() => setBillingFilter('never')}     label="Never paid"     count={billingCounts.never} />
+                    <Pill active={billingFilter === 'manual'}    onClick={() => setBillingFilter('manual')}    label="Set by admin"   count={billingCounts.manual} />
                     {billingCounts.mismatch > 0 && (
                       <Pill active={billingFilter === 'mismatch'} onClick={() => setBillingFilter('mismatch')} label="⚠ Needs fix" count={billingCounts.mismatch} />
                     )}
@@ -8171,125 +8228,187 @@ function AdminPage({ navigate }: any) {
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 overflow-hidden card-shadow">
           <div className="px-5 py-3 border-b border-[#0B1E3F]/5 flex items-center justify-between text-xs mono text-[#0B1E3F]/55">
             <div>
-              {f
-                ? <>Matching <strong className="text-[#0B1E3F]">{shown.length}</strong> of {users!.length}</>
-                : <>Showing <strong className="text-[#0B1E3F]">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, shown.length)}</strong> of {shown.length}</>}
+              Showing <strong className="text-[#0B1E3F]">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, shown.length)}</strong> of {shown.length}
+              {shown.length !== users!.length && <> (filtered from {users!.length})</>}
             </div>
-            <div>Page {safePage} / {pageCount}</div>
+            <div>Click a row for details · Page {safePage} / {pageCount}</div>
           </div>
-          <div className="divide-y divide-[#0B1E3F]/5">
-            {visible.map((u: any) => {
-              const initials = (u.name || u.email || '?').split(/[\s@]/).map((p: string) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-              return (
-                <div key={u.id} className={`p-5 text-[#0B1E3F] ${u.isAdmin ? 'bg-[#0B1E3F]/[0.025] border-l-4 border-[#0B1E3F]' : ''}`}>
-                  <div className="flex items-start gap-4 flex-wrap">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold flex-shrink-0 ${u.isAdmin ? 'bg-[#FF6B35]' : 'bg-[#0B1E3F]'}`}>{initials}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <div className="font-semibold text-[#0B1E3F] truncate">{u.name || u.email}</div>
-                        {u.isAdmin && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#0B1E3F] text-white text-[10px] mono uppercase tracking-wider rounded-full"><ShieldCheck className="w-2.5 h-2.5" /> admin</span>}
-                        <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] text-[10px] mono uppercase tracking-wider rounded-full" title="Plan the app gives them now">{u.planLabel}</span>
-                        <BillingBadge b={u.billing} />
-                        {u.team?.role === 'member' && <span className="px-2 py-0.5 bg-[#0B1E3F]/5 text-[#0B1E3F]/60 text-[10px] mono uppercase tracking-wider rounded-full" title="Gets the plan of the team they joined">team member</span>}
-                        {!u.confirmedAt && <span className="px-2 py-0.5 bg-[#F59E0B]/10 text-[#F59E0B] text-[10px] mono uppercase tracking-wider rounded-full">unconfirmed</span>}
-                      </div>
-                      <div className="text-xs mono text-[#0B1E3F]/60 truncate">{u.email}{u.company ? ` · ${u.company}` : ''}{u.mc ? ` · MC-${u.mc}` : ''}</div>
-                      <div className="text-xs text-[#0B1E3F]/55 mt-1">
-                        Joined {u.createdAt ? timeAgo(u.createdAt) : '—'}
-                        {u.lastSignInAt ? ` · last seen ${timeAgo(u.lastSignInAt)}` : ' · never signed in'}
-                        {u.billing?.status === 'paying' && u.billing.since ? ` · paying since ${fmtBillingDate(u.billing.since)}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <CancellationDetails b={u.billing} planNow={u.planLabel} />
-                  {u.planMismatch && (
-                    <div className="mt-3 px-3 py-2 rounded-lg bg-[#DC2626]/5 border border-[#DC2626]/20 text-xs text-[#0B1E3F] flex items-center gap-3 flex-wrap">
-                      <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626] flex-shrink-0" />
-                      <div className="flex-1 min-w-[200px]">
-                        {u.expectedPlan === 'free'
-                          ? <>Gets <strong>{u.planLabel}</strong> in the app, but has no active Stripe subscription{u.billing?.status === 'canceled' ? <> (canceled {fmtBillingDate(u.billing.canceledAt)})</> : ''}{u.team?.role === 'member' ? <> on their team owner&apos;s account</> : ''}.</>
-                          : <>Stripe says <strong>{getPlan(u.expectedPlan).label}</strong>{u.team?.role === 'member' ? <> (via their team owner)</> : ''}, but the app gives <strong>{u.planLabel}</strong>.</>}
-                      </div>
-                      {u.team?.role === 'member' ? (
-                        <span className="text-[11px] text-[#0B1E3F]/55">Fix it on the team owner.</span>
-                      ) : (
-                        <button
-                          onClick={() => patchUser(u.id, { plan: u.expectedPlan })}
-                          disabled={pendingId === u.id}
-                          className="px-3 py-1 rounded-full bg-[#DC2626] text-white text-[11px] font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-50"
-                        >
-                          {pendingId === u.id ? 'Saving…' : `Set to ${getPlan(u.expectedPlan).label}`}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
-                    <UsageMiniCard label="Lookups / mo" value={u.usage.lookupsThisMonth} limit={u.isAdmin ? null : u.limits.fmcsaLookups} />
-                    <UsageMiniCard label="Scans / mo" value={u.usage.scansThisMonth} limit={u.isAdmin ? null : u.limits.rateConScans} />
-                    <UsageMiniCard label="Watchlist" value={u.usage.watchlist} limit={u.isAdmin ? null : u.limits.watchlist} />
-                    <UsageMiniCard label="Lookups all-time" value={u.usage.lookupsTotal} />
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-[#0B1E3F]/5">
-                    {/* Admins bypass plan + affiliate logic — they have unlimited
-                        access by virtue of the admin flag, and an admin promoting
-                        themselves as their own affiliate would create a feedback
-                        loop in payouts. Show only the demote control. */}
-                    {!u.isAdmin && (
-                      <label className="text-xs text-[#0B1E3F]/60 flex items-center gap-2">
-                        Plan:
-                        <select
-                          value={u.plan}
-                          onChange={(e) => patchUser(u.id, { plan: e.target.value })}
-                          disabled={pendingId === u.id}
-                          className="px-3 py-1.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-xs text-[#0B1E3F] focus:outline-none"
-                        >
-                          {Object.values(PLANS).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                        </select>
-                      </label>
-                    )}
-                    <button
-                      onClick={() => patchUser(u.id, { isAdmin: !u.isAdmin })}
-                      disabled={pendingId === u.id}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition disabled:opacity-50 ${u.isAdmin ? 'border border-[#DC2626]/30 text-[#DC2626] hover:bg-[#DC2626]/5' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}
-                    >
-                      {pendingId === u.id ? 'Saving…' : u.isAdmin ? 'Revoke admin' : 'Make admin'}
-                    </button>
-                    {!u.isAdmin && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[960px] text-xs text-[#0B1E3F]">
+              <thead>
+                <tr className="bg-[#0B1E3F]/[0.03] border-b border-[#0B1E3F]/10">
+                  {USER_COLUMNS.map((c) => (
+                    <th key={c.key} className={`px-3 py-2 font-normal ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
                       <button
-                        onClick={() => setAffiliateUser(u)}
-                        disabled={pendingId === u.id}
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition disabled:opacity-50 ${u.role === 'affiliate' ? 'border border-[#16A34A]/40 text-[#16A34A] hover:bg-[#16A34A]/5' : 'border border-[#0B1E3F]/15 text-[#0B1E3F]/75 hover:bg-[#0B1E3F]/5'}`}
+                        onClick={() => setUserSort((s) => ({ key: c.key, dir: s.key === c.key ? (s.dir === 1 ? -1 : 1) : c.firstDir }))}
+                        className={`inline-flex items-center gap-1 text-[10px] mono uppercase tracking-wider hover:text-[#0B1E3F] ${userSort.key === c.key ? 'text-[#0B1E3F]' : 'text-[#0B1E3F]/55'}`}
                       >
-                        {u.role === 'affiliate'
-                          ? (() => {
-                              const codeLabel = u.affiliateCode || '—';
-                              if (u.affiliateCommissionMode === 'per_plan' && u.affiliateCommissionByPlan) {
-                                const parts = (['carrier', 'team', 'fleet'] as const)
-                                  .filter((p) => u.affiliateCommissionByPlan[p])
-                                  .map((p) => {
-                                    const r = u.affiliateCommissionByPlan[p];
-                                    return `${p[0].toUpperCase()} ${r.type === 'percent' ? `${r.value}%` : `$${r.value}`}`;
-                                  })
-                                  .join(' · ');
-                                return `Affiliate · ${codeLabel} · ${parts || 'no plans'}`;
-                              }
-                              return `Affiliate · ${codeLabel} · ${u.affiliateCommissionType === 'percent' ? `${u.affiliateCommissionValue}%` : `$${u.affiliateCommissionValue}`}`;
-                            })()
-                          : 'Make affiliate'}
+                        {c.label}
+                        <span className="w-2 text-[9px]">{userSort.key === c.key ? (userSort.dir === 1 ? '▲' : '▼') : ''}</span>
                       </button>
-                    )}
-                    <button
-                      onClick={() => deleteUser(u)}
-                      disabled={pendingId === u.id}
-                      className="w-7 h-7 flex items-center justify-center rounded-full text-[#0B1E3F]/40 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-50"
-                      title="Permanently delete user"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                    </th>
+                  ))}
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((u: any) => {
+                  const open = expandedUserId === u.id;
+                  const b = u.billing;
+                  const lookupLimit = u.isAdmin ? null : u.limits.fmcsaLookups;
+                  return (
+                    <React.Fragment key={u.id}>
+                      <tr
+                        onClick={() => setExpandedUserId(open ? null : u.id)}
+                        className={`border-b border-[#0B1E3F]/5 cursor-pointer transition ${open ? 'bg-[#0B1E3F]/[0.04]' : 'hover:bg-[#0B1E3F]/[0.025]'} ${u.planMismatch ? 'shadow-[inset_3px_0_0_#DC2626]' : u.isAdmin ? 'shadow-[inset_3px_0_0_#0B1E3F]' : ''}`}
+                      >
+                        <td className="px-3 py-2.5 max-w-[280px]">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-semibold truncate">{u.name || u.email}</span>
+                            {u.isAdmin && <span className="px-1.5 py-px bg-[#0B1E3F] text-white text-[9px] mono uppercase rounded-full flex-shrink-0">admin</span>}
+                            {u.role === 'affiliate' && !u.isAdmin && <span className="px-1.5 py-px bg-[#16A34A]/10 text-[#16A34A] text-[9px] mono uppercase rounded-full flex-shrink-0">affiliate</span>}
+                            {u.team?.role === 'member' && <span className="px-1.5 py-px bg-[#0B1E3F]/5 text-[#0B1E3F]/60 text-[9px] mono uppercase rounded-full flex-shrink-0" title="Gets the plan of the team they joined">team</span>}
+                            {!u.confirmedAt && <span className="px-1.5 py-px bg-[#F59E0B]/10 text-[#B45309] text-[9px] mono uppercase rounded-full flex-shrink-0">unconfirmed</span>}
+                          </div>
+                          {u.name && <div className="mono text-[11px] text-[#0B1E3F]/55 truncate">{u.email}</div>}
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] text-[10px] mono uppercase tracking-wider rounded-full" title="Plan the app gives them now">{u.planLabel}</span>
+                          {u.manualPlan && <span className="ml-1.5 px-1.5 py-px bg-[#2563EB]/10 text-[#2563EB] text-[9px] mono uppercase rounded-full" title="Paid plan given by an admin, not paid through Stripe">by admin</span>}
+                          {u.planMismatch && (
+                            <span className="ml-1.5 inline-flex align-middle" title={u.expectedPlan === 'free' ? 'Has this plan without an active Stripe subscription' : `Stripe says ${getPlan(u.expectedPlan).label}`}>
+                              <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626]" />
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap"><BillingCell b={b} /></td>
+                        <td className="px-3 py-2.5 whitespace-nowrap mono text-[#0B1E3F]/70">{b?.firstSubscribedAt ? fmtBillingDate(b.firstSubscribedAt) : <span className="text-[#0B1E3F]/30">—</span>}</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap mono text-[#0B1E3F]/70">
+                          {b?.status === 'canceled' ? fmtBillingDate(b.endedAt ?? b.canceledAt)
+                            : b?.status === 'canceling' ? <span className="text-[#B45309]" title={`Canceled ${fmtBillingDate(b.canceledAt)}; paid access until this date`}>ends {fmtBillingDate(b.endsAt)}</span>
+                            : <span className="text-[#0B1E3F]/30">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap mono text-right">
+                          <span className={lookupLimit != null && u.usage.lookupsThisMonth >= lookupLimit ? 'text-[#DC2626]' : ''}>{u.usage.lookupsThisMonth}</span>
+                          <span className="text-[#0B1E3F]/40"> / {lookupLimit == null ? '∞' : lookupLimit}</span>
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-right text-[#0B1E3F]/60" title={u.lastSignInAt || ''}>{u.lastSignInAt ? timeAgo(u.lastSignInAt) : 'never'}</td>
+                        <td className="px-2 py-2.5 text-[#0B1E3F]/40"><ChevronRight className={`w-3.5 h-3.5 transition ${open ? 'rotate-90' : ''}`} /></td>
+                      </tr>
+                      {open && (
+                        <tr className="border-b border-[#0B1E3F]/10 bg-[#F5F3EE]/60">
+                          <td colSpan={USER_COLUMNS.length + 1} className="px-5 py-4">
+                            <div className="text-xs text-[#0B1E3F]/60">
+                              <span className="mono">{u.email}</span>{u.company ? ` · ${u.company}` : ''}{u.mc ? ` · MC-${u.mc}` : ''}
+                              {' · '}Joined {u.createdAt ? fmtBillingDate(Date.parse(u.createdAt) / 1000) : '—'}
+                              {b?.status === 'paying' && b.since ? ` · paying since ${fmtBillingDate(b.since)}` : ''}
+                            </div>
+                            <CancellationDetails b={b} planNow={u.planLabel} />
+                            {u.planMismatch && (
+                              <div className="mt-3 px-3 py-2 rounded-lg bg-[#DC2626]/5 border border-[#DC2626]/20 text-xs text-[#0B1E3F] flex items-center gap-3 flex-wrap">
+                                <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626] flex-shrink-0" />
+                                <div className="flex-1 min-w-[200px]">
+                                  {u.expectedPlan === 'free'
+                                    ? <>Gets <strong>{u.planLabel}</strong> in the app, but has no active Stripe subscription{b?.status === 'canceled' ? <> (canceled {fmtBillingDate(b.canceledAt)})</> : ''}{u.team?.role === 'member' ? <> on their team owner&apos;s account</> : ''}.</>
+                                    : <>Stripe says <strong>{getPlan(u.expectedPlan).label}</strong>{u.team?.role === 'member' ? <> (via their team owner)</> : ''}, but the app gives <strong>{u.planLabel}</strong>.</>}
+                                </div>
+                                {u.team?.role === 'member' ? (
+                                  <span className="text-[11px] text-[#0B1E3F]/55">Fix it on the team owner.</span>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    {u.expectedPlan === 'free' && (
+                                      <button
+                                        onClick={() => patchUser(u.id, { plan: u.plan })}
+                                        disabled={pendingId === u.id}
+                                        className="px-3 py-1 rounded-full border border-[#0B1E3F]/20 bg-white text-[#0B1E3F] text-[11px] font-medium hover:bg-[#0B1E3F]/5 transition disabled:opacity-50"
+                                        title="You gave them this plan on purpose; stop flagging it"
+                                      >
+                                        Keep {u.planLabel} (set by admin)
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => patchUser(u.id, { plan: u.expectedPlan })}
+                                      disabled={pendingId === u.id}
+                                      className="px-3 py-1 rounded-full bg-[#DC2626] text-white text-[11px] font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-50"
+                                    >
+                                      {pendingId === u.id ? 'Saving…' : `Set to ${getPlan(u.expectedPlan).label}`}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+                              <UsageMiniCard label="Lookups / mo" value={u.usage.lookupsThisMonth} limit={u.isAdmin ? null : u.limits.fmcsaLookups} />
+                              <UsageMiniCard label="Scans / mo" value={u.usage.scansThisMonth} limit={u.isAdmin ? null : u.limits.rateConScans} />
+                              <UsageMiniCard label="Watchlist" value={u.usage.watchlist} limit={u.isAdmin ? null : u.limits.watchlist} />
+                              <UsageMiniCard label="Lookups all-time" value={u.usage.lookupsTotal} />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-3">
+                              {/* Admins bypass plan + affiliate logic — they have unlimited
+                                  access by virtue of the admin flag, and an admin promoting
+                                  themselves as their own affiliate would create a feedback
+                                  loop in payouts. Show only the demote control. */}
+                              {!u.isAdmin && (
+                                <label className="text-xs text-[#0B1E3F]/60 flex items-center gap-2">
+                                  Plan:
+                                  <select
+                                    value={u.plan}
+                                    onChange={(e) => patchUser(u.id, { plan: e.target.value })}
+                                    disabled={pendingId === u.id}
+                                    className="px-3 py-1.5 bg-white border border-[#0B1E3F]/15 rounded-lg text-xs text-[#0B1E3F] focus:outline-none"
+                                  >
+                                    {Object.values(PLANS).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                                  </select>
+                                </label>
+                              )}
+                              <button
+                                onClick={() => patchUser(u.id, { isAdmin: !u.isAdmin })}
+                                disabled={pendingId === u.id}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition disabled:opacity-50 ${u.isAdmin ? 'border border-[#DC2626]/30 text-[#DC2626] hover:bg-[#DC2626]/5' : 'bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90'}`}
+                              >
+                                {pendingId === u.id ? 'Saving…' : u.isAdmin ? 'Revoke admin' : 'Make admin'}
+                              </button>
+                              {!u.isAdmin && (
+                                <button
+                                  onClick={() => setAffiliateUser(u)}
+                                  disabled={pendingId === u.id}
+                                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition disabled:opacity-50 ${u.role === 'affiliate' ? 'border border-[#16A34A]/40 text-[#16A34A] hover:bg-[#16A34A]/5' : 'border border-[#0B1E3F]/15 text-[#0B1E3F]/75 hover:bg-[#0B1E3F]/5'}`}
+                                >
+                                  {u.role === 'affiliate'
+                                    ? (() => {
+                                        const codeLabel = u.affiliateCode || '—';
+                                        if (u.affiliateCommissionMode === 'per_plan' && u.affiliateCommissionByPlan) {
+                                          const parts = (['carrier', 'team', 'fleet'] as const)
+                                            .filter((p) => u.affiliateCommissionByPlan[p])
+                                            .map((p) => {
+                                              const r = u.affiliateCommissionByPlan[p];
+                                              return `${p[0].toUpperCase()} ${r.type === 'percent' ? `${r.value}%` : `$${r.value}`}`;
+                                            })
+                                            .join(' · ');
+                                          return `Affiliate · ${codeLabel} · ${parts || 'no plans'}`;
+                                        }
+                                        return `Affiliate · ${codeLabel} · ${u.affiliateCommissionType === 'percent' ? `${u.affiliateCommissionValue}%` : `$${u.affiliateCommissionValue}`}`;
+                                      })()
+                                    : 'Make affiliate'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => deleteUser(u)}
+                                disabled={pendingId === u.id}
+                                className="ml-auto px-3 py-1.5 flex items-center gap-1.5 rounded-full text-xs text-[#0B1E3F]/50 hover:bg-[#DC2626]/10 hover:text-[#DC2626] transition disabled:opacity-50"
+                                title="Permanently delete user"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
           {pageCount > 1 && (
             <div className="px-5 py-3 border-t border-[#0B1E3F]/5 flex items-center justify-between gap-2 flex-wrap">

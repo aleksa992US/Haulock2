@@ -27,7 +27,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (typeof body.plan === 'string') {
     if (!(body.plan in PLANS)) return NextResponse.json({ error: 'Unknown plan' }, { status: 400 });
     try {
-      await applyUserPlan(params.id, body.plan);
+      await applyUserPlan(params.id, body.plan, { manual: true });
     } catch (e: any) {
       return NextResponse.json({ error: e?.message || 'Plan update failed' }, { status: 500 });
     }

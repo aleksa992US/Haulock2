@@ -98,9 +98,13 @@ export async function GET() {
         const cid = u.user_metadata?.stripe_customer_id;
         if (cid) userByCustomer.set(cid, u.id);
       }
+      // A user_id tag can point at an account that was deleted and signed up
+      // again under the same Stripe customer, so fall back to the customer.
+      const knownIds = new Set(authUsers.map((u) => u.id));
       const subsByUser = new Map<string, Stripe.Subscription[]>();
       for (const s of subs) {
-        const uid = s.metadata?.user_id || userByCustomer.get(customerIdOf(s) || '');
+        const tagged = s.metadata?.user_id;
+        const uid = (tagged && knownIds.has(tagged) ? tagged : null) || userByCustomer.get(customerIdOf(s) || '');
         if (!uid) continue;
         subsByUser.set(uid, [...(subsByUser.get(uid) || []), s]);
       }
@@ -124,6 +128,8 @@ export async function GET() {
     const plan = getPlan(team ? team.plan : meta.plan);
     // The plan Stripe says they've paid for. Members inherit the owner's.
     const expected = team?.role === 'member' ? expectedPlanOf(team.ownerUserId) : expectedPlanOf(u.id);
+    // An admin granted exactly this plan by hand, so it isn't "unpaid".
+    const manual = plan.id !== 'free' && u.app_metadata?.manual_plan === plan.id;
     return {
       id: u.id,
       email: u.email,
@@ -134,8 +140,9 @@ export async function GET() {
       planLabel: plan.label,
       billing: billingByUser ? (billingByUser.get(u.id) || summarizeBilling([], new Set())) : null,
       expectedPlan: expected,
+      manualPlan: manual,
       // Admins have unlimited access regardless of plan, so skip them.
-      planMismatch: expected != null && !userIsAdmin && plan.id !== expected,
+      planMismatch: expected != null && !userIsAdmin && !manual && plan.id !== expected,
       team: team ? { role: team.role } : null,
       isAdmin: userIsAdmin,
       role: meta.role || null,
