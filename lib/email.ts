@@ -511,6 +511,26 @@ ${divider()}
 // ---------- Support tickets ----------
 
 // "We got your ticket" — fired immediately after the user opens a ticket.
+// Company ownership code, sent to the email on the company's FMCSA filing
+// (MCS-150). Names the Haulock account that asked, so a real owner notices
+// a request they didn't make.
+export function companyVerificationCodeTemplate(args: { code: string; companyName: string; idLabel: string; requestedBy: string; siteUrl: string }): { subject: string; html: string } {
+  const body = `
+${h1(`Your verification code: ${italicAccent(escapeHtml(args.code))}`)}
+${p(`Someone signed in to Haulock as <strong style="color:#0B1E3F;">${escapeHtml(args.requestedBy)}</strong> asked to verify that they work for <strong style="color:#0B1E3F;">${escapeHtml(args.companyName)}</strong> (${escapeHtml(args.idLabel)}). We sent this code to the email on your company&rsquo;s FMCSA filing.`)}
+<div style="background:#F5F3EE;border-radius:12px;padding:20px;margin:0 0 24px 0;text-align:center;">
+  <div style="font-size:32px;font-weight:700;letter-spacing:0.3em;color:#0B1E3F;font-family:'SF Mono',Menlo,Consolas,monospace;">${escapeHtml(args.code)}</div>
+  <div style="font-size:12px;color:rgba(11,30,63,0.55);margin-top:6px;">Expires in 30 minutes</div>
+</div>
+${p('Give this code only to someone at your company. Verifying lets them see how often your company is checked on Haulock (counts only, never who).')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Didn&rsquo;t expect this? Ignore it &mdash; nothing changes without the code. Questions: <a href="mailto:contact@haulock.com" style="color:#0B1E3F;text-decoration:underline;">contact@haulock.com</a>.</div>`;
+  return {
+    subject: `Haulock verification code for ${args.companyName}: ${args.code}`,
+    html: baseLayout({ preview: `Code ${args.code} — requested by ${args.requestedBy}`, body, reason: `You&rsquo;re receiving this because this address is on ${escapeHtml(args.companyName)}&rsquo;s FMCSA filing.` }),
+  };
+}
+
 export function supportReceivedTemplate(args: {
   subject: string;
   preview: string;

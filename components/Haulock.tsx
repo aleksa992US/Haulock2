@@ -5480,6 +5480,97 @@ function FmcsaStatsCard() {
   );
 }
 
+// Money collected for Haulock subscriptions (paid Stripe invoices, net of
+// refunds and Stripe fees), all-time and by month.
+function RevenueCard() {
+  const [data, setData] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showNet, setShowNet] = useState(false);
+  const [hover, setHover] = useState<number | null>(null);
+  const load = async (fresh = false) => {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch(`/api/admin/revenue${fresh ? '?fresh=1' : ''}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      setData(j);
+    } catch (e: any) {
+      setError(e?.message || 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+  const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: cents >= 100000 ? 0 : 2 }).format((cents || 0) / 100);
+  const val = (t: any) => (t ? (showNet ? t.net : t.gross - t.refunded) : 0);
+  const months: any[] = data?.months || [];
+  const max = Math.max(1, ...months.map(val));
+  const tile = (label: string, t: any, sub?: string) => (
+    <div className="p-4 bg-[#0B1E3F]/[0.04] rounded-xl">
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{label}</div>
+      <div className="text-2xl font-semibold mt-1">{data ? money(val(t)) : '—'}</div>
+      <div className="text-[11px] text-[#0B1E3F]/50 mt-0.5">{data ? `${t?.invoices || 0} payment${t?.invoices === 1 ? '' : 's'}${sub ? ` · ${sub}` : ''}` : ''}</div>
+    </div>
+  );
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">Revenue · subscriptions</div>
+        <div className="flex items-center gap-3">
+          {/* Collected = paid minus refunds; Net also takes off Stripe's fees. */}
+          <div className="flex p-0.5 bg-[#0B1E3F]/5 rounded-full text-xs">
+            {([{ id: false, label: 'Collected' }, { id: true, label: 'Net after fees' }] as const).map((o) => (
+              <button key={String(o.id)} onClick={() => setShowNet(o.id)} className={`px-3 py-1 rounded-full font-medium ${showNet === o.id ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60'}`}>{o.label}</button>
+            ))}
+          </div>
+          <button onClick={() => load(true)} disabled={loading} className="text-xs mono text-[#0B1E3F]/60 hover:text-[#0B1E3F] disabled:opacity-50">{loading ? 'Loading…' : 'Refresh'}</button>
+        </div>
+      </div>
+      {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        {tile('Total earned', data?.allTime, data?.firstMonth ? `since ${data.firstMonth}` : undefined)}
+        {tile('This month', data?.thisMonth)}
+        {tile('Last month', data?.lastMonth)}
+        {tile(`${new Date().getUTCFullYear()} so far`, data?.yearToDate)}
+      </div>
+      {months.length > 0 && (
+        <>
+          <div className="flex items-center justify-between text-xs text-[#0B1E3F]/60 mb-2">
+            <span>{showNet ? 'Net after Stripe fees' : 'Collected'} per month, last 12 months</span>
+            <span className="mono">{hover != null ? `${months[hover].label}: ${money(val(months[hover]))} · ${months[hover].invoices} payment${months[hover].invoices === 1 ? '' : 's'}` : ''}</span>
+          </div>
+          {/* Single series; whole column is the hover target. */}
+          <div className="flex items-end h-36" style={{ gap: 2 }} role="img" aria-label={`Monthly revenue: ${months.map((m) => `${m.label} ${money(val(m))}`).join(', ')}`}>
+            {months.map((m, i) => (
+              <div key={m.month} className="flex-1 h-full flex items-end cursor-default" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                <div className="w-full rounded-t" style={{ height: `${val(m) > 0 ? Math.max(3, (val(m) / max) * 100) : 1.5}%`, background: val(m) > 0 ? (hover === i ? '#FF6B35' : '#0B1E3F') : 'rgba(11,30,63,0.12)' }} />
+              </div>
+            ))}
+          </div>
+          <div className="flex text-[10px] mono text-[#0B1E3F]/45 mt-1" style={{ gap: 2 }}>
+            {months.map((m) => <div key={m.month} className="flex-1 text-center truncate">{m.label.split(' ')[0]}</div>)}
+          </div>
+          <details className="mt-4 text-sm">
+            <summary className="cursor-pointer text-xs text-[#0B1E3F]/60 hover:text-[#0B1E3F]">Show as a table</summary>
+            <table className="w-full mt-2 text-xs">
+              <thead><tr className="text-left text-[#0B1E3F]/55 mono uppercase tracking-wider"><th className="py-1.5">Month</th><th className="text-right">Payments</th><th className="text-right">Collected</th><th className="text-right">Refunds</th><th className="text-right">Stripe fees</th><th className="text-right">Net</th></tr></thead>
+              <tbody>
+                {[...months].reverse().map((m) => (
+                  <tr key={m.month} className="border-t border-[#0B1E3F]/5"><td className="py-1.5">{m.label}</td><td className="text-right mono">{m.invoices}</td><td className="text-right mono">{money(m.gross)}</td><td className="text-right mono">{m.refunded ? `−${money(m.refunded)}` : '—'}</td><td className="text-right mono">{m.fees ? `−${money(m.fees)}` : '—'}</td><td className="text-right mono font-semibold">{money(m.net)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+          <div className="mt-3 text-[11px] text-[#0B1E3F]/45">
+            Paid Stripe invoices for Haulock plans only (the Stripe account&apos;s other products are excluded). Months are UTC.{data?.truncated ? ' Showing the newest 5,000 invoices.' : ''}{data?.cached ? ' Cached up to 10 minutes; Refresh pulls live.' : ''}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function StripeOverviewCard() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
@@ -7763,6 +7854,7 @@ function AdminPage({ navigate }: any) {
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Scans this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.scansThisMonth}</div></div>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Watchlist rows</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.watchlist}</div></div>
           </div>
+          <RevenueCard />
           <StripeOverviewCard />
           <CartRecoveryCard />
         </div>
@@ -8390,6 +8482,12 @@ function OwnScoreChip({ navigate }: { navigate: any }) {
   // immediately on close without needing a full re-fetch.
   const [ackBump, setAckBump] = useState(0);
   const data = res.data;
+  // The "your company was checked" toast's View button opens this window.
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener('haulock:open-own-company', show);
+    return () => window.removeEventListener('haulock:open-own-company', show);
+  }, []);
 
   if (!data || (!data.ownMc && !data.ownDot)) {
     return (
@@ -8585,6 +8683,53 @@ function OwnScoreModal({ report, cached, cachedAt, change, navigate, onClose, on
   );
 }
 
+// "Your company was checked" toast — paid accounts with a verified company.
+// Polls a delayed, grouped count (never who or exactly when) and keeps its
+// cursor per user on this device.
+function CompanyCheckToaster({ userId }: { userId?: string }) {
+  const [toast, setToast] = useState<number | null>(null);
+  useEffect(() => {
+    if (!userId) return;
+    const key = `haulock:companyChecksSeen:${userId}`;
+    let stopped = false;
+    let hideTimer: any;
+    const poll = async () => {
+      if (stopped || document.visibilityState !== 'visible') return;
+      let since: string | null = null;
+      try { since = localStorage.getItem(key); } catch {}
+      try {
+        const r = await fetch(`/api/profile/company/new-checks${since ? `?since=${encodeURIComponent(since)}` : ''}`, { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!j.enabled) { stopped = true; return; }
+        if (j.until) { try { localStorage.setItem(key, j.until); } catch {} }
+        if (j.count > 0) {
+          setToast(j.count);
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => setToast(null), 15000);
+        }
+      } catch {}
+    };
+    const first = setTimeout(poll, 4000);
+    const every = setInterval(poll, 5 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') poll(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stopped = true; clearTimeout(first); clearInterval(every); clearTimeout(hideTimer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [userId]);
+  if (toast == null) return null;
+  return (
+    <div role="status" aria-live="polite" className="fixed bottom-5 right-5 z-[70] max-w-sm w-[calc(100%-2.5rem)] bg-white border border-[#0B1E3F]/15 rounded-2xl shadow-2xl p-4 flex items-start gap-3 text-[#0B1E3F]">
+      <div className="w-9 h-9 rounded-xl bg-[#FF6B35] flex items-center justify-center flex-shrink-0"><Eye className="w-4 h-4 text-white" /></div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold">Your company was checked {toast === 1 ? 'once' : `${toast} times`} on Haulock</div>
+        <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Since you last looked. We never show who.</div>
+        <button onClick={() => { setToast(null); window.dispatchEvent(new CustomEvent('haulock:open-own-company')); }} className="mt-2 text-xs font-semibold underline">View</button>
+      </div>
+      <button onClick={() => setToast(null)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F]" aria-label="Dismiss"><X className="w-4 h-4" /></button>
+    </div>
+  );
+}
+
 function MiniStat({ label, value, good, warn }: any) {
   return (
     <div className="p-3 bg-[#0B1E3F]/5 rounded-lg">
@@ -8706,6 +8851,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
           <OwnScoreChip navigate={navigate} />
         </header>
         <main className="p-6 md:p-10 max-w-7xl mx-auto text-[#0B1E3F]">{children}</main>
+        <CompanyCheckToaster userId={user?.id} />
       </div>
     </div>
   );
@@ -8717,9 +8863,14 @@ function AppShell({ user, route, navigate, logout, children }: any) {
 function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedded?: boolean }) {
   const res = useCachedFetch<any>('own-company', '/api/profile/company');
   const [data, setData] = useState<any>(null);
-  const [busy, setBusy] = useState<'verify' | 'monitor' | null>(null);
+  const [busy, setBusy] = useState<'verify' | 'monitor' | 'code' | null>(null);
   const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [hover, setHover] = useState<number | null>(null);
+  // Code route: the masked FMCSA filing email we can send a code to, and
+  // whether a code is on its way.
+  const [emailOnFile, setEmailOnFile] = useState<string | null>(null);
+  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [code, setCode] = useState('');
   useEffect(() => { if (res.data) setData(res.data); }, [res.data]);
   const d = data || res.data;
   if (!d) return null;
@@ -8729,13 +8880,16 @@ function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedd
     if (r.ok) setData(await r.json());
     invalidateCache('own-company');
   };
-  const act = async (body: any, kind: 'verify' | 'monitor') => {
+  const act = async (body: any, kind: 'verify' | 'monitor' | 'code') => {
     setBusy(kind); setMessage(null);
     try {
       const r = await fetch('/api/profile/company', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
+      if (j.emailOnFile) setEmailOnFile(j.emailOnFile);
       if (!r.ok || j.ok === false) throw new Error(j.error || 'Something went wrong');
-      if (kind === 'verify') setMessage({ tone: 'ok', text: 'Verified — your login email matches your company’s FMCSA filing.' });
+      if (body.action === 'verify') setMessage({ tone: 'ok', text: 'Verified — your login email is on your company’s domain.' });
+      if (body.action === 'send_code') { setCodeSentTo(j.sentTo); setCode(''); setMessage({ tone: 'ok', text: `Code sent to ${j.sentTo}. It expires in 30 minutes.` }); return; }
+      if (body.action === 'confirm_code') { setCodeSentTo(null); setMessage({ tone: 'ok', text: 'Verified with the code from your FMCSA email.' }); }
       await reload();
     } catch (e: any) {
       setMessage({ tone: 'err', text: e?.message || 'Something went wrong' });
@@ -8786,8 +8940,19 @@ function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedd
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Checked on Haulock</div>
         {!d.verified ? (
           <div className="space-y-3">
-            <p className="text-sm text-[#0B1E3F]/70">To see how often your company is checked, confirm it&apos;s yours. We match your login email with the email on your company&apos;s FMCSA filing (MCS-150).</p>
-            <button onClick={() => act({ action: 'verify' }, 'verify')} disabled={busy !== null} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-60">{busy === 'verify' ? 'Checking FMCSA…' : 'Verify my company'}</button>
+            <p className="text-sm text-[#0B1E3F]/70">To see how often your company is checked, confirm it&apos;s yours: sign in with an email on your company&apos;s domain, or get a code at the email on your company&apos;s FMCSA filing (MCS-150).</p>
+            {codeSentTo ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" className="w-36 px-3 py-2 border border-[#0B1E3F]/20 rounded-full text-sm mono tracking-widest focus:outline-none focus:border-[#0B1E3F]" />
+                <button onClick={() => act({ action: 'confirm_code', code }, 'code')} disabled={busy !== null || code.length !== 6} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-60">{busy === 'code' ? 'Checking…' : 'Confirm'}</button>
+                <button onClick={() => act({ action: 'send_code' }, 'code')} disabled={busy !== null} className="text-xs underline text-[#0B1E3F]/55 hover:text-[#0B1E3F]">Send a new code</button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => act({ action: 'verify' }, 'verify')} disabled={busy !== null} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-60">{busy === 'verify' ? 'Checking FMCSA…' : 'Verify my company'}</button>
+                <button onClick={() => act({ action: 'send_code' }, 'code')} disabled={busy !== null} className="px-4 py-2 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 disabled:opacity-60">{busy === 'code' ? 'Sending…' : emailOnFile ? `Email a code to ${emailOnFile}` : 'Email me a code instead'}</button>
+              </div>
+            )}
           </div>
         ) : c ? (
           <div>

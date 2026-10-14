@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
+import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { fetchCensusContact, dotForMc } from './fmcsa-census';
 
 // "Your company" for a signed-in user: which MC/DOT they say is theirs,
@@ -11,7 +12,7 @@ const FREE_EMAIL_DOMAINS = new Set([
   'protonmail.com', 'proton.me', 'mail.com', 'gmx.com', 'zoho.com', 'yandex.com',
 ]);
 
-export type CompanyVerification = { mc: string | null; dot: string | null; by: 'email' | 'domain'; at: string };
+export type CompanyVerification = { mc: string | null; dot: string | null; by: 'email' | 'domain' | 'code'; at: string };
 
 export function ownIds(user: User): { mc: string | null; dot: string | null } {
   const meta: any = user.user_metadata || {};
@@ -117,4 +118,88 @@ export async function companyCheckStats(svc: SupabaseClient, ids: { mc: string |
     lastCheckedDaysAgo: newest ? Math.floor((now - newest) / 86400000) : null,
     byKind30,
   };
+}
+
+// Toast feed: how many checks by OTHER accounts landed in (since, until].
+// `until` trails real time (see NOTIFY_DELAY_MS) and results are grouped, so
+// a toast can't be matched to one searcher by its timing.
+export const NOTIFY_DELAY_MS = 15 * 60 * 1000;
+
+export async function companyChecksSince(
+  svc: SupabaseClient,
+  ids: { mc: string | null; dot: string | null },
+  excludeUserIds: string[],
+  sinceIso: string,
+  untilIso: string,
+): Promise<number> {
+  const ors = [ids.mc ? `mc.eq.${ids.mc}` : null, ids.dot ? `dot.eq.${ids.dot}` : null].filter(Boolean).join(',');
+  if (!ors) return 0;
+  const { data } = await svc
+    .from('lookups')
+    .select('user_id')
+    .or(ors)
+    .in('source', ['quick', 'ratecon', 'coi'])
+    .gt('created_at', sinceIso)
+    .lte('created_at', untilIso)
+    .limit(1000);
+  return (data || []).filter((r: any) => !excludeUserIds.includes(r.user_id)).length;
+}
+
+
+// ─── Verification by emailed code ─────────────────────────────────────────
+// For owners who don't sign in with a company-domain email: a 6-digit code
+// goes to the email on the company's FMCSA filing. Only its HMAC is stored,
+// in app_metadata (server-only), with an expiry, an attempt limit and a send
+// limit.
+
+const CODE_TTL_MS = 30 * 60 * 1000;
+const MAX_ATTEMPTS = 5;
+const MAX_SENDS_PER_HOUR = 3;
+
+function codeSecret(): string {
+  return process.env.COMPANY_VERIFY_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'haulock-company-verify';
+}
+function hashCode(userId: string, code: string): string {
+  return createHmac('sha256', codeSecret()).update(`${userId}:${code}`).digest('hex');
+}
+
+export type PendingCodeVerification = {
+  mc: string | null; dot: string | null; codeHash: string; expiresAt: string; attempts: number; sentTo: string; sends: string[];
+};
+
+export async function createVerificationCode(user: User): Promise<
+  | { ok: true; code: string; email: string; companyName: string; pending: PendingCodeVerification }
+  | { ok: false; reason: 'no_company' | 'no_fmcsa_email' | 'lookup_failed' | 'too_many'; error: string }
+> {
+  const { mc, dot } = ownIds(user);
+  if (!mc && !dot) return { ok: false, reason: 'no_company', error: 'Set your MC or DOT in Settings → Profile first.' };
+  const usdot = await resolveOwnDot(mc, dot);
+  const census = usdot ? await fetchCensusContact(usdot) : null;
+  if (!census) return { ok: false, reason: 'lookup_failed', error: 'We couldn’t reach FMCSA’s records right now. Try again in a minute.' };
+  if (!census.email) return { ok: false, reason: 'no_fmcsa_email', error: 'Your company’s FMCSA filing has no email address. Contact support to verify another way.' };
+  const prev: any = (user.app_metadata || {}).company_verification_pending;
+  const hourAgo = Date.now() - 60 * 60 * 1000;
+  const sends: string[] = (Array.isArray(prev?.sends) ? prev.sends : []).filter((t: string) => Date.parse(t) > hourAgo);
+  if (sends.length >= MAX_SENDS_PER_HOUR) return { ok: false, reason: 'too_many', error: 'We’ve sent 3 codes in the last hour. Check that inbox (and spam), or try again later.' };
+  const code = String(randomInt(100000, 1000000));
+  const pending: PendingCodeVerification = {
+    mc, dot: usdot, codeHash: hashCode(user.id, code), expiresAt: new Date(Date.now() + CODE_TTL_MS).toISOString(),
+    attempts: 0, sentTo: maskEmail(census.email), sends: [...sends, new Date().toISOString()],
+  };
+  return { ok: true, code, email: census.email, companyName: census.legalName || (mc ? `MC-${mc}` : `DOT-${usdot}`), pending };
+}
+
+export function checkVerificationCode(user: User, code: string): { ok: true; verification: CompanyVerification } | { ok: false; error: string; pending?: PendingCodeVerification | null } {
+  const pending: PendingCodeVerification | undefined = (user.app_metadata || {}).company_verification_pending;
+  const { mc, dot } = ownIds(user);
+  if (!pending || !((mc && pending.mc === mc) || (dot && pending.dot === dot))) return { ok: false, error: 'No code was sent for this company. Send a new one.' };
+  if (Date.parse(pending.expiresAt) < Date.now()) return { ok: false, error: 'That code has expired. Send a new one.', pending: null };
+  if (pending.attempts >= MAX_ATTEMPTS) return { ok: false, error: 'Too many wrong codes. Send a new one.', pending: null };
+  const given = hashCode(user.id, String(code || '').replace(/\D/g, ''));
+  const a = Buffer.from(given, 'hex');
+  const b = Buffer.from(pending.codeHash, 'hex');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return { ok: false, error: `That code isn’t right. ${MAX_ATTEMPTS - pending.attempts - 1} tr${MAX_ATTEMPTS - pending.attempts - 1 === 1 ? 'y' : 'ies'} left.`, pending: { ...pending, attempts: pending.attempts + 1 } };
+  }
+  return { ok: true, verification: { mc: pending.mc, dot: pending.dot, by: 'code', at: new Date().toISOString() } };
 }

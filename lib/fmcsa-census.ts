@@ -10,6 +10,7 @@ const TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // the census refreshes daily
 
 export type CensusContact = {
+  legalName?: string;
   officers: string[];       // up to two, as filed (title-cased)
   email?: string;
   phone?: string;
@@ -40,7 +41,7 @@ export async function fetchCensusContact(dot: string | null | undefined): Promis
   const params = new URLSearchParams({
     $where: `dot_number = ${Number(n)}`,
     $limit: '1',
-    $select: 'company_officer_1,company_officer_2,email_address,phone,cell_phone,mcs150_date',
+    $select: 'legal_name,company_officer_1,company_officer_2,email_address,phone,cell_phone,mcs150_date',
   });
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (process.env.SOCRATA_APP_TOKEN) headers['X-App-Token'] = process.env.SOCRATA_APP_TOKEN;
@@ -61,6 +62,7 @@ export async function fetchCensusContact(dot: string | null | undefined): Promis
       const d = String(r.mcs150_date || '').match(/^(\d{4})(\d{2})(\d{2})/);
       const email = String(r.email_address || '').trim().toLowerCase();
       value = {
+        legalName: r.legal_name ? String(r.legal_name).trim() : undefined,
         officers,
         email: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(email) ? email : undefined,
         phone: phone(r.phone),

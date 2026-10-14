@@ -3,7 +3,8 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
-import { companyCheckStats, currentVerification, ownIds, resolveOwnDot, verifyCompanyOwnership } from '@/lib/company-profile';
+import { checkVerificationCode, companyCheckStats, createVerificationCode, currentVerification, ownIds, resolveOwnDot, verifyCompanyOwnership } from '@/lib/company-profile';
+import { companyVerificationCodeTemplate, getEmailSiteUrl, sendEmail } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -80,9 +81,9 @@ export async function POST(req: Request) {
         no_company: 'Set your MC or DOT in Settings → Profile first.',
         lookup_failed: 'We couldn’t reach FMCSA’s records right now. Try again in a minute.',
         no_fmcsa_email: 'Your company’s FMCSA filing has no email address, so we can’t verify it automatically. Contact support to verify another way.',
-        no_match: `Your login email doesn’t match the email on your company’s FMCSA filing${r.emailOnFile ? ` (${r.emailOnFile})` : ''}. Sign in with that email or one on the same company domain, or update your MCS-150 with FMCSA.`,
+        no_match: `Your login email isn’t on your company’s domain. Any email ending in @${(r.emailOnFile || '').split('@')[1] || 'your company domain'} works, or we can email a code to the address on your FMCSA filing (${r.emailOnFile}).`,
       };
-      return NextResponse.json({ ok: false, reason: r.reason, error: messages[r.reason] }, { status: 200 });
+      return NextResponse.json({ ok: false, reason: r.reason, error: messages[r.reason], emailOnFile: r.emailOnFile || null }, { status: 200 });
     }
     const r = result as Extract<typeof result, { ok: true }>;
     // app_metadata: server-only, so a user can't mark themselves verified.
@@ -91,6 +92,49 @@ export async function POST(req: Request) {
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, verified: { by: r.verification.by, at: r.verification.at } });
+  }
+
+  // Email a 6-digit code to the address on the company's FMCSA filing.
+  if (b?.action === 'send_code') {
+    const r = await createVerificationCode(user);
+    if (r.ok === false) {
+      const f = r as Extract<typeof r, { ok: false }>;
+      return NextResponse.json({ ok: false, reason: f.reason, error: f.error }, { status: 200 });
+    }
+    const okR = r as Extract<typeof r, { ok: true }>;
+    const { pending } = okR;
+    try {
+      const tpl = companyVerificationCodeTemplate({
+        code: okR.code,
+        companyName: okR.companyName,
+        idLabel: [pending.mc && `MC-${pending.mc}`, pending.dot && `DOT-${pending.dot}`].filter(Boolean).join(' · '),
+        requestedBy: user.email || 'a Haulock user',
+        siteUrl: getEmailSiteUrl(),
+      });
+      await sendEmail({ to: okR.email, subject: tpl.subject, html: tpl.html, kind: 'other' });
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: 'We couldn’t send the code email right now. Try again in a minute.' }, { status: 200 });
+    }
+    await svc.auth.admin.updateUserById(user.id, { app_metadata: { ...(user.app_metadata || {}), company_verification_pending: pending } });
+    return NextResponse.json({ ok: true, sentTo: pending.sentTo });
+  }
+
+  if (b?.action === 'confirm_code') {
+    const r = checkVerificationCode(user, String((b as any).code || ''));
+    const meta: any = { ...(user.app_metadata || {}) };
+    if (r.ok === false) {
+      const f = r as Extract<typeof r, { ok: false }>;
+      if (f.pending === null) delete meta.company_verification_pending;
+      else if (f.pending) meta.company_verification_pending = f.pending;
+      if (f.pending !== undefined) await svc.auth.admin.updateUserById(user.id, { app_metadata: meta });
+      return NextResponse.json({ ok: false, error: f.error }, { status: 200 });
+    }
+    const okR = r as Extract<typeof r, { ok: true }>;
+    delete meta.company_verification_pending;
+    meta.company_verification = okR.verification;
+    const { error } = await svc.auth.admin.updateUserById(user.id, { app_metadata: meta });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, verified: { by: 'code', at: okR.verification.at } });
   }
 
   if (b?.action === 'monitor') {
