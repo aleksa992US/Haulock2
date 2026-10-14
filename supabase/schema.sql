@@ -508,3 +508,20 @@ create index if not exists sales_campaign_sends_campaign_idx on public.sales_cam
 create index if not exists sales_campaign_sends_user_idx on public.sales_campaign_sends(user_id, sent_at desc);
 -- Server-only tables: RLS on with no policies, so only the service role can read/write.
 alter table public.sales_campaign_sends enable row level security;
+
+-- Admin Sales tab: fresh re-scans of companies shown in sales emails, run
+-- from the composer right before sending so an email never shows a stale
+-- score. Keyed by company ("mc:123" / "dot:123"), not by user — a public
+-- company's current risk, never who searched it. Service role only.
+create table if not exists public.sales_rescans (
+  key text primary key,
+  name text,
+  mc text,
+  dot text,
+  score int,
+  verdict text,
+  flags jsonb,                         -- [{ sev, title, pts }] critical + warning only
+  scanned_at timestamptz not null default now(),
+  scanned_by text
+);
+alter table public.sales_rescans enable row level security;
