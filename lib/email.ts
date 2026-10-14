@@ -969,18 +969,14 @@ export type SalesEmailLookup = {
   at: string;
 };
 
-function salesTextToHtml(text: string): string {
-  return text
-    .trim()
-    .split(/\n\s*\n/)
-    .map((para) => {
-      let html = escapeHtml(para.trim());
-      html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0B1E3F;">$1</strong>');
-      html = html.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" style="color:#0B1E3F;text-decoration:underline;">$1</a>');
-      html = html.replace(/\n/g, '<br>');
-      return p(html);
-    })
-    .join('\n');
+const LOOKUPS_TOKEN = /\{\{\s*lookups\s*\}\}/gi;
+
+function salesParagraph(para: string): string {
+  let html = escapeHtml(para);
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0B1E3F;">$1</strong>');
+  html = html.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" style="color:#0B1E3F;text-decoration:underline;">$1</a>');
+  html = html.replace(/\n/g, '<br>');
+  return p(html);
 }
 
 const VERDICT_STYLE: Record<SalesEmailLookup['verdict'], { label: string; bg: string; color: string }> = {
@@ -1047,16 +1043,36 @@ export function salesEmailTemplate(args: {
   recipientEmail: string;
   siteUrl: string;
 }): { subject: string; html: string } {
-  const paragraphs = salesTextToHtml(args.body);
-  const lookups = args.showLookups ? salesLookupsBlock(args.lookups || [], args.siteUrl) : '';
+  const block = args.showLookups ? salesLookupsBlock(args.lookups || [], args.siteUrl) : '';
   const cta = args.ctaLabel && args.ctaUrl && /^https?:\/\//i.test(args.ctaUrl) ? button(escapeHtml(args.ctaUrl), escapeHtml(args.ctaLabel)) : '';
-  // Lookups sit after the first paragraph so the email opens with a human
-  // line, then shows proof, then the rest of the pitch.
-  const firstBreak = paragraphs.indexOf('</p>');
-  const body = lookups && firstBreak >= 0
-    ? paragraphs.slice(0, firstBreak + 4) + '\n' + lookups + paragraphs.slice(firstBreak + 4) + cta
-    : paragraphs + lookups + cta;
-  const preview = args.body.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  // A paragraph that is just {{lookups}} marks where the block goes. With
+  // no marker it goes after the opening line(s), so the email starts with
+  // a human sentence, then shows proof, then the pitch.
+  const paras = args.body.trim().split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  let placed = false;
+  const parts: string[] = [];
+  for (const para of paras) {
+    if (/^\{\{\s*lookups\s*\}\}$/i.test(para)) {
+      if (block && !placed) parts.push(block);
+      placed = true;
+      continue;
+    }
+    const text = para.replace(LOOKUPS_TOKEN, '').trim();
+    if (text) parts.push(salesParagraph(text));
+  }
+  if (block && !placed) {
+    const at = paras.length > 1 && paras[0].length < 40 ? 2 : 1;
+    parts.splice(Math.min(at, parts.length), 0, block);
+  }
+  // The button goes above a closing "Thanks, …" sign-off, not under it.
+  const lastPara = paras[paras.length - 1] || '';
+  if (cta && parts.length > 1 && /^(thanks|thank you|best|cheers|regards|talk soon)\b/i.test(lastPara)) {
+    parts.splice(parts.length - 1, 0, cta);
+  } else if (cta) {
+    parts.push(cta);
+  }
+  const body = parts.join('\n');
+  const preview = args.body.replace(LOOKUPS_TOKEN, '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
   return {
     subject: args.subject,
     html: baseLayout({ preview, body, unsubEmail: args.recipientEmail }),

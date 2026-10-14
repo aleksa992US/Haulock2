@@ -27,6 +27,9 @@
     },
     "app/api/inbound/email/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/admin/sales/campaigns/route.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [

@@ -6645,62 +6645,96 @@ function Stat({ label, value, sub }: { label: string; value: any; sub?: string |
 
 // ─── Sales (admin only) ─────────────────────────────────────────────────
 // Every non-admin user sorted into an auto-computed funnel segment (from
-// /api/admin/sales), with a suggested next step and a pre-written email
-// per segment. Manual stage / notes / follow-up live in sales_leads.
+// /api/admin/sales), with a suggested next step and a built-in email per
+// segment. Emails go out through Resend from the composer — one person or
+// a whole group — with a live per-recipient preview that can include the
+// recipient's own recent lookups. Manual stage / notes / follow-up live in
+// sales_leads; sends are logged in sales_campaigns.
 
 type SalesSegment = 'paying' | 'checkout' | 'limit' | 'unconfirmed' | 'new' | 'active' | 'never_used' | 'dormant';
 type SalesFilter = 'hot' | 'free' | 'followup' | SalesSegment;
+type SalesTemplate = { id: string; name: string; subject: string; body: string; ctaLabel: string; ctaUrl: string; showLookups: boolean; builtIn?: boolean };
 
-const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action: string; subject: string; body: (name: string) => string }> = {
+const SALES_SIGNOFF = 'Thanks,\nThe Haulock team';
+
+const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action: string; template: Omit<SalesTemplate, 'id' | 'name'> }> = {
   checkout: {
     label: 'Started checkout', tone: 'bg-[#DC2626]/10 text-[#DC2626]',
     action: 'Hottest lead. They picked a plan but didn’t pay — offer help and the NEW20 code (20% off).',
-    subject: 'Need a hand finishing your Haulock signup?',
-    body: (n) => `Hi ${n},\n\nI saw you started signing up for a Haulock plan but didn't finish. Did something get in the way, or do you have a question I can answer?\n\nIf it helps, code NEW20 takes 20% off: https://haulock.com/pricing\n\nThanks,`,
+    template: {
+      subject: '{{first_name}}, need a hand finishing your Haulock signup?',
+      body: `Hi {{first_name}},\n\nI saw you started signing up for a Haulock plan but didn't finish. Did something get in the way? Just reply and I'll help. Here's what you checked before you left:\n\n{{lookups}}\n\nCode **NEW20** takes 20% off your first month, so every load you book gets checked first.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'Finish with 20% off →', ctaUrl: 'https://haulock.com/pricing', showLookups: true,
+    },
   },
   limit: {
     label: 'Hit free limit', tone: 'bg-[#FF6B35]/15 text-[#C2410C]',
     action: 'Used all free lookups this month — they clearly need it. Pitch the Carrier plan.',
-    subject: 'You’ve used your free Haulock lookups',
-    body: (n) => `Hi ${n},\n\nYou've used all of your free lookups this month, so it looks like Haulock is earning its keep. The Carrier plan gives you far more lookups plus rate con scans, so you can check every broker before you book.\n\nPlans: https://haulock.com/pricing\n\nHappy to answer any questions.\n\nThanks,`,
+    template: {
+      subject: '{{first_name}}, you’ve used all {{free_limit}} free lookups',
+      body: `Hi {{first_name}},\n\nYou've used all {{free_limit}} of your free lookups this month, so Haulock is clearly part of how you book loads. Here's what it found for you:\n\n{{lookups}}\n\nThe **Carrier plan** gives you unlimited lookups, 15 rate con scans a month and alerts when a broker you watch changes, so you never book blind waiting for next month.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'See plans →', ctaUrl: 'https://haulock.com/pricing', showLookups: true,
+    },
   },
   unconfirmed: {
     label: 'Email not confirmed', tone: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/70',
     action: 'Never confirmed their email, so they can’t log in. Send a short personal nudge.',
-    subject: 'Finish setting up your Haulock account',
-    body: (n) => `Hi ${n},\n\nYou signed up for Haulock but haven't confirmed your email yet, so you can't log in. Look for our confirmation email (check spam too), or reply here and I'll sort it out.\n\nThanks,`,
+    template: {
+      subject: 'Finish setting up your Haulock account',
+      body: `Hi {{first_name}},\n\nYou signed up for Haulock but haven't confirmed your email yet, so you can't log in. Look for our confirmation email (check spam too), or just reply here and I'll sort it out.\n\nOnce you're in, this is what a check looks like:\n\n{{lookups}}\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'Log in to Haulock →', ctaUrl: 'https://haulock.com/login', showLookups: true,
+    },
   },
   new: {
     label: 'New — not tried yet', tone: 'bg-[#2563EB]/10 text-[#2563EB]',
     action: 'Signed up this week but hasn’t run a lookup. Show them how to check their first broker.',
-    subject: 'Check your first broker in 10 seconds',
-    body: (n) => `Hi ${n},\n\nWelcome to Haulock! The quickest way to see what it does: go to https://haulock.com/verify, pick MC or DOT, and type the number from your next rate con. You'll get a risk score and any red flags in seconds.\n\nAny questions, just reply.\n\nThanks,`,
+    template: {
+      subject: '{{first_name}}, check your first broker in 10 seconds',
+      body: `Hi {{first_name}},\n\nWelcome to Haulock! The quickest way to see what it does: pick MC or DOT, type the number from your next rate con, and you'll get a risk score and any red flags in seconds. Here's an example:\n\n{{lookups}}\n\nYou have {{free_limit}} free lookups every month. Any questions, just reply.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'Run my first check →', ctaUrl: 'https://haulock.com/verify', showLookups: true,
+    },
   },
   active: {
     label: 'Active free user', tone: 'bg-[#16A34A]/10 text-[#16A34A]',
     action: 'Using it but still free. Check in, ask what they haul, and mention what paid plans add.',
-    subject: 'How’s Haulock working for you?',
-    body: (n) => `Hi ${n},\n\nThanks for using Haulock. Quick question: what kind of loads are you checking, and is there anything you wish it did? On a paid plan you also get rate con scans, a watchlist that alerts you when a broker changes, and many more lookups.\n\nThanks,`,
+    template: {
+      subject: '{{first_name}}, how’s Haulock working for you?',
+      body: `Hi {{first_name}},\n\nThanks for using Haulock. Here's a quick look at what you've checked lately:\n\n{{lookups}}\n\nWhat kind of loads are you booking, and is there anything you wish Haulock did? On a paid plan you also get unlimited lookups, rate con scans and a watchlist that emails you when a broker changes.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'Compare plans →', ctaUrl: 'https://haulock.com/pricing', showLookups: true,
+    },
   },
   never_used: {
     label: 'Never used it', tone: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/70',
     action: 'Signed up a while ago and never ran a lookup. Re-introduce what it does with one example.',
-    subject: 'Still booking loads without checking the broker?',
-    body: (n) => `Hi ${n},\n\nYou signed up for Haulock a while back but haven't run a lookup yet. Double-brokering and fake MCs are still everywhere. Type any MC number at https://haulock.com/verify and you'll see in seconds if something's off. Your free lookups are waiting.\n\nThanks,`,
+    template: {
+      subject: 'Still booking loads without checking the broker?',
+      body: `Hi {{first_name}},\n\nYou signed up for Haulock a while back but haven't run a lookup yet. Double-brokering and fake MCs are still everywhere, and this is what Haulock catches:\n\n{{lookups}}\n\nType any MC number and you'll see in seconds if something's off. Your {{free_limit}} free lookups are waiting.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'Check a broker now →', ctaUrl: 'https://haulock.com/verify', showLookups: true,
+    },
   },
   dormant: {
     label: 'Gone quiet', tone: 'bg-[#F59E0B]/15 text-[#B45309]',
     action: 'Used it before, nothing in 30+ days. Win-back: ask why, share something new.',
-    subject: 'We’ve added a few things since you last checked a broker',
-    body: (n) => `Hi ${n},\n\nIt's been a while since you used Haulock. We've added rate con scanning and PDF forensics since then, which catch edited or fake rate cons. Was there a reason you stopped? Your honest answer helps a lot.\n\nThanks,`,
+    template: {
+      subject: '{{first_name}}, a lot has changed since your last check',
+      body: `Hi {{first_name}},\n\nIt's been a while since you used Haulock. Here's what you checked last time:\n\n{{lookups}}\n\nSince then we've added rate con scanning and PDF forensics, which catch edited or fake rate cons. Was there a reason you stopped? Your honest answer helps a lot.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: 'Check a broker →', ctaUrl: 'https://haulock.com/verify', showLookups: true,
+    },
   },
   paying: {
     label: 'Paying', tone: 'bg-[#0B1E3F] text-white',
     action: 'Customer. Ask for a review or referral, or offer a bigger plan if they’re near their limits.',
-    subject: 'Thanks for being a Haulock customer',
-    body: (n) => `Hi ${n},\n\nThanks for being a Haulock customer. Is everything working the way you need? If Haulock has saved you from a bad load, would you mind telling a friend or leaving us a quick review?\n\nThanks,`,
+    template: {
+      subject: 'Thanks for being a Haulock customer, {{first_name}}',
+      body: `Hi {{first_name}},\n\nThanks for being a Haulock customer. Here's what you've checked recently:\n\n{{lookups}}\n\nIs everything working the way you need? If Haulock has saved you from a bad load, would you tell a friend about it? It really helps.\n\n${SALES_SIGNOFF}`,
+      ctaLabel: '', ctaUrl: '', showLookups: true,
+    },
   },
 };
+
+const BUILT_IN_TEMPLATES: SalesTemplate[] = (Object.keys(SALES_SEGMENTS) as SalesSegment[]).map((k) => ({
+  id: `builtin:${k}`, name: SALES_SEGMENTS[k].label, builtIn: true, ...SALES_SEGMENTS[k].template,
+}));
 
 const SALES_STAGES: { id: string; label: string }[] = [
   { id: 'new', label: 'Not contacted' },
@@ -6711,17 +6745,23 @@ const SALES_STAGES: { id: string; label: string }[] = [
   { id: 'lost', label: 'Lost' },
 ];
 
+const SALES_MERGE_TAGS = ['lookups', 'first_name', 'name', 'company', 'mc', 'plan', 'lookups_this_month', 'lookups_total', 'free_limit'];
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function SalesPage() {
   const [leads, setLeads] = useState<any[] | null>(null);
   const [pipelineReady, setPipelineReady] = useState(true);
+  const [adminEmail, setAdminEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'people' | 'campaigns'>('people');
   const [filter, setFilter] = useState<SalesFilter>('hot');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [composer, setComposer] = useState<{ recipients: any[]; audience: string } | null>(null);
 
   const load = async () => {
     setError(null);
@@ -6731,13 +6771,14 @@ function SalesPage() {
       if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
       setLeads(data.leads || []);
       setPipelineReady(Boolean(data.pipelineReady));
+      setAdminEmail(data.adminEmail || '');
     } catch (e: any) {
       setError(e?.message || 'Failed to load');
       setLeads([]);
     }
   };
   useEffect(() => { load(); }, []);
-  useEffect(() => { setPage(1); }, [filter, search]);
+  useEffect(() => { setPage(1); setSelected(new Set()); }, [filter, search]);
 
   // Optimistic local update, then persist. Reload on failure so the UI
   // never shows a stage that didn't save.
@@ -6752,12 +6793,6 @@ function SalesPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
-      const saved = data.lead || {};
-      setLeads((ls) => (ls || []).map((l) => (l.id === id ? {
-        ...l,
-        stage: saved.stage ?? l.stage,
-        lastContactedAt: saved.last_contacted_at ?? l.lastContactedAt,
-      } : l)));
     } catch (e: any) {
       setError(e?.message || 'Save failed');
       load();
@@ -6805,11 +6840,25 @@ function SalesPage() {
   const PAGE_SIZE = 20;
   const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
   const pageItems = shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const selectedLeads = shown.filter((l) => selected.has(l.id));
+  const allShownSelected = shown.length > 0 && selectedLeads.length === shown.length;
+
+  const toggle = (id: string) => setSelected((s) => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+
+  const bulkStage = async (stage: string) => {
+    if (!stage || selectedLeads.length === 0) return;
+    for (const l of selectedLeads) await saveLead(l.id, { stage }, { stage });
+  };
 
   const exportCsv = () => {
-    const cols = ['email', 'name', 'company', 'mc', 'plan', 'segment', 'stage', 'lookupsTotal', 'lookupsThisMonth', 'createdAt', 'lastActiveAt', 'followUpAt', 'notes'];
+    const rows = selectedLeads.length ? selectedLeads : shown;
+    const cols = ['email', 'name', 'company', 'mc', 'plan', 'segment', 'stage', 'lookupsTotal', 'lookupsThisMonth', 'createdAt', 'lastActiveAt', 'lastEmailedAt', 'followUpAt', 'notes'];
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = [cols.join(','), ...shown.map((l) => cols.map((c) => esc(c === 'segment' ? SALES_SEGMENTS[l.segment as SalesSegment]?.label : l[c])).join(','))].join('\n');
+    const csv = [cols.join(','), ...rows.map((l) => cols.map((c) => esc(c === 'segment' ? SALES_SEGMENTS[l.segment as SalesSegment]?.label : l[c])).join(','))].join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url; a.download = `haulock-sales-${filter}-${today}.csv`; a.click();
@@ -6829,6 +6878,7 @@ function SalesPage() {
     { id: 'unconfirmed', label: SALES_SEGMENTS.unconfirmed.label },
     { id: 'paying', label: SALES_SEGMENTS.paying.label },
   ];
+  const filterLabel = FILTERS.find((f) => f.id === filter)?.label || 'Selected';
 
   return (
     <div className="space-y-8 text-[#0B1E3F]">
@@ -6836,7 +6886,7 @@ function SalesPage() {
         <div>
           <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Sales</div>
           <h1 className="text-4xl serif italic text-[#0B1E3F]">Turn free users into customers.</h1>
-          <p className="text-[#0B1E3F]/60 mt-2 text-sm max-w-2xl">Everyone who signed up, sorted by how close they are to paying, with the next step and a ready-to-send email for each.</p>
+          <p className="text-[#0B1E3F]/60 mt-2 text-sm max-w-2xl">Everyone who signed up, sorted by how close they are to paying. Email one person or a whole group, personalized with their own lookups.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={exportCsv} disabled={!shown.length} className="px-4 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 flex items-center gap-1.5 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Export CSV</button>
@@ -6844,13 +6894,25 @@ function SalesPage() {
         </div>
       </div>
 
+      <div className="flex gap-1 p-1 bg-[#0B1E3F]/5 rounded-full w-fit">
+        {([{ id: 'people', label: 'People' }, { id: 'campaigns', label: 'Sent emails' }] as const).map((t) => (
+          <button key={t.id} onClick={() => setView(t.id)}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition ${view === t.id ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/60 hover:text-[#0B1E3F]'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {!pipelineReady && (
         <div className="p-4 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-xl text-sm">
-          <strong>Stages, notes and follow-ups are off</strong> until the <span className="mono">sales_leads</span> table exists. Run the new block at the end of <span className="mono">supabase/schema.sql</span> in the Supabase SQL editor.
+          <strong>Stages, notes and follow-ups are off</strong> until the <span className="mono">sales_leads</span> table exists. Run the Sales blocks at the end of <span className="mono">supabase/schema.sql</span> in the Supabase SQL editor.
         </div>
       )}
       {error && <div className="text-sm text-[#DC2626]">{error}</div>}
 
+      {view === 'campaigns' && <SalesCampaigns />}
+
+      {view === 'people' && (<>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Not subscribed</div><div className="text-2xl font-semibold mt-1">{leads == null ? '—' : counts.free}</div></div>
         <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Paying</div><div className="text-2xl font-semibold mt-1">{leads == null ? '—' : (counts.paying || 0)}</div></div>
@@ -6868,11 +6930,11 @@ function SalesPage() {
             const step = prev ? Math.round((s.n / prev) * 100) : null;
             return (
               <div key={s.label} className="flex items-center gap-3 text-sm">
-                <div className="w-40 md:w-48 flex-shrink-0 text-[#0B1E3F]/75">{s.label}</div>
+                <div className="w-32 md:w-48 flex-shrink-0 text-[#0B1E3F]/75">{s.label}</div>
                 <div className="flex-1 h-6 bg-[#0B1E3F]/5 rounded-md overflow-hidden">
                   <div className="h-full bg-[#0B1E3F] rounded-md transition-all" style={{ width: `${Math.max(pct, s.n ? 2 : 0)}%` }} />
                 </div>
-                <div className="w-24 text-right mono text-xs">
+                <div className="w-20 md:w-24 text-right mono text-xs">
                   <span className="font-semibold text-[#0B1E3F]">{s.n}</span>
                   {step != null && <span className="text-[#0B1E3F]/45"> · {step}%</span>}
                 </div>
@@ -6898,6 +6960,34 @@ function SalesPage() {
         </div>
       </div>
 
+      {/* Bulk bar — select people, then email them all or move their stage. */}
+      {shown.length > 0 && (
+        <div className="sticky top-16 z-10 flex flex-wrap items-center gap-3 p-3 bg-white border border-[#0B1E3F]/10 rounded-2xl card-shadow">
+          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer pl-1">
+            <input type="checkbox" checked={allShownSelected}
+              onChange={() => setSelected(allShownSelected ? new Set() : new Set(shown.map((l) => l.id)))}
+              className="w-4 h-4 accent-[#0B1E3F]" />
+            {selectedLeads.length ? `${selectedLeads.length} selected` : `Select all ${shown.length}`}
+          </label>
+          <div className="flex-1" />
+          {selectedLeads.length > 0 && pipelineReady && (
+            <select value="" onChange={(e) => bulkStage(e.target.value)} className="px-3 py-2 border border-[#0B1E3F]/15 bg-white rounded-full text-sm">
+              <option value="">Set stage…</option>
+              {SALES_STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          )}
+          <button
+            onClick={() => setComposer({
+              recipients: selectedLeads.length ? selectedLeads : shown,
+              audience: selectedLeads.length ? `${selectedLeads.length} selected (${filterLabel})` : filterLabel,
+            })}
+            className="px-4 py-2 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#FF6B35]/90 flex items-center gap-1.5">
+            <Mail className="w-3.5 h-3.5" />
+            {selectedLeads.length ? `Email ${selectedLeads.length} selected` : `Email all ${shown.length} in “${filterLabel}”`}
+          </button>
+        </div>
+      )}
+
       <div className="space-y-3">
         {leads == null && <div className="text-sm text-[#0B1E3F]/50">Loading…</div>}
         {leads != null && shown.length === 0 && (
@@ -6906,17 +6996,18 @@ function SalesPage() {
         {pageItems.map((l) => {
           const seg = SALES_SEGMENTS[l.segment as SalesSegment];
           const displayName = l.name || (l.email || '').split('@')[0];
-          const firstName = (l.name || '').split(' ')[0] || 'there';
-          const mailto = `mailto:${encodeURIComponent(l.email)}?subject=${encodeURIComponent(seg.subject)}&body=${encodeURIComponent(seg.body(firstName))}`;
           const open = openId === l.id;
           return (
-            <div key={l.id} className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+            <div key={l.id} className={`bg-white rounded-2xl border p-5 card-shadow ${selected.has(l.id) ? 'border-[#0B1E3F]/50' : 'border-[#0B1E3F]/10'}`}>
               <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+                <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggle(l.id)} className="hidden lg:block w-4 h-4 mt-1 accent-[#0B1E3F] flex-shrink-0" aria-label={`Select ${displayName}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggle(l.id)} className="lg:hidden w-4 h-4 accent-[#0B1E3F]" aria-label={`Select ${displayName}`} />
                     <span className="font-semibold truncate">{displayName}</span>
                     <span className={`text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${seg.tone}`}>{seg.label}</span>
                     {isDue(l) && <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full font-bold bg-[#FF6B35] text-white">Follow-up due</span>}
+                    {l.unsubscribed && <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full font-bold bg-[#0B1E3F]/10 text-[#0B1E3F]/60">Unsubscribed</span>}
                   </div>
                   <div className="text-sm text-[#0B1E3F]/60 truncate">{l.email}{l.company ? ` · ${l.company}` : ''}{l.mc ? ` · MC ${l.mc}` : ''}</div>
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs mono text-[#0B1E3F]/55">
@@ -6925,7 +7016,7 @@ function SalesPage() {
                     <span>Lookups: {l.lookupsThisMonth}{l.freeLimit != null && l.segment !== 'paying' ? `/${l.freeLimit}` : ''} this mo · {l.lookupsTotal} total</span>
                     {l.lastActiveAt && <span>Last active {timeAgo(l.lastActiveAt)}</span>}
                     {l.checkoutAt && <span className="text-[#DC2626]">Checkout {timeAgo(l.checkoutAt)}{l.checkoutPlan ? ` · ${l.checkoutPlan}` : ''}</span>}
-                    {l.lastContactedAt && <span>Contacted {timeAgo(l.lastContactedAt)}</span>}
+                    {l.lastEmailedAt && <span>Emailed {timeAgo(l.lastEmailedAt)}</span>}
                   </div>
                   <div className="mt-3 text-sm text-[#0B1E3F]/80 flex items-start gap-2">
                     <Target className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-0.5" />
@@ -6933,11 +7024,10 @@ function SalesPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap lg:flex-col gap-2 lg:w-48 flex-shrink-0">
-                  <a href={mailto}
-                    onClick={() => { if (pipelineReady) saveLead(l.id, { contacted: true }, { lastContactedAt: new Date().toISOString(), stage: l.stage === 'new' ? 'contacted' : l.stage }); }}
+                  <button type="button" onClick={() => setComposer({ recipients: [l], audience: l.email })}
                     className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 flex items-center justify-center gap-1.5">
                     <Mail className="w-3.5 h-3.5" /> Email
-                  </a>
+                  </button>
                   {pipelineReady && (
                     <select value={l.stage} disabled={savingId === l.id}
                       onChange={(e) => saveLead(l.id, { stage: e.target.value }, { stage: e.target.value })}
@@ -6969,6 +7059,17 @@ function SalesPage() {
           </div>
         </div>
       )}
+      </>)}
+
+      {composer && (
+        <SalesComposer
+          recipients={composer.recipients}
+          audience={composer.audience}
+          adminEmail={adminEmail}
+          onClose={() => setComposer(null)}
+          onSent={() => { setSelected(new Set()); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -6992,6 +7093,367 @@ function SalesNotes({ lead, onSave }: { lead: any; onSave: (body: any, local: an
           Save
         </button>
       </div>
+    </div>
+  );
+}
+
+// Full-screen composer: template + editor on the left, the exact email
+// each recipient will get on the right (rendered server-side by the same
+// function the send uses), step through recipients to check personalization.
+function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
+  recipients: any[]; audience: string; adminEmail: string; onClose: () => void; onSent: () => void;
+}) {
+  // Default to the built-in template for the most common segment here.
+  const topSegment = (() => {
+    const c: Record<string, number> = {};
+    for (const r of recipients) c[r.segment] = (c[r.segment] || 0) + 1;
+    return (Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || 'active') as SalesSegment;
+  })();
+  const initial = BUILT_IN_TEMPLATES.find((t) => t.id === `builtin:${topSegment}`)!;
+
+  const [saved, setSaved] = useState<SalesTemplate[]>([]);
+  const [templatesReady, setTemplatesReady] = useState(true);
+  const [templateId, setTemplateId] = useState(initial.id);
+  const [subject, setSubject] = useState(initial.subject);
+  const [body, setBody] = useState(initial.body);
+  const [ctaLabel, setCtaLabel] = useState(initial.ctaLabel);
+  const [ctaUrl, setCtaUrl] = useState(initial.ctaUrl);
+  const [showLookups, setShowLookups] = useState(initial.showLookups);
+  const [cooldownDays, setCooldownDays] = useState(3);
+  const [idx, setIdx] = useState(0);
+  const [preview, setPreview] = useState<{ subject: string; html: string; lookupCount: number } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [busy, setBusy] = useState<'test' | 'send' | 'save' | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const [result, setResult] = useState<any | null>(null);
+  const bodyRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+  const recipient = recipients[Math.min(idx, recipients.length - 1)];
+
+  useEffect(() => {
+    fetch('/api/admin/sales/templates').then((r) => r.json()).then((d) => {
+      setTemplatesReady(d?.ready !== false);
+      setSaved((d?.templates || []).map((t: any) => ({
+        id: t.id, name: t.name, subject: t.subject, body: t.body,
+        ctaLabel: t.cta_label || '', ctaUrl: t.cta_url || '', showLookups: t.show_lookups !== false,
+      })));
+    }).catch(() => setTemplatesReady(false));
+  }, []);
+
+  // Lock page scroll behind the modal; Esc closes it.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+  }, [busy, onClose]);
+
+  // Debounced server-side render of the current recipient's email.
+  useEffect(() => {
+    if (!recipient) return;
+    setPreviewLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/admin/sales/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead: recipient, subject, body, ctaLabel, ctaUrl, showLookups }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || `Preview failed (${res.status})`);
+        setPreview(data);
+      } catch (e: any) {
+        setPreview({ subject, html: `<div style="font-family:sans-serif;padding:24px;color:#DC2626">${String(e?.message || 'Preview failed').replace(/</g, '&lt;')}</div>`, lookupCount: 0 });
+      } finally {
+        setPreviewLoading(false);
+      }
+    }, 450);
+    return () => clearTimeout(t);
+  }, [recipient?.id, subject, body, ctaLabel, ctaUrl, showLookups]);
+
+  const allTemplates = [...BUILT_IN_TEMPLATES, ...saved];
+  const pickTemplate = (id: string) => {
+    const t = allTemplates.find((x) => x.id === id);
+    if (!t) return;
+    setTemplateId(id); setSubject(t.subject); setBody(t.body); setCtaLabel(t.ctaLabel); setCtaUrl(t.ctaUrl); setShowLookups(t.showLookups);
+  };
+  const current = allTemplates.find((t) => t.id === templateId);
+
+  const insertTag = (tag: string) => {
+    const el = bodyRef.current;
+    // The lookups block is its own paragraph.
+    const token = tag === 'lookups' ? '\n\n{{lookups}}\n\n' : `{{${tag}}}`;
+    if (!el) { setBody((b) => b + token); return; }
+    const start = el.selectionStart ?? body.length;
+    const end = el.selectionEnd ?? body.length;
+    const next = body.slice(0, start) + token + body.slice(end);
+    setBody(next);
+    setTimeout(() => { el.focus(); el.setSelectionRange(start + token.length, start + token.length); }, 0);
+  };
+
+  const saveTemplate = async (asNew: boolean) => {
+    const name = asNew ? window.prompt('Template name', current && !current.builtIn ? `${current.name} copy` : subject.slice(0, 60)) : current?.name;
+    if (!name) return;
+    setBusy('save'); setNotice(null);
+    try {
+      const res = await fetch('/api/admin/sales/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: asNew ? undefined : templateId, name, subject, body, ctaLabel, ctaUrl, showLookups }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Save failed');
+      const t = data.template;
+      const mapped: SalesTemplate = { id: t.id, name: t.name, subject: t.subject, body: t.body, ctaLabel: t.cta_label || '', ctaUrl: t.cta_url || '', showLookups: t.show_lookups !== false };
+      setSaved((s) => [mapped, ...s.filter((x) => x.id !== t.id)]);
+      setTemplateId(t.id);
+      setNotice({ tone: 'ok', text: `Saved template “${t.name}”.` });
+    } catch (e: any) {
+      setNotice({ tone: 'err', text: e?.message || 'Save failed' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteTemplate = async () => {
+    if (!current || current.builtIn || !window.confirm(`Delete template “${current.name}”?`)) return;
+    await fetch(`/api/admin/sales/templates?id=${encodeURIComponent(current.id)}`, { method: 'DELETE' });
+    setSaved((s) => s.filter((x) => x.id !== current.id));
+    pickTemplate(initial.id);
+  };
+
+  // What the server will skip — shown up front so the count isn't a surprise.
+  const cooldownIso = new Date(Date.now() - cooldownDays * 86400000).toISOString();
+  const unsubCount = recipients.filter((r) => r.unsubscribed).length;
+  const recentCount = cooldownDays > 0 ? recipients.filter((r) => !r.unsubscribed && r.lastEmailedAt && r.lastEmailedAt > cooldownIso).length : 0;
+  const willSend = recipients.length - unsubCount - recentCount;
+
+  const send = async (test: boolean) => {
+    if (!subject.trim() || !body.trim()) { setNotice({ tone: 'err', text: 'Add a subject and a message first.' }); return; }
+    if (!test && !window.confirm(`Send this email to ${willSend} ${willSend === 1 ? 'person' : 'people'}?\n\nThis can't be undone.`)) return;
+    setBusy(test ? 'test' : 'send'); setNotice(null);
+    try {
+      const res = await fetch('/api/admin/sales/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject, body, ctaLabel, ctaUrl, showLookups, cooldownDays, audience,
+          userIds: recipients.map((r) => r.id), test, previewUserId: recipient?.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Failed (${res.status})`);
+      if (test) setNotice({ tone: 'ok', text: `Test sent to ${data.to} — it shows ${recipient?.email}'s version.` });
+      else { setResult(data); onSent(); }
+    } catch (e: any) {
+      setNotice({ tone: 'err', text: e?.message || 'Send failed' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const SKIP_LABELS: Record<string, string> = { unsubscribed: 'unsubscribed', 'recently-emailed': 'emailed recently', 'not-found': 'not found' };
+  const inputCls = 'w-full px-3 py-2.5 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/35';
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] bg-[#0B1E3F]/50 flex items-stretch md:items-center justify-center md:p-6" role="dialog" aria-modal="true">
+      <div className="bg-[#F5F3EE] w-full max-w-7xl md:rounded-2xl shadow-2xl flex flex-col max-h-full md:max-h-[92vh] overflow-hidden text-[#0B1E3F]">
+        <div className="flex items-center justify-between gap-4 px-5 py-4 bg-white border-b border-[#0B1E3F]/10">
+          <div className="min-w-0">
+            <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">New email</div>
+            <div className="font-semibold truncate">To: {recipients.length === 1 ? recipients[0].email : `${recipients.length} people · ${audience}`}</div>
+          </div>
+          <button onClick={onClose} disabled={!!busy} className="p-2 rounded-full hover:bg-[#0B1E3F]/5" aria-label="Close"><X className="w-5 h-5" /></button>
+        </div>
+
+        {result ? (
+          <div className="p-10 text-center space-y-4 overflow-y-auto">
+            <CheckCircle2 className="w-12 h-12 text-[#16A34A] mx-auto" />
+            <div className="text-2xl font-semibold">Sent to {result.sent} {result.sent === 1 ? 'person' : 'people'}</div>
+            <div className="text-sm text-[#0B1E3F]/65">
+              {result.failed > 0 && <span className="text-[#DC2626]">{result.failed} failed · </span>}
+              {result.skipped > 0
+                ? <>Skipped {result.skipped}: {Object.entries(result.skipReasons || {}).map(([k, v]) => `${v} ${SKIP_LABELS[k] || k}`).join(', ')}</>
+                : 'Nobody skipped.'}
+            </div>
+            <div className="text-sm text-[#0B1E3F]/55">They’re marked as contacted. Replies go to your inbox. Track results under “Sent emails”.</div>
+            <button onClick={onClose} className="px-6 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium">Done</button>
+          </div>
+        ) : (
+        <div className="flex-1 overflow-y-auto lg:overflow-hidden grid lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          {/* Editor */}
+          <div className="p-5 space-y-4 lg:overflow-y-auto">
+            <div>
+              <label className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 block mb-1.5">Template</label>
+              <div className="flex gap-2">
+                <select value={templateId} onChange={(e) => pickTemplate(e.target.value)} className={inputCls}>
+                  <optgroup label="Built-in (one per group)">
+                    {BUILT_IN_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </optgroup>
+                  {saved.length > 0 && (
+                    <optgroup label="Your templates">
+                      {saved.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+              {templatesReady && (
+                <div className="flex flex-wrap gap-3 mt-2 text-xs">
+                  <button type="button" disabled={!!busy} onClick={() => saveTemplate(true)} className="underline text-[#0B1E3F]/70 hover:text-[#0B1E3F]">Save as new template</button>
+                  {current && !current.builtIn && <button type="button" disabled={!!busy} onClick={() => saveTemplate(false)} className="underline text-[#0B1E3F]/70 hover:text-[#0B1E3F]">Update “{current.name}”</button>}
+                  {current && !current.builtIn && <button type="button" onClick={deleteTemplate} className="underline text-[#DC2626]/80 hover:text-[#DC2626]">Delete</button>}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 block mb-1.5">Subject</label>
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} className={inputCls} />
+            </div>
+
+            <div>
+              <label className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 block mb-1.5">Message</label>
+              <textarea ref={bodyRef} value={body} onChange={(e) => setBody(e.target.value)} rows={11} className={`${inputCls} leading-relaxed font-[inherit]`} />
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mr-1">Insert</span>
+                {SALES_MERGE_TAGS.map((t) => (
+                  <button key={t} type="button" onClick={() => insertTag(t)} className="px-2 py-0.5 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-[11px] mono text-[#0B1E3F]/75">{`{{${t}}}`}</button>
+                ))}
+              </div>
+              <div className="mt-1.5 text-[11px] text-[#0B1E3F]/50">Blank line = new paragraph · **bold** · links work as-is</div>
+            </div>
+
+            <label className="flex items-start gap-3 p-3 bg-white border border-[#0B1E3F]/10 rounded-xl cursor-pointer">
+              <input type="checkbox" checked={showLookups} onChange={(e) => setShowLookups(e.target.checked)} className="w-4 h-4 mt-0.5 accent-[#0B1E3F]" />
+              <span className="text-sm">
+                <span className="font-medium">Show their recent lookups</span>
+                <span className="block text-xs text-[#0B1E3F]/55 mt-0.5">Their last 3 companies checked, with risk score and top warning sign, placed where <span className="mono">{'{{lookups}}'}</span> is in the message. People with no lookups see a labelled example instead.</span>
+              </span>
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 block mb-1.5">Button text</label>
+                <input value={ctaLabel} onChange={(e) => setCtaLabel(e.target.value)} placeholder="Optional" className={inputCls} />
+              </div>
+              <div>
+                <label className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 block mb-1.5">Button link</label>
+                <input value={ctaUrl} onChange={(e) => setCtaUrl(e.target.value)} placeholder="https://haulock.com/pricing" className={inputCls} />
+              </div>
+            </div>
+
+            {recipients.length > 1 && (
+              <div className="flex items-center gap-2 text-sm">
+                <span>Skip anyone emailed in the last</span>
+                <select value={cooldownDays} onChange={(e) => setCooldownDays(Number(e.target.value))} className="px-2 py-1 border border-[#0B1E3F]/15 bg-white rounded-lg">
+                  {[0, 1, 3, 7, 14, 30].map((d) => <option key={d} value={d}>{d === 0 ? '— don’t skip' : `${d} day${d === 1 ? '' : 's'}`}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Preview */}
+          <div className="p-5 bg-[#0B1E3F]/[0.03] border-t lg:border-t-0 lg:border-l border-[#0B1E3F]/10 flex flex-col min-h-[640px] lg:min-h-0">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Preview {previewLoading && '· updating…'}</div>
+                <div className="text-sm truncate">For <strong>{recipient?.name || recipient?.email}</strong> <span className="text-[#0B1E3F]/50">· {recipient?.email}</span></div>
+              </div>
+              {recipients.length > 1 && (
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={idx === 0} className="px-2.5 py-1 border border-[#0B1E3F]/15 bg-white rounded-full text-sm disabled:opacity-40" aria-label="Previous recipient">‹</button>
+                  <span className="text-xs mono text-[#0B1E3F]/60 w-16 text-center">{idx + 1} / {recipients.length}</span>
+                  <button onClick={() => setIdx((i) => Math.min(recipients.length - 1, i + 1))} disabled={idx >= recipients.length - 1} className="px-2.5 py-1 border border-[#0B1E3F]/15 bg-white rounded-full text-sm disabled:opacity-40" aria-label="Next recipient">›</button>
+                </div>
+              )}
+            </div>
+            <div className="bg-white border border-[#0B1E3F]/10 rounded-t-xl px-4 py-3 text-sm">
+              <div className="truncate"><span className="text-[#0B1E3F]/50">Subject:</span> <strong>{preview?.subject || subject}</strong></div>
+              {showLookups && preview && (
+                <div className="text-xs text-[#0B1E3F]/50 mt-0.5">{preview.lookupCount > 0 ? `Includes ${preview.lookupCount} of their lookups` : 'No lookups yet — shows the example check'}</div>
+              )}
+            </div>
+            <iframe
+              title="Email preview"
+              sandbox=""
+              srcDoc={preview?.html || ''}
+              className="flex-1 w-full bg-[#F5F3EE] border border-t-0 border-[#0B1E3F]/10 rounded-b-xl min-h-[520px]"
+            />
+          </div>
+        </div>
+        )}
+
+        {!result && (
+          <div className="px-5 py-4 bg-white border-t border-[#0B1E3F]/10 flex flex-col md:flex-row md:items-center gap-3">
+            <div className="flex-1 text-sm min-w-0">
+              {notice
+                ? <span className={notice.tone === 'ok' ? 'text-[#16A34A]' : 'text-[#DC2626]'}>{notice.text}</span>
+                : <span className="text-[#0B1E3F]/60">
+                    Will send to <strong className="text-[#0B1E3F]">{willSend}</strong>
+                    {(unsubCount > 0 || recentCount > 0) && <> · skipping {[unsubCount ? `${unsubCount} unsubscribed` : '', recentCount ? `${recentCount} emailed recently` : ''].filter(Boolean).join(', ')}</>}
+                    {' '}· replies go to {adminEmail || 'you'}
+                  </span>}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => send(true)} disabled={!!busy || !adminEmail} className="px-4 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 disabled:opacity-50">
+                {busy === 'test' ? 'Sending test…' : 'Send test to me'}
+              </button>
+              <button onClick={() => send(false)} disabled={!!busy || willSend === 0} className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#FF6B35]/90 disabled:opacity-50 flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5" />
+                {busy === 'send' ? 'Sending…' : `Send to ${willSend}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function SalesCampaigns() {
+  const [data, setData] = useState<{ campaigns: any[]; ready: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/admin/sales/campaigns').then(async (r) => {
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || `Failed (${r.status})`);
+      setData(d);
+    }).catch((e) => setError(e?.message || 'Failed to load'));
+  }, []);
+  if (error) return <div className="text-sm text-[#DC2626]">{error}</div>;
+  if (!data) return <div className="text-sm text-[#0B1E3F]/50">Loading…</div>;
+  if (!data.ready) return <div className="p-4 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-xl text-sm">Email history needs the <span className="mono">sales_campaigns</span> tables from <span className="mono">supabase/schema.sql</span>.</div>;
+  if (data.campaigns.length === 0) return <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-10 text-center text-sm text-[#0B1E3F]/55">No emails sent yet. Pick a group under People and click “Email all”.</div>;
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-x-auto">
+      <table className="w-full text-sm min-w-[720px]">
+        <thead>
+          <tr className="text-left text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 border-b border-[#0B1E3F]/10">
+            <th className="px-4 py-3 font-medium">Sent</th>
+            <th className="px-4 py-3 font-medium">Subject</th>
+            <th className="px-4 py-3 font-medium">To</th>
+            <th className="px-4 py-3 font-medium text-right">Delivered</th>
+            <th className="px-4 py-3 font-medium text-right">Failed</th>
+            <th className="px-4 py-3 font-medium text-right">Skipped</th>
+            <th className="px-4 py-3 font-medium text-right" title="Recipients who are on a paid plan today">Paying now</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.campaigns.map((c) => (
+            <tr key={c.id} className="border-b border-[#0B1E3F]/5 last:border-0">
+              <td className="px-4 py-3 whitespace-nowrap text-[#0B1E3F]/70">{timeAgo(c.created_at)}</td>
+              <td className="px-4 py-3 max-w-[280px] truncate font-medium" title={c.subject}>{c.subject}</td>
+              <td className="px-4 py-3 text-[#0B1E3F]/70 max-w-[200px] truncate" title={c.audience}>{c.audience}</td>
+              <td className="px-4 py-3 text-right mono">{c.sent}</td>
+              <td className={`px-4 py-3 text-right mono ${c.failed ? 'text-[#DC2626]' : 'text-[#0B1E3F]/45'}`}>{c.failed}</td>
+              <td className="px-4 py-3 text-right mono text-[#0B1E3F]/45">{c.skipped}</td>
+              <td className={`px-4 py-3 text-right mono font-semibold ${c.nowPaying ? 'text-[#16A34A]' : 'text-[#0B1E3F]/45'}`}>{c.nowPaying}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -8909,6 +9371,34 @@ function entityBadge(r: any): { label: string; bg: string; color: string; icon: 
   return { label: 'No authority', bg: '#DC2626', color: '#ffffff', icon: '⚠' };
 }
 
+// Recommendation copy depends on what the company IS. A broker gives you a
+// load (you're deciding whether to book it); a carrier hauls your load
+// (you're deciding whether to tender to it). Same FMCSA authority fields
+// as entityBadge so the badge and the advice never disagree.
+function recommendationFor(r: any, verdict: string): { headline: string; detail: string } {
+  const isCarrier = r.commonAuthority === 'Active' || r.contractAuthority === 'Active';
+  const isBroker = r.brokerAuthority === 'Active';
+  const high = verdict === 'high';
+  const medium = verdict === 'medium';
+  if (isCarrier && !isBroker) {
+    if (high) return { headline: 'Don’t tender to this carrier yet.', detail: 'Multiple serious red flags. Before you hand off a load, confirm who you’re dealing with by calling a number you look up yourself, and confirm insurance directly with the insurer.' };
+    if (medium) return { headline: 'Proceed with caution.', detail: 'This carrier shows some risk signals. Review the red flags below, confirm their insurance is active, and confirm identity by calling a number you look up yourself before you tender.' };
+    return { headline: 'Looks safe to tender.', detail: 'This carrier has a clean record and no major red flags. As always, confirm insurance is current before you hand off the load.' };
+  }
+  if (isBroker && !isCarrier) {
+    if (high) return { headline: 'Do not book this load.', detail: 'Multiple serious red flags. If you must proceed, require full payment upfront and confirm identity through an independent channel.' };
+    if (medium) return { headline: 'Proceed with caution.', detail: 'This broker shows some risk signals. Check that the rate con details match FMCSA records and confirm identity independently.' };
+    return { headline: 'Safe to book.', detail: 'This broker has a clean record and no major red flags. Standard payment terms are appropriate.' };
+  }
+  if (!isCarrier && !isBroker) {
+    return { headline: high ? 'Do not do business with this company.' : 'Proceed with caution.', detail: 'This company has no active FMCSA operating authority, so it can’t legally broker or haul interstate freight right now. Confirm its authority before booking or tendering anything.' };
+  }
+  // Holds both carrier and broker authority.
+  if (high) return { headline: 'Don’t book or tender yet.', detail: 'Multiple serious red flags. Whether they’re brokering a load to you or hauling one for you, confirm identity through an independent channel first.' };
+  if (medium) return { headline: 'Proceed with caution.', detail: 'This company holds both carrier and broker authority and shows some risk signals. Check the red flags below and confirm identity independently.' };
+  return { headline: 'Looks safe.', detail: 'This company holds both carrier and broker authority, with a clean record and no major red flags.' };
+}
+
 // COI checks are saved to history like any other scan; route them to their
 // own view so the carrier report never receives a COI payload.
 function Report({ report, navigate }: any) {
@@ -9142,12 +9632,13 @@ function CarrierReport({ report, navigate }: any) {
         </div>
         <div className="md:col-span-3 bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
           <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Recommendation</div>
-          <div className="text-2xl text-[#0B1E3F] leading-tight mb-4">
-            {isBad ? 'Do not book this load.' : verdict === 'medium' ? 'Proceed with caution.' : 'Safe to book.'}
-          </div>
-          <p className="text-[#0B1E3F]/70 leading-relaxed">
-            {isBad ? 'Multiple serious red flags detected. If you must proceed, require full payment upfront and verify identity through an independent channel.' : verdict === 'medium' ? 'This broker shows some risk signals. Verify the rate con details match FMCSA records and confirm identity independently.' : 'This broker has a clean record and no major red flags. Standard payment terms are appropriate.'}
-          </p>
+          {(() => {
+            const rec = recommendationFor(r, verdict);
+            return (<>
+              <div className="text-2xl text-[#0B1E3F] leading-tight mb-4">{rec.headline}</div>
+              <p className="text-[#0B1E3F]/70 leading-relaxed">{rec.detail}</p>
+            </>);
+          })()}
         </div>
       </div>
       {Array.isArray(r.sources) && r.sources.length > 0 && (
@@ -9158,7 +9649,8 @@ function CarrierReport({ report, navigate }: any) {
               <span key={s.name} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${s.ok ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60'}`}>
                 {s.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                 <span className="font-semibold">{s.name}</span>
-                <span className="opacity-75">· {s.note}</span>
+                {/* Older saved reports carry the raw fetch error. */}
+                <span className="opacity-75">· {/aborted|timed? ?out/i.test(String(s.note || '')) ? 'didn’t respond in time — try Scan again' : s.note}</span>
               </span>
             ))}
           </div>
@@ -10303,11 +10795,29 @@ const HISTORY_FIELD_LABELS: Record<string, string> = {
   drivers: 'Drivers',
   crashTotal: 'Total crashes',
   fatalCrash: 'Fatal crashes',
+  fax: 'Fax',
+  emailFull: 'Email',
 };
 
 function fieldLabel(key: string): string {
   return HISTORY_FIELD_LABELS[key] || key;
 }
+
+// FMCSA writes the same address many ways ("ROAD" vs "RD", ZIP vs ZIP+4).
+// Normalize before comparing so a reformatted address isn't shown as a move.
+function normalizeHistoryValue(v: string): string {
+  return v
+    .toUpperCase()
+    .replace(/\b(\d{5})-\d{4}\b/g, '$1')
+    .replace(/\bROAD\b/g, 'RD').replace(/\bSTREET\b/g, 'ST').replace(/\bAVENUE\b/g, 'AVE')
+    .replace(/\bDRIVE\b/g, 'DR').replace(/\bBOULEVARD\b/g, 'BLVD').replace(/\bSUITE\b/g, 'STE')
+    .replace(/\bHIGHWAY\b/g, 'HWY').replace(/\bLANE\b/g, 'LN').replace(/\bCOURT\b/g, 'CT')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+// FMCSA crash counts cover a rolling 24 months, so a lower number usually
+// means an old crash aged out, not that a record was erased.
+const ROLLING_WINDOW_FIELDS = new Set(['crashTotal', 'fatalCrash']);
 
 function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
   const idQs = dot ? `dot=${encodeURIComponent(dot)}` : `mc=${encodeURIComponent(mc!)}`;
@@ -10320,11 +10830,16 @@ function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
       <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
         <div>
           <h2 className="text-xl font-semibold text-[#0B1E3F]">Identity history</h2>
-          <div className="text-sm text-[#0B1E3F]/60 mt-1">Address, authority, insurance, and fleet-size changes Haulock has observed for this carrier over time.</div>
+          <div className="text-sm text-[#0B1E3F]/60 mt-1">Address, authority, insurance, and fleet-size changes Haulock has seen for this company over time.</div>
         </div>
         <span className="px-3 py-1.5 bg-[#0B1E3F]/5 rounded-full text-xs mono uppercase tracking-wider font-semibold text-[#0B1E3F]/70">
-          {history.length} change{history.length === 1 ? '' : 's'} on file
+          {history.length} snapshot{history.length === 1 ? '' : 's'}
         </span>
+      </div>
+      <div className="mb-6 p-4 bg-[#F5F3EE]/70 rounded-xl text-xs text-[#0B1E3F]/70 leading-relaxed">
+        <strong className="text-[#0B1E3F]">Where this comes from:</strong> the oldest entry is from Haulock&apos;s FMCSA archive (about 5 years ago).
+        After that, Haulock saves a copy of FMCSA&apos;s record each time anyone looks this company up, and each entry shows what differs from the copy before it.
+        The time shown is when Haulock noticed the difference, not when FMCSA recorded it. Fields that simply weren&apos;t in an older copy are listed separately, because they aren&apos;t real changes.
       </div>
       <ol className="relative border-l-2 border-[#0B1E3F]/10 pl-6 space-y-5">
         {history.map((row: any, i: number) => {
@@ -10345,6 +10860,31 @@ function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
             : ageDays < 60 ? `${Math.round(ageDays / 7)} weeks ago`
             : ageDays < 365 ? `${Math.round(ageDays / 30)} months ago`
             : `${ageYears.toFixed(1)} years ago`;
+          // Sort this entry's fields into real changes vs. noise: a field
+          // missing from the older copy (first recorded), missing from this
+          // copy (not reported this time), or the same value reformatted.
+          const fmtH = (v: any): string => {
+            if (v == null || v === '') return '—';
+            if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+            return String(v);
+          };
+          const prevData: any = history[i + 1]?.data || {};
+          const real: string[] = [], formatting: string[] = [], added: string[] = [], missing: string[] = [];
+          if (!isInitial) {
+            for (const f of fields) {
+              const b = fmtH(prevData[f]), a = fmtH(row.data?.[f]);
+              if (b === a) continue;
+              if (b === '—') added.push(f);
+              else if (a === '—') missing.push(f);
+              else if (normalizeHistoryValue(b) === normalizeHistoryValue(a)) formatting.push(f);
+              else real.push(f);
+            }
+          }
+          const summary = isInitial ? '' : [
+            real.length ? `${real.length} real change${real.length === 1 ? '' : 's'}` : (added.length ? 'First full FMCSA record' : 'No real changes'),
+            added.length && real.length ? `${added.length} first recorded` : '',
+            formatting.length ? `${formatting.length} formatting only` : '',
+          ].filter(Boolean).join(' · ');
           return (
             <li key={row.id} className="relative">
               <span className={`absolute -left-[31px] top-1.5 w-3.5 h-3.5 rounded-full border-2 border-white ${isLatest ? 'bg-[#16A34A]' : isInitial ? 'bg-[#0B1E3F]/40' : 'bg-[#FF6B35]'}`} />
@@ -10353,7 +10893,7 @@ function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
                 {isLatest && <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#16A34A]/10 text-[#16A34A] font-semibold">Latest</span>}
                 {isInitial && <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#0B1E3F]/5 text-[#0B1E3F]/55 font-semibold">First record</span>}
                 {!isInitial && (
-                  <span className="text-[10px] text-[#0B1E3F]/45">{fields.length} field{fields.length === 1 ? '' : 's'} changed</span>
+                  <span className={`text-[10px] ${real.length ? 'text-[#FF6B35] font-semibold' : 'text-[#0B1E3F]/45'}`}>{summary}</span>
                 )}
               </div>
               {(() => {
@@ -10389,29 +10929,53 @@ function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
                     </>
                   );
                 }
-                // Change entry — show before → after for each changed
-                // field. The "before" is the previous (older) row's value.
-                const prevRow = history[i + 1];
-                const prevData: any = prevRow?.data || {};
+                // Change entry — before → after for real changes (the
+                // "before" is the previous, older row's value), then the
+                // noise, clearly labelled as not-a-change.
+                const changeCard = (f: string, muted: boolean) => {
+                  const beforeS = fmt(prevData[f]);
+                  const afterS = fmt(row.data?.[f]);
+                  const agedOut = ROLLING_WINDOW_FIELDS.has(f) && Number(afterS) < Number(beforeS);
+                  return (
+                    <div key={f} className={`p-2.5 rounded-lg ${muted ? 'bg-[#0B1E3F]/[0.03]' : 'bg-[#F5F3EE]/60'}`}>
+                      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1 flex items-center gap-1.5">
+                        {fieldLabel(f)}
+                        {muted && <span className="normal-case tracking-normal text-[#0B1E3F]/45">· formatting only</span>}
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium truncate text-[#0B1E3F]/55 line-through" title={beforeS}>{beforeS}</span>
+                        <ArrowRight className={`w-3 h-3 flex-shrink-0 ${muted ? 'text-[#0B1E3F]/30' : 'text-[#FF6B35]'}`} />
+                        <span className={`truncate ${muted ? 'text-[#0B1E3F]/60' : 'font-semibold text-[#0B1E3F]'}`} title={afterS}>{afterS}</span>
+                      </div>
+                      {agedOut && <div className="text-[11px] text-[#0B1E3F]/50 mt-1">FMCSA counts crashes over a rolling 24 months, so older ones drop off.</div>}
+                    </div>
+                  );
+                };
                 return (
-                  <div className="grid sm:grid-cols-2 gap-x-4 gap-y-2">
-                    {fields.map((f) => {
-                      const before = prevData[f];
-                      const after = row.data?.[f];
-                      const beforeS = fmt(before);
-                      const afterS  = fmt(after);
-                      const changed = beforeS !== afterS;
-                      return (
-                        <div key={f} className="p-2.5 bg-[#F5F3EE]/60 rounded-lg">
-                          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">{fieldLabel(f)}</div>
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className={`font-medium truncate ${changed ? 'text-[#0B1E3F]/55 line-through' : 'text-[#0B1E3F]'}`} title={beforeS}>{beforeS}</span>
-                            {changed && <ArrowRight className="w-3 h-3 text-[#FF6B35] flex-shrink-0" />}
-                            {changed && <span className="font-semibold text-[#0B1E3F] truncate" title={afterS}>{afterS}</span>}
-                          </div>
+                  <div className="space-y-3">
+                    {(real.length > 0 || formatting.length > 0) && (
+                      <div className="grid sm:grid-cols-2 gap-x-4 gap-y-2">
+                        {real.map((f) => changeCard(f, false))}
+                        {formatting.map((f) => changeCard(f, true))}
+                      </div>
+                    )}
+                    {added.length > 0 && (
+                      <div className="text-xs text-[#0B1E3F]/60">
+                        <div className="mb-1.5"><span className="font-semibold text-[#0B1E3F]/75">First recorded here</span> — not in the older copy, so this isn&apos;t a change:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {added.map((f) => (
+                            <span key={f} className="px-2 py-1 bg-[#0B1E3F]/[0.04] rounded-md" title={fmt(row.data?.[f])}>
+                              {fieldLabel(f)}: <span className="text-[#0B1E3F]/80">{fmt(row.data?.[f])}</span>
+                            </span>
+                          ))}
                         </div>
-                      );
-                    })}
+                      </div>
+                    )}
+                    {missing.length > 0 && (
+                      <div className="text-xs text-[#0B1E3F]/55">
+                        <span className="font-semibold text-[#0B1E3F]/70">Not included in this copy:</span> {missing.map(fieldLabel).join(', ')}. That usually means the data source didn&apos;t return the field, not that the company removed it.
+                      </div>
+                    )}
                   </div>
                 );
               })()}

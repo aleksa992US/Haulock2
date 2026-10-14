@@ -731,7 +731,9 @@ export async function GET(req: Request) {
               if (alerts > 0) return `${alerts} BASIC alert${alerts === 1 ? '' : 's'} · ${inspCount} inspections`;
               return `Clean · ${inspCount} inspections`;
             })()
-          : (carrier.sms.error || 'SMS unavailable'),
+          : /abort|timed? ?out/i.test(carrier.sms.error || '')
+            ? 'FMCSA SMS didn’t respond in time — try Scan again'
+            : (carrier.sms.error || 'SMS unavailable'),
     },
     {
       name: 'FMCSA archive',
