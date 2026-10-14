@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { fetchCensusContact } from '@/lib/fmcsa-census';
+import { dotForMc, fetchCensusContact } from '@/lib/fmcsa-census';
 import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
-import { sendEmail, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange, type WatchlistFieldChange } from '@/lib/email';
+import { attachViolationDetails, fetchRecentSafetyEvents } from '@/lib/fmcsa-inspections';
+import { sendEmail, safetyEventsTemplate, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange, type WatchlistFieldChange } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,18 @@ export const maxDuration = 300;
 // report (row.data) or its score — the FMCSA snapshot is kept separately in
 // row.data.fmcsaWatch. Runs from Vercel Cron once a day. Safe to re-run: the
 // snapshot is updated after each check, so the same change isn't re-sent.
+//
+// For the user's own company (data.own) it also emails each new roadside
+// inspection and crash FMCSA files for their DOT. The ids already seen are
+// kept in row.data.safetyWatch; the first check only records them.
+
+type SafetyWatch = {
+  seenInspections: string[];   // inspection ids in the current 90-day window
+  seenCrashes: string[];
+  baselineAt: string;
+  lastEventAt?: string;        // when a new inspection or crash was last found
+  lastNew?: { inspections: number; crashes: number; oos: number };
+};
 
 type FmcsaWatchSnapshot = {
   // When a real FMCSA change was last found (the weekly digest counts these).
@@ -188,6 +201,60 @@ async function run(req: Request) {
     processed += 1;
     const u = userMap.get(row.user_id);
     if (!u?.email) { skipped += 1; continue; }
+
+    // Own company: new roadside inspections and crashes. Runs before the
+    // registry check, which can stop early when QCMobile is down.
+    if (row.data?.own === true) {
+      try {
+        const usdot = row.dot || (row.mc ? await dotForMc(row.mc) : null);
+        const ev = usdot ? await fetchRecentSafetyEvents(usdot, 90) : null;
+        if (ev) {
+          const prev = row.data.safetyWatch as SafetyWatch | undefined;
+          const insIds = ev.inspections.map((e) => e.id);
+          const crashIds = ev.crashes.map((c) => c.id);
+          let next: SafetyWatch;
+          if (!prev) {
+            next = { seenInspections: insIds, seenCrashes: crashIds, baselineAt: checkedAt };
+          } else {
+            const seenI = new Set(prev.seenInspections || []);
+            const seenC = new Set(prev.seenCrashes || []);
+            const newIns = ev.inspections.filter((e) => !seenI.has(e.id));
+            const newCrashes = ev.crashes.filter((c) => !seenC.has(c.id));
+            const found = newIns.length + newCrashes.length > 0;
+            if (found && u.notifyOn && isResendConfigured() && !dryRun) {
+              await attachViolationDetails(newIns);
+              const toAddress = u.notificationEmail || u.email;
+              try {
+                const { subject, html } = safetyEventsTemplate({
+                  carrier: { name: row.name || (row.mc ? `MC-${row.mc}` : `DOT-${usdot}`), mc: row.mc, dot: usdot },
+                  inspections: newIns,
+                  crashes: newCrashes,
+                  recipientEmail: toAddress,
+                  siteUrl,
+                });
+                await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
+                sent += 1;
+              } catch (err: any) {
+                results.push({ id: row.id, status: 'safety-send-error', message: err?.message });
+              }
+            }
+            next = {
+              seenInspections: insIds,
+              seenCrashes: crashIds,
+              baselineAt: prev.baselineAt,
+              lastEventAt: found ? checkedAt : prev.lastEventAt,
+              lastNew: found ? { inspections: newIns.length, crashes: newCrashes.length, oos: newIns.filter((e) => e.oos > 0).length } : prev.lastNew,
+            };
+            if (found) results.push({ id: row.id, status: 'safety-events', inspections: newIns.length, crashes: newCrashes.length });
+          }
+          row.data = { ...(row.data || {}), safetyWatch: next };
+          if (!dryRun) await svc.from('watchlist').update({ data: row.data }).eq('id', row.id);
+        }
+      } catch (err: any) {
+        // FMCSA's files didn't answer: nothing recorded, try again tomorrow.
+        results.push({ id: row.id, status: 'safety-error', message: err?.message });
+      }
+    }
 
     // Build the lookup query — prefer MC over DOT for FMCSA reliability.
     const queryStr = row.mc ? `MC-${row.mc}` : row.dot ? `DOT-${row.dot}` : '';

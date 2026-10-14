@@ -49,9 +49,17 @@ export async function GET() {
     dot,
     verified: verification ? { by: verification.by, at: verification.at } : null,
     monitoring: watch
-      ? { on: true, lastChecked: watch.last_checked, lastChangeAt: watch.data?.fmcsaWatch?.lastChangeAt || null }
+      ? {
+          on: true,
+          lastChecked: watch.last_checked,
+          lastChangeAt: watch.data?.fmcsaWatch?.lastChangeAt || null,
+          safetyBaselineAt: watch.data?.safetyWatch?.baselineAt || null,
+          lastSafetyEventAt: watch.data?.safetyWatch?.lastEventAt || null,
+        }
       : { on: false },
   };
+  // The USDOT number keys FMCSA's inspection and crash files.
+  body.usdot = verification?.dot || dot || watch?.dot || (mc ? await resolveOwnDot(mc, dot).catch(() => null) : null);
   // Counts only for paid accounts that proved the company is theirs.
   if (paid && verification) {
     let exclude = [user.id];

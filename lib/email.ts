@@ -721,6 +721,68 @@ ${args.own ? button(args.siteUrl + '/dashboard', 'Open your dashboard →') : bu
   };
 }
 
+// New roadside inspections / crashes on the user's own company (daily
+// own-company monitoring, from FMCSA's inspection and crash files).
+export type SafetyEventInspection = { date: string; state: string; location: string; levelLabel: string; violations: number; oos: number; driverOos: number; vehicleOos: number; postCrash: boolean; details?: { desc: string; oos: boolean }[] };
+export type SafetyEventCrash = { date: string; state: string; city: string; location: string; fatalities: number; injuries: number; towAway: boolean };
+export function safetyEventsTemplate(args: {
+  carrier: { name: string; mc?: string | null; dot?: string | null };
+  inspections: SafetyEventInspection[];
+  crashes: SafetyEventCrash[];
+  recipientEmail: string;
+  siteUrl: string;
+}): { subject: string; html: string } {
+  const idLine = [args.carrier.mc && `MC-${args.carrier.mc}`, args.carrier.dot && `DOT-${args.carrier.dot}`].filter(Boolean).join(' · ') || 'No ID';
+  const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const place = (loc: string, state: string) => [loc && loc.toUpperCase() !== state ? loc : '', state].filter(Boolean).join(', ') || 'Location not reported';
+  const oosCount = args.inspections.filter((i) => i.oos > 0).length;
+  const chip = (text: string, color: string, bg: string) => `<span style="display:inline-block;padding:2px 8px;background:${bg};color:${color};border-radius:999px;font-size:11px;font-weight:600;">${escapeHtml(text)}</span>`;
+  const insRows = args.inspections.slice(0, 15).map((i) => {
+    const result = i.oos > 0
+      ? chip(`Out of service${i.driverOos && !i.vehicleOos ? ' · driver' : i.vehicleOos && !i.driverOos ? ' · vehicle' : ''}`, '#DC2626', 'rgba(220,38,38,0.1)')
+      : i.violations > 0 ? chip(`${i.violations} violation${i.violations === 1 ? '' : 's'}`, '#B45309', 'rgba(245,158,11,0.15)') : chip('Clean', '#16A34A', 'rgba(22,163,74,0.1)');
+    const details = (i.details || []).slice(0, 3).map((v) => `<div style="font-size:12px;color:rgba(11,30,63,0.65);margin-top:3px;">• ${escapeHtml(v.desc.slice(0, 120))}${v.oos ? ' <strong style="color:#DC2626;">(out of service)</strong>' : ''}</div>`).join('');
+    return `
+    <tr><td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);">
+      <div style="font-size:14px;color:#0B1E3F;"><strong>${escapeHtml(day(i.date))}</strong> · ${escapeHtml(place(i.location, i.state))} ${result}</div>
+      <div style="font-size:12px;color:rgba(11,30,63,0.55);margin-top:2px;">${escapeHtml(i.levelLabel)}${i.postCrash ? ' · after a crash' : ''}</div>${details}
+    </td></tr>`;
+  }).join('');
+  const crashRows = args.crashes.slice(0, 10).map((c) => `
+    <tr><td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);">
+      <div style="font-size:14px;color:#0B1E3F;"><strong>${escapeHtml(day(c.date))}</strong> · ${escapeHtml(place(c.city || c.location, c.state))}
+        ${c.fatalities ? chip(`${c.fatalities} fatal`, '#DC2626', 'rgba(220,38,38,0.1)') : ''}
+        ${c.injuries ? chip(`${c.injuries} injur${c.injuries === 1 ? 'y' : 'ies'}`, '#B45309', 'rgba(245,158,11,0.15)') : ''}
+        ${c.towAway ? chip('Tow-away', '#0B1E3F', 'rgba(11,30,63,0.06)') : ''}</div>
+    </td></tr>`).join('');
+  const parts = [
+    args.inspections.length ? `${args.inspections.length} new inspection${args.inspections.length === 1 ? '' : 's'}` : '',
+    args.crashes.length ? `${args.crashes.length} new crash${args.crashes.length === 1 ? '' : 'es'}` : '',
+  ].filter(Boolean);
+  const headline = parts.join(' and ');
+  const urgent = oosCount > 0 || args.crashes.length > 0;
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:${urgent ? 'rgba(220,38,38,0.08)' : 'rgba(11,30,63,0.06)'};color:${urgent ? '#DC2626' : '#0B1E3F'};border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">Your company · FMCSA safety record</div>
+${h1(`${escapeHtml(headline.charAt(0).toUpperCase() + headline.slice(1))} on ${italicAccent('your record')}`)}
+<div style="background:#F5F3EE;border-radius:12px;padding:20px;margin:0 0 24px 0;">
+  <div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);margin-bottom:8px;">${escapeHtml(args.carrier.name)} · ${escapeHtml(idLine)}</div>
+  ${insRows ? `<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin:8px 0 4px;">Roadside inspections</div><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">${insRows}</table>` : ''}
+  ${crashRows ? `<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);margin:16px 0 4px;">Crashes</div><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">${crashRows}</table>` : ''}
+</div>
+${p(oosCount > 0
+  ? 'Out-of-service results count most against your safety scores (CSA), and insurers look at them at renewal. If one looks wrong, you can challenge it through FMCSA&rsquo;s DataQs system.'
+  : 'These now count toward your safety scores (CSA) for the next 24 months. If one looks wrong, you can challenge it through FMCSA&rsquo;s DataQs system.')}
+${args.crashes.length ? p('FMCSA crash records don&rsquo;t say who was at fault. You can ask FMCSA to review a crash you didn&rsquo;t cause through DataQs.') : ''}
+${button(args.siteUrl + '/dashboard', 'See your full record →')}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Inspections reach FMCSA a few days after they happen. Manage these emails in <a href="${args.siteUrl}/settings" style="color:#0B1E3F;text-decoration:underline;">Settings &rarr; Notifications</a>.</div>`;
+  return {
+    subject: oosCount > 0
+      ? `Out-of-service inspection on your DOT${parts.length > 1 || args.inspections.length > 1 ? ` (${headline})` : ''}`
+      : `Your FMCSA safety record: ${headline}`,
+    html: baseLayout({ preview: `${args.carrier.name}: ${headline}`, body, unsubEmail: args.recipientEmail }),
+  };
+}
+
 // Weekly digest — Monday morning summary of the user's last 7 days.
 export type DigestStats = {
   lookups: number;
@@ -757,7 +819,7 @@ export function weeklyDigestTemplate(args: {
 </div>`;
   const body = noActivity ? `
 ${h1(`${greeting} quiet week on ${italicAccent('Haulock')}.`)}
-${p(`You didn&rsquo;t run any lookups or watchlist refreshes in the last 7 days. No news is good news, but if you&rsquo;ve got a load to book this week, it takes 2 seconds to verify the broker first.`)}
+${p(`You didn&rsquo;t run any lookups or watchlist refreshes in the last 7 days. No news is good news, but if you&rsquo;ve got a load to book this week, verify the broker first. It only takes a moment.`)}
 ${button(args.siteUrl, 'Verify a broker →')}
 ` : `
 ${h1(`${greeting} your week on ${italicAccent('Haulock')}.`)}
