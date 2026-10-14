@@ -97,12 +97,38 @@ export type UserBilling = {
   currency: string;
   subscriptionId: string | null;
   customerId: string | null;
-  since: number | null;      // unix seconds the subscription started
-  endsAt: number | null;     // canceling: when paid access stops
-  canceledAt: number | null; // canceled: when paid access stopped
+  since: number | null;             // unix seconds this subscription started
+  firstSubscribedAt: number | null; // their first paid subscription ever
+  canceledAt: number | null;        // when they (or Stripe) canceled
+  endsAt: number | null;            // canceling: when paid access stops
+  endedAt: number | null;           // canceled: when paid access stopped
+  cancelReason: string | null;      // from Stripe's cancellation details
   // The plan Stripe says this user should have right now.
   expectedPlan: PaidPlan | 'free';
 };
+
+// Labels for the answers Stripe's customer portal collects on cancel.
+const CANCEL_FEEDBACK: Record<string, string> = {
+  too_expensive: 'Too expensive',
+  missing_features: 'Missing features',
+  switched_service: 'Switched to another service',
+  unused: 'Not using it enough',
+  customer_service: 'Customer service',
+  too_complex: 'Too complicated',
+  low_quality: 'Quality issues',
+  other: 'Other',
+};
+
+export function cancelReasonOf(s: Stripe.Subscription): string | null {
+  const d: any = (s as any).cancellation_details;
+  if (!d) return null;
+  const parts: string[] = [];
+  if (d.reason === 'payment_failed') parts.push('Payment failed');
+  else if (d.reason === 'payment_disputed') parts.push('Payment disputed');
+  if (d.feedback) parts.push(CANCEL_FEEDBACK[d.feedback] || d.feedback);
+  if (d.comment) parts.push(`“${String(d.comment).trim()}”`);
+  return parts.length ? parts.join(' · ') : null;
+}
 
 // One user's billing picture from their Haulock subscriptions. `paidIds`
 // comes from paidSubscriptionIds, so abandoned checkouts read as 'never'.
@@ -112,12 +138,14 @@ export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<strin
   const s = live || real[0] || null;
   const base: UserBilling = {
     status: 'never', plan: null, billing: null, amountCents: null, currency: 'USD',
-    subscriptionId: null, customerId: null, since: null, endsAt: null, canceledAt: null,
+    subscriptionId: null, customerId: null, since: null, firstSubscribedAt: null,
+    canceledAt: null, endsAt: null, endedAt: null, cancelReason: null,
     expectedPlan: 'free',
   };
   if (!s) return base;
   const price = s.items?.data?.[0]?.price;
   const any = s as any;
+  const startOf = (x: Stripe.Subscription) => (x as any).start_date ?? x.created;
   const info: UserBilling = {
     ...base,
     plan: subscriptionPlan(s),
@@ -126,15 +154,29 @@ export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<strin
     currency: (price?.currency || 'usd').toUpperCase(),
     subscriptionId: s.id,
     customerId: customerIdOf(s),
-    since: any.start_date ?? s.created,
+    since: startOf(s),
+    firstSubscribedAt: Math.min(...real.map(startOf)),
   };
   if (!live) {
-    return { ...info, status: 'canceled', canceledAt: any.ended_at ?? any.canceled_at ?? null };
+    return {
+      ...info,
+      status: 'canceled',
+      canceledAt: any.canceled_at ?? any.ended_at ?? null,
+      endedAt: any.ended_at ?? any.canceled_at ?? null,
+      cancelReason: cancelReasonOf(s),
+    };
   }
   const expectedPlan = info.plan || 'free';
   if (live.status === 'past_due') return { ...info, status: 'past_due', expectedPlan };
   if (live.cancel_at_period_end || any.cancel_at) {
-    return { ...info, status: 'canceling', endsAt: any.cancel_at ?? any.current_period_end ?? null, expectedPlan };
+    return {
+      ...info,
+      status: 'canceling',
+      canceledAt: any.canceled_at ?? null,
+      endsAt: any.cancel_at ?? any.current_period_end ?? null,
+      cancelReason: cancelReasonOf(live),
+      expectedPlan,
+    };
   }
   return { ...info, status: 'paying', expectedPlan };
 }

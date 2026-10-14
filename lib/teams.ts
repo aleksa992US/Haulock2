@@ -54,6 +54,24 @@ export async function applyUserPlan(userId: string, plan: string): Promise<void>
   if (teamErr) throw new Error(teamErr.message);
 }
 
+// The plan the app enforces right now for each user id (team plan wins,
+// like resolveTeamContext). Deleted users are left out.
+export async function currentPlansFor(userIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const svc = getServiceSupabase();
+  if (!svc || !userIds.length) return out;
+  const [{ data: members }, users] = await Promise.all([
+    svc.from('team_members').select('user_id, teams ( plan )').in('user_id', userIds),
+    Promise.all(userIds.map((id) => svc.auth.admin.getUserById(id).then((r) => r.data?.user || null, () => null))),
+  ]);
+  for (const u of users) if (u) out.set(u.id, getPlan(u.user_metadata?.plan).id);
+  for (const m of (members || []) as any[]) {
+    const t = Array.isArray(m.teams) ? m.teams[0] : m.teams;
+    if (t?.plan && out.has(m.user_id)) out.set(m.user_id, getPlan(t.plan).id);
+  }
+  return out;
+}
+
 export async function ensureTeamForOwner(opts: { userId: string; plan: string; name?: string | null }): Promise<string> {
   const svc = getServiceSupabase();
   if (!svc) throw new Error('Service role not configured');

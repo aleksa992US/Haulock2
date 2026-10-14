@@ -5776,7 +5776,7 @@ function StripeOverviewCard() {
           <div>Plan</div>
           <div>Status</div>
           <div className="text-right">MRR</div>
-          <div className="text-right">Created</div>
+          <div className="text-right">Subscribed</div>
         </div>
         {data?.recent?.length ? (
           <div className="divide-y divide-[#0B1E3F]/5">
@@ -5789,6 +5789,8 @@ function StripeOverviewCard() {
               const cancelDate = isCanceling && s.current_period_end
                 ? new Date(s.current_period_end * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                 : null;
+              const isCanceled = s.status === 'canceled';
+              const shortDate = (ts: number | null) => ts ? new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
               const paid = s.paid_amount;
               const list = s.list_amount;
               const hasDiscount = paid != null && list != null && paid < list;
@@ -5799,12 +5801,27 @@ function StripeOverviewCard() {
                     {s.customer_email && s.customer_name && (
                       <div className="text-[10px] text-[#0B1E3F]/55 truncate">{s.customer_email}{s.promo_code ? ` · ${s.promo_code}` : ''}</div>
                     )}
+                    {(isCanceled || isCanceling) && s.cancel_reason && (
+                      <div className="text-[10px] text-[#0B1E3F]/55 truncate" title={s.cancel_reason}>Reason: {s.cancel_reason}</div>
+                    )}
                   </div>
-                  <div className="mono text-[#0B1E3F]/80 capitalize">{s.plan || '—'}{s.billing ? ` · ${s.billing === 'annual' ? 'yr' : 'mo'}` : ''}</div>
+                  <div className="mono text-[#0B1E3F]/80 leading-tight">
+                    <div className="capitalize">{s.plan || '—'}{s.billing ? ` · ${s.billing === 'annual' ? 'yr' : 'mo'}` : ''}</div>
+                    {(isCanceled || isCanceling) && (
+                      <div className="text-[10px] text-[#0B1E3F]/55" title="Plan the app gives them today">
+                        now: <span className="capitalize">{s.plan_now || 'deleted'}</span>
+                      </div>
+                    )}
+                  </div>
                   <div className="mono text-xs leading-tight" style={{ color: statusColor }}>
                     {isCanceling ? 'canceling' : s.status}
                     {cancelDate && (
                       <div className="text-[10px] opacity-80">ends {cancelDate}</div>
+                    )}
+                    {isCanceled && (
+                      <div className="text-[10px] opacity-80" title={`Canceled ${shortDate(s.canceled_at)} · paid access ended ${shortDate(s.ended_at)}`}>
+                        {shortDate(s.ended_at ?? s.canceled_at)}
+                      </div>
                     )}
                   </div>
                   <div className="mono text-xs text-right">
@@ -5831,7 +5848,7 @@ function StripeOverviewCard() {
                       );
                     })()}
                   </div>
-                  <div className="mono text-xs text-right text-[#0B1E3F]/60">{timeAgo(new Date(s.created * 1000).toISOString())}</div>
+                  <div className="mono text-xs text-right text-[#0B1E3F]/60" title={timeAgo(new Date((s.start_date ?? s.created) * 1000).toISOString())}>{shortDate(s.start_date ?? s.created)}</div>
                 </div>
               );
             })}
@@ -7780,11 +7797,45 @@ function BillingBadge({ b }: { b: any }) {
     paying:    { cls: 'bg-[#16A34A]/10 text-[#16A34A]', text: `Paying · ${plan}${price ? ` · ${price}` : ''}`, title: `Paying since ${fmtBillingDate(b.since)}` },
     canceling: { cls: 'bg-[#F59E0B]/10 text-[#B45309]', text: `Canceling · ${plan} until ${fmtBillingDate(b.endsAt)}`, title: 'Canceled in Stripe; keeps paid access until the end of the period they paid for, then drops to Free.' },
     past_due:  { cls: 'bg-[#F59E0B]/10 text-[#B45309]', text: `Payment failed · ${plan}`, title: 'Card declined. Stripe is retrying; access stays on until retries run out.' },
-    canceled:  { cls: 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60', text: `Canceled ${fmtBillingDate(b.canceledAt)} · was ${plan}`, title: 'No active Stripe subscription.' },
+    canceled:  { cls: 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60', text: `Canceled ${fmtBillingDate(b.endedAt ?? b.canceledAt)} · was ${plan}`, title: 'No active Stripe subscription.' },
   };
   const l = look[b.status];
   if (!l) return null;
   return <span className={`px-2 py-0.5 text-[10px] mono uppercase tracking-wider rounded-full ${l.cls}`} title={l.title}>{l.text}</span>;
+}
+
+// Subscription history for a user who canceled (or is about to): when they
+// started, what they paid for, when they canceled, and what they're on now.
+function CancellationDetails({ b, planNow }: { b: any; planNow: string }) {
+  if (!b || (b.status !== 'canceled' && b.status !== 'canceling')) return null;
+  const canceling = b.status === 'canceling';
+  const price = b.amountCents != null
+    ? ` · ${new Intl.NumberFormat('en-US', { style: 'currency', currency: b.currency || 'USD', minimumFractionDigits: 0 }).format(b.amountCents / 100)}/${b.billing === 'annual' ? 'yr' : 'mo'}`
+    : '';
+  const items: [string, string][] = [
+    ['First subscribed', fmtBillingDate(b.firstSubscribedAt)],
+    ['Plan they paid for', `${b.plan ? getPlan(b.plan).label : '—'}${price}`],
+    ['Canceled on', fmtBillingDate(b.canceledAt)],
+    [canceling ? 'Paid access until' : 'Paid access ended', fmtBillingDate(canceling ? b.endsAt : b.endedAt)],
+    ['Plan now', planNow],
+  ];
+  return (
+    <div className="mt-3 px-3 py-2.5 rounded-lg bg-[#0B1E3F]/[0.03] border border-[#0B1E3F]/10">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-2">
+        {items.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">{label}</div>
+            <div className="text-xs font-medium text-[#0B1E3F] truncate" title={value}>{value}</div>
+          </div>
+        ))}
+      </div>
+      {b.cancelReason && (
+        <div className="mt-2 pt-2 border-t border-[#0B1E3F]/5 text-xs text-[#0B1E3F]/70">
+          <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50 mr-2">Reason</span>{b.cancelReason}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function AdminPage({ navigate }: any) {
@@ -8150,6 +8201,7 @@ function AdminPage({ navigate }: any) {
                       </div>
                     </div>
                   </div>
+                  <CancellationDetails b={u.billing} planNow={u.planLabel} />
                   {u.planMismatch && (
                     <div className="mt-3 px-3 py-2 rounded-lg bg-[#DC2626]/5 border border-[#DC2626]/20 text-xs text-[#0B1E3F] flex items-center gap-3 flex-wrap">
                       <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626] flex-shrink-0" />

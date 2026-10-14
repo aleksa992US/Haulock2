@@ -3,7 +3,8 @@ import type Stripe from 'stripe';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { isAdmin } from '@/lib/admin';
 import { getStripe, planFromPriceId } from '@/lib/stripe';
-import { listHaulockSubscriptions, paidSubscriptionIds } from '@/lib/billing';
+import { cancelReasonOf, listHaulockSubscriptions, paidSubscriptionIds } from '@/lib/billing';
+import { currentPlansFor } from '@/lib/teams';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -131,6 +132,11 @@ export async function GET() {
   // Gross paid = sum of successful charges. Refunded = sum of amount_refunded
   // across all charges. Net = paid - refunded.
   const lifetimeByCustomer: Record<string, { paid: number; refunded: number }> = {};
+  // The plan each person is on in the app today, so canceled rows can show
+  // they're back on Free.
+  const planNowPromise = currentPlansFor(Array.from(new Set(
+    recentSubs.map((s) => s.metadata?.user_id).filter(Boolean) as string[]
+  ))).catch(() => new Map<string, string>());
   await Promise.all(customerIds.map(async (cid) => {
     try {
       const charges = await stripe.charges.list({ customer: cid, limit: 100 });
@@ -145,6 +151,7 @@ export async function GET() {
       lifetimeByCustomer[cid] = { paid: 0, refunded: 0 };
     }
   }));
+  const planNow = await planNowPromise;
 
   const recent = recentSubs.map((s) => {
     const priceId = s.items.data[0]?.price?.id;
@@ -172,7 +179,13 @@ export async function GET() {
       customer_name: typeof cust === 'string' ? null : cust?.name ?? null,
       cancel_at_period_end: s.cancel_at_period_end || false,
       created: s.created,
+      start_date: (s as any).start_date ?? s.created,
       current_period_end: (s as any).current_period_end ?? null,
+      canceled_at: (s as any).canceled_at ?? null,
+      ended_at: (s as any).ended_at ?? null,
+      cancel_reason: cancelReasonOf(s),
+      // null when the user was deleted or the subscription has no user tag.
+      plan_now: s.metadata?.user_id ? planNow.get(s.metadata.user_id) ?? null : null,
       promo_code: s.metadata?.promo_code ?? null,
     };
   });
