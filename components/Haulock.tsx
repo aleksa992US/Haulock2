@@ -7783,6 +7783,9 @@ type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
 type RoleFilter = 'all' | 'admin' | 'affiliate' | 'regular';
 type BillingFilter = 'all' | 'paying' | 'canceling' | 'past_due' | 'canceled' | 'never' | 'manual' | 'mismatch';
 
+const fmtCents = (cents: number, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(cents / 100);
+
 const fmtBillingDate = (ts: number | null) =>
   ts ? new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
@@ -7817,7 +7820,7 @@ function BillingCell({ b }: { b: any }) {
   return <span className="text-[#0B1E3F]/55">Canceled · was {plan}</span>;
 }
 
-type UserSortKey = 'name' | 'plan' | 'billing' | 'subscribed' | 'canceled' | 'lookups' | 'lastSeen';
+type UserSortKey = 'name' | 'plan' | 'billing' | 'subscribed' | 'canceled' | 'lifetime' | 'lookups' | 'lastSeen';
 
 // Columns of the admin Users table. firstDir is the direction a column sorts
 // in on its first click (dates and counts newest/biggest first).
@@ -7827,6 +7830,7 @@ const USER_COLUMNS: { key: UserSortKey; label: string; align?: 'right'; firstDir
   { key: 'billing',    label: 'Stripe',      firstDir: -1 },
   { key: 'subscribed', label: 'Subscribed',  firstDir: -1 },
   { key: 'canceled',   label: 'Canceled',    firstDir: -1 },
+  { key: 'lifetime',   label: 'Lifetime',    align: 'right', firstDir: -1 },
   { key: 'lookups',    label: 'Lookups / mo', align: 'right', firstDir: -1 },
   { key: 'lastSeen',   label: 'Last seen',   align: 'right', firstDir: -1 },
 ];
@@ -7842,6 +7846,7 @@ function userSortValue(u: any, key: UserSortKey): string | number | null {
     case 'billing': return BILLING_RANK[b?.status] ?? null;
     case 'subscribed': return b?.firstSubscribedAt ?? null;
     case 'canceled': return b?.status === 'canceled' ? (b.endedAt ?? b.canceledAt) : b?.status === 'canceling' ? b.endsAt : null;
+    case 'lifetime': return b && b.lifetimePaidCents > 0 ? b.lifetimePaidCents - b.lifetimeRefundedCents : null;
     case 'lookups': return u.usage?.lookupsThisMonth ?? 0;
     case 'lastSeen': return u.lastSignInAt ? Date.parse(u.lastSignInAt) : null;
   }
@@ -8240,7 +8245,7 @@ function AdminPage({ navigate }: any) {
             <div>Click a row for details · Page {safePage} / {pageCount}</div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-xs text-[#0B1E3F]">
+            <table className="w-full min-w-[1040px] text-xs text-[#0B1E3F]">
               <thead>
                 <tr className="bg-[#0B1E3F]/[0.03] border-b border-[#0B1E3F]/10">
                   {USER_COLUMNS.map((c) => (
@@ -8307,6 +8312,14 @@ function AdminPage({ navigate }: any) {
                             : b?.status === 'canceling' ? <span className="text-[#B45309]" title={`Canceled ${fmtBillingDate(b.canceledAt)}; paid access until this date`}>ends {fmtBillingDate(b.endsAt)}</span>
                             : <span className="text-[#0B1E3F]/30">—</span>}
                         </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap mono text-right" title={b?.lifetimePaidCents ? `Paid ${fmtCents(b.lifetimePaidCents, b.currency)}${b.lifetimeRefundedCents ? `, refunded ${fmtCents(b.lifetimeRefundedCents, b.currency)}` : ''}` : ''}>
+                          {b?.lifetimePaidCents ? (
+                            <>
+                              <span className="font-medium">{fmtCents(b.lifetimePaidCents - b.lifetimeRefundedCents, b.currency)}</span>
+                              {b.lifetimeRefundedCents > 0 && <span className="block text-[10px] text-[#DC2626]">−{fmtCents(b.lifetimeRefundedCents, b.currency)} refund</span>}
+                            </>
+                          ) : <span className="text-[#0B1E3F]/30">—</span>}
+                        </td>
                         <td className="px-3 py-2.5 whitespace-nowrap mono text-right">
                           <span className={lookupLimit != null && u.usage.lookupsThisMonth >= lookupLimit ? 'text-[#DC2626]' : ''}>{u.usage.lookupsThisMonth}</span>
                           <span className="text-[#0B1E3F]/40"> / {lookupLimit == null ? '∞' : lookupLimit}</span>
@@ -8321,6 +8334,7 @@ function AdminPage({ navigate }: any) {
                               <span className="mono">{u.email}</span>{u.company ? ` · ${u.company}` : ''}{u.mc ? ` · MC-${u.mc}` : ''}
                               {' · '}Joined {u.createdAt ? fmtBillingDate(Date.parse(u.createdAt) / 1000) : '—'}
                               {b?.status === 'paying' && b.since ? ` · paying since ${fmtBillingDate(b.since)}` : ''}
+                              {b?.lifetimePaidCents ? <> · lifetime spend <strong className="text-[#0B1E3F]">{fmtCents(b.lifetimePaidCents - b.lifetimeRefundedCents, b.currency)}</strong>{b.lifetimeRefundedCents ? ` (paid ${fmtCents(b.lifetimePaidCents, b.currency)}, refunded ${fmtCents(b.lifetimeRefundedCents, b.currency)})` : ''}</> : ''}
                             </div>
                             <CancellationDetails b={b} planNow={u.planLabel} />
                             {u.planMismatch && (

@@ -91,7 +91,7 @@ export async function GET() {
     billingError = 'Stripe not configured';
   } else {
     try {
-      const { subs } = await listHaulockSubscriptions(stripe, ['data.latest_invoice']);
+      const { subs } = await listHaulockSubscriptions(stripe, ['data.latest_invoice', 'data.customer']);
       const paidIds = await paidSubscriptionIds(stripe, subs);
       const userByCustomer = new Map<string, string>();
       for (const u of authUsers) {
@@ -99,12 +99,17 @@ export async function GET() {
         if (cid) userByCustomer.set(cid, u.id);
       }
       // A user_id tag can point at an account that was deleted and signed up
-      // again under the same Stripe customer, so fall back to the customer.
+      // again, so fall back to the Stripe customer id, then its email.
       const knownIds = new Set(authUsers.map((u) => u.id));
+      const userByEmail = new Map<string, string>();
+      for (const u of authUsers) if (u.email) userByEmail.set(String(u.email).toLowerCase(), u.id);
       const subsByUser = new Map<string, Stripe.Subscription[]>();
       for (const s of subs) {
         const tagged = s.metadata?.user_id;
-        const uid = (tagged && knownIds.has(tagged) ? tagged : null) || userByCustomer.get(customerIdOf(s) || '');
+        const custEmail = (s.customer as any)?.email;
+        const uid = (tagged && knownIds.has(tagged) ? tagged : null)
+          || userByCustomer.get(customerIdOf(s) || '')
+          || (custEmail ? userByEmail.get(String(custEmail).toLowerCase()) : undefined);
         if (!uid) continue;
         subsByUser.set(uid, [...(subsByUser.get(uid) || []), s]);
       }
