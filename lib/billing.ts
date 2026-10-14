@@ -124,6 +124,7 @@ export type UserBilling = {
   firstSubscribedAt: number | null; // their first paid subscription ever
   canceledAt: number | null;        // when they (or Stripe) canceled
   endsAt: number | null;            // canceling: when paid access stops
+  periodEnd: number | null;         // live: when the current paid period ends
   endedAt: number | null;           // canceled: when paid access stopped
   cancelReason: string | null;      // from Stripe's cancellation details
   lifetimePaidCents: number;        // every paid Haulock invoice, all their subscriptions
@@ -165,7 +166,7 @@ export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<strin
   const base: UserBilling = {
     status: 'never', plan: null, billing: null, amountCents: null, currency: 'USD',
     subscriptionId: null, customerId: null, since: null, firstSubscribedAt: null,
-    canceledAt: null, endsAt: null, endedAt: null, cancelReason: null,
+    canceledAt: null, endsAt: null, periodEnd: null, endedAt: null, cancelReason: null,
     lifetimePaidCents: real.reduce((n, x) => n + (lifetime?.get(x.id)?.paid || 0), 0),
     lifetimeRefundedCents: real.reduce((n, x) => n + (lifetime?.get(x.id)?.refunded || 0), 0),
     expectedPlan: 'free',
@@ -195,6 +196,7 @@ export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<strin
     };
   }
   const expectedPlan = info.plan || 'free';
+  info.periodEnd = any.current_period_end ?? null;
   if (live.status === 'past_due') return { ...info, status: 'past_due', expectedPlan };
   if (live.cancel_at_period_end || any.cancel_at) {
     return {

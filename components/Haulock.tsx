@@ -3111,7 +3111,7 @@ function Pricing({ navigate, user }: any) {
 
 function LegalPage({ page, navigate, user }: { page: 'terms' | 'privacy'; navigate: any; user?: any }) {
   const isTerms = page === 'terms';
-  const lastUpdated = 'April 25, 2026';
+  const lastUpdated = isTerms ? 'October 14, 2026' : 'April 25, 2026';
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
@@ -3221,7 +3221,13 @@ function TermsContent() {
 
       <LegalH2>9. Account, plan, and billing</LegalH2>
       <LegalP>
-        Some Haulock features require a paid plan. Pricing, lookup limits, and feature inclusions are described on the pricing page and may change. Subscriptions renew automatically at the published price until canceled. Refunds are handled at our discretion. You are responsible for keeping your billing details up to date and for the actions taken under your account.
+        Some Haulock features require a paid plan. Pricing, lookup limits, and feature inclusions are described on the pricing page and may change. Subscriptions renew automatically at the published price, monthly or yearly, until canceled. You are responsible for keeping your billing details up to date and for the actions taken under your account.
+      </LegalP>
+      <LegalP>
+        <strong>Canceling.</strong> You can cancel at any time from Plan &amp; billing in your account. Canceling stops future renewals; you keep your paid plan until the end of the billing period you already paid for, and then your account moves to the Free plan.
+      </LegalP>
+      <LegalP>
+        <strong>No refunds.</strong> Payments are non-refundable. We do not refund past billing periods, or the unused part of the current one when you cancel, except where the law requires it. Any exception is at our sole discretion.
       </LegalP>
 
       <LegalH2>10. Intellectual property</LegalH2>
@@ -5662,6 +5668,8 @@ function StripeOverviewCard() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<any | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -5691,6 +5699,7 @@ function StripeOverviewCard() {
       </div>
 
       {error && <div className="text-sm text-[#DC2626] mb-3">{error}</div>}
+      {notice && <div className="text-sm text-[#16A34A] mb-3">{notice}</div>}
 
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
         <Stat label="MRR (est.)" value={data ? fmtMoney(data.totals.mrr_cents, data.totals.currency) : '—'} sub="From active subs" />
@@ -5823,6 +5832,21 @@ function StripeOverviewCard() {
                         {shortDate(s.ended_at ?? s.canceled_at)}
                       </div>
                     )}
+                    {['active', 'trialing', 'past_due', 'unpaid'].includes(s.status) && (
+                      <button
+                        onClick={() => setCancelTarget({
+                          subscriptionId: s.id,
+                          who: s.customer_name || s.customer_email || 'this customer',
+                          plan: s.plan,
+                          price: s.list_amount != null ? `${fmtMoney(s.list_amount, s.currency)}/${s.billing === 'annual' ? 'yr' : 'mo'}` : null,
+                          periodEnd: s.current_period_end,
+                          canceling: isCanceling,
+                        })}
+                        className="mt-0.5 text-[10px] text-[#DC2626]/80 hover:text-[#DC2626] underline-offset-2 hover:underline"
+                      >
+                        {isCanceling ? 'cancel now' : 'cancel'}
+                      </button>
+                    )}
                   </div>
                   <div className="mono text-xs text-right">
                     <div className="text-[#0B1E3F]/80">{paid != null ? fmtMoney(paid, s.currency) : list != null ? fmtMoney(list, s.currency) : '—'}</div>
@@ -5859,6 +5883,13 @@ function StripeOverviewCard() {
           <div className="px-3 py-6 text-center text-xs text-[#0B1E3F]/50">No Haulock subscriptions yet.</div>
         )}
       </div>
+      {cancelTarget && (
+        <CancelSubscriptionDialog
+          target={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onDone={(msg) => { setCancelTarget(null); setNotice(msg); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -7807,6 +7838,66 @@ function BillingBadge({ b }: { b: any }) {
   return <span className={`px-2 py-0.5 text-[10px] mono uppercase tracking-wider rounded-full ${l.cls}`} title={l.title}>{l.text}</span>;
 }
 
+// Admin: cancel one Haulock subscription in Stripe, at period end or now.
+// `target` comes from a Users row or a Recent subscriptions row.
+function CancelSubscriptionDialog({ target, onClose, onDone }: {
+  target: { subscriptionId: string; userId?: string | null; who: string; plan?: string | null; price?: string | null; periodEnd?: number | null; canceling?: boolean };
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const canWait = !target.canceling && !!target.periodEnd;
+  const [when, setWhen] = useState<'period_end' | 'now'>(canWait ? 'period_end' : 'now');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(`/api/admin/subscriptions/${target.subscriptionId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ when, userId: target.userId || undefined }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || `Failed (${r.status})`);
+      onDone(when === 'now'
+        ? `Canceled ${target.who}'s subscription.${j?.movedToFree ? ' They are on Free now.' : ''}`
+        : `${target.who}'s subscription ends ${fmtBillingDate(j?.endsAt ?? target.periodEnd ?? null)}. No more charges.`);
+    } catch (e: any) {
+      setError(e?.message || 'Cancel failed');
+      setBusy(false);
+    }
+  };
+  const Option = ({ value, title, desc }: { value: 'period_end' | 'now'; title: string; desc: string }) => (
+    <label className={`flex gap-3 p-3 rounded-xl border cursor-pointer transition ${when === value ? 'border-[#0B1E3F] bg-[#0B1E3F]/[0.03]' : 'border-[#0B1E3F]/15 hover:border-[#0B1E3F]/30'}`}>
+      <input type="radio" name="cancel-when" checked={when === value} onChange={() => setWhen(value)} className="mt-0.5 accent-[#0B1E3F]" />
+      <div>
+        <div className="text-sm font-medium text-[#0B1E3F]">{title}</div>
+        <div className="text-xs text-[#0B1E3F]/60 mt-0.5">{desc}</div>
+      </div>
+    </label>
+  );
+  return (
+    <div className="fixed inset-0 z-[80] bg-[#0B1E3F]/40 flex items-center justify-center p-4" onClick={() => !busy && onClose()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 text-[#0B1E3F]" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="text-lg font-semibold">Cancel {target.who}&apos;s subscription?</div>
+        <div className="text-xs mono text-[#0B1E3F]/60 mt-1">
+          {[target.plan ? getPlan(target.plan).label : null, target.price, target.canceling ? `already ends ${fmtBillingDate(target.periodEnd ?? null)}` : null].filter(Boolean).join(' · ')}
+        </div>
+        <div className="space-y-2 mt-4">
+          {canWait && <Option value="period_end" title={`At end of billing period (${fmtBillingDate(target.periodEnd ?? null)})`} desc="No more charges. They keep paid access until then." />}
+          <Option value="now" title="Immediately" desc="No more charges. Paid access stops now and their account moves to Free." />
+        </div>
+        <div className="text-[11px] text-[#0B1E3F]/55 mt-3">Nothing is refunded. Refund a payment in Stripe if needed.</div>
+        {error && <div className="text-xs text-[#DC2626] mt-3">{error}</div>}
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} disabled={busy} className="px-4 py-2 rounded-full border border-[#0B1E3F]/15 text-sm hover:bg-[#0B1E3F]/5 disabled:opacity-50">Keep subscription</button>
+          <button onClick={submit} disabled={busy} className="px-4 py-2 rounded-full bg-[#DC2626] text-white text-sm font-medium hover:bg-[#DC2626]/90 disabled:opacity-60">{busy ? 'Canceling…' : 'Cancel subscription'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Short Stripe status for the Users table; dates live in their own columns.
 function BillingCell({ b }: { b: any }) {
   if (!b || b.status === 'never') return <span className="text-[#0B1E3F]/30">—</span>;
@@ -7897,6 +7988,8 @@ function AdminPage({ navigate }: any) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [tab, setTab] = useState<AdminTab>('overview');
   const [affiliateUser, setAffiliateUser] = useState<any | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<any | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = async () => {
     setError(null);
@@ -8079,6 +8172,13 @@ function AdminPage({ navigate }: any) {
       </div>
 
       {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+      {notice && (
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-[#16A34A]/10 text-sm text-[#0B1E3F]">
+          <CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0" />
+          <span className="flex-1">{notice}</span>
+          <button onClick={() => setNotice(null)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F]" aria-label="Dismiss"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {/* OVERVIEW: top-of-funnel summary tiles + Stripe billing health */}
       {tab === 'overview' && (
@@ -8425,6 +8525,22 @@ function AdminPage({ navigate }: any) {
                                     : 'Make affiliate'}
                                 </button>
                               )}
+                              {b?.subscriptionId && ['paying', 'canceling', 'past_due'].includes(b.status) && (
+                                <button
+                                  onClick={() => setCancelTarget({
+                                    subscriptionId: b.subscriptionId,
+                                    userId: u.id,
+                                    who: u.name || u.email,
+                                    plan: b.plan,
+                                    price: b.amountCents != null ? `${fmtCents(b.amountCents, b.currency)}/${b.billing === 'annual' ? 'yr' : 'mo'}` : null,
+                                    periodEnd: b.status === 'canceling' ? b.endsAt : b.periodEnd,
+                                    canceling: b.status === 'canceling',
+                                  })}
+                                  className="px-3 py-1.5 rounded-full border border-[#DC2626]/30 text-[#DC2626] text-xs font-medium hover:bg-[#DC2626]/5 transition"
+                                >
+                                  {b.status === 'canceling' ? 'Cancel now' : 'Cancel subscription'}
+                                </button>
+                              )}
                               <button
                                 onClick={() => deleteUser(u)}
                                 disabled={pendingId === u.id}
@@ -8483,6 +8599,13 @@ function AdminPage({ navigate }: any) {
         </div>
       )}
       </>)}
+      {cancelTarget && (
+        <CancelSubscriptionDialog
+          target={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onDone={(msg) => { setCancelTarget(null); setNotice(msg); load(); }}
+        />
+      )}
       {affiliateUser && (
         <AffiliateAssignModal
           user={affiliateUser}
