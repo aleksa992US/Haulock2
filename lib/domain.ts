@@ -232,7 +232,8 @@ function buildFlags(c: Pick<DomainCheck, 'whois' | 'mx' | 'spf' | 'dmarc' | 'saf
       });
     }
   }
-  if (!c.mx.hasMx) {
+  // A DNS error/timeout is "couldn't check", not "no email server".
+  if (!c.mx.hasMx && !c.mx.error) {
     flags.push({
       sev: 'critical',
       title: 'No MX records on domain',

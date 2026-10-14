@@ -4,7 +4,7 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { getEmailSiteUrl, getResendClient, salesEmailTemplate, sendEmail, unsubscribeUrl } from '@/lib/email';
 import { listContacts } from '@/lib/resend-audience';
-import { applyMergeTags, loadRecentLookups, loadSalesLeads, mergeVars, type SalesLead } from '@/lib/sales';
+import { applyMergeTags, loadEmailLookups, loadSalesLeads, mergeVars, type SalesLead } from '@/lib/sales';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
   if (b?.test) {
     const lead = byId.get(String(b.previewUserId || userIds[0])) || byId.get(userIds[0]);
     if (!lead || !me.email) return NextResponse.json({ error: 'Recipient not found' }, { status: 400 });
-    const lookups = showLookups ? (await loadRecentLookups(svc, [lead.id])).get(lead.id) || [] : [];
+    const lookups = showLookups ? (await loadEmailLookups(svc, [lead])).get(lead.id) || [] : [];
     const tpl = render(lead, lookups);
     try {
       await sendEmail({ to: me.email, subject: `[Test → ${lead.email}] ${tpl.subject}`, html: tpl.html, replyTo, kind: 'other' });
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: campErr?.message || 'Could not create campaign — is the sales_campaigns table there?' }, { status: 500 });
   }
 
-  const lookupsByUser = showLookups ? await loadRecentLookups(svc, recipients.map((r) => r.id)) : new Map();
+  const lookupsByUser = showLookups ? await loadEmailLookups(svc, recipients) : new Map();
   const from = process.env.RESEND_FROM || 'Haulock <onboarding@resend.dev>';
   const sendRows: any[] = [];
   const logRows: any[] = [];

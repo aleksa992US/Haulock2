@@ -3,7 +3,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { getEmailSiteUrl, salesEmailTemplate } from '@/lib/email';
-import { applyMergeTags, loadRecentLookups, mergeVars } from '@/lib/sales';
+import { applyMergeTags, loadEmailLookups, mergeVars } from '@/lib/sales';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,7 +28,8 @@ export async function POST(req: Request) {
   // the send recomputes server-side); lookups are always read fresh.
   const vars = mergeVars(b.lead);
   const showLookups = b.showLookups !== false;
-  const lookups = showLookups ? (await loadRecentLookups(svc, [String(b.lead.id)])).get(String(b.lead.id)) || [] : [];
+  const lead = { id: String(b.lead.id), mc: b.lead.mc || null, dot: b.lead.dot || null, company: b.lead.company || null };
+  const lookups = showLookups ? (await loadEmailLookups(svc, [lead])).get(lead.id) || [] : [];
   const tpl = salesEmailTemplate({
     subject: applyMergeTags(String(b.subject || ''), vars),
     body: applyMergeTags(String(b.body || ''), vars),
@@ -39,5 +40,9 @@ export async function POST(req: Request) {
     recipientEmail: String(b.lead.email || 'preview@example.com'),
     siteUrl: getEmailSiteUrl(),
   });
-  return NextResponse.json({ ...tpl, lookupCount: lookups.length });
+  return NextResponse.json({
+    ...tpl,
+    lookupCount: lookups.length,
+    lookupKind: lookups.length === 0 ? 'example' : lookups[0].sample === 'own' ? 'own' : 'theirs',
+  });
 }

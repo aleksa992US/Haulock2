@@ -17,12 +17,16 @@ export type WebReputationHit = {
   domain: string;
   snippet: string;
   query: string;          // which fraud query produced this hit
+  // 'fraud' = the page names the company AND uses a fraud term (only these
+  // are scored); 'legal' = a court case; 'mention' = names the company only.
+  category?: 'fraud' | 'legal' | 'mention';
 };
 
 export type WebReputationResult = {
   configured: boolean;
   ok: boolean;
-  hits: WebReputationHit[];           // trusted-source hits — drive the fraud-mention flag
+  hits: WebReputationHit[];           // trusted-source hits that use a fraud term — drive the fraud-mention flag
+  reviewHits: WebReputationHit[];     // trusted-source pages that name the company without a fraud term (court cases, profiles) — shown, never scored
   extractionHits: WebReputationHit[]; // wider hit set used ONLY by the linked-entity extractor
   queriesRun: number;
   error?: string;
@@ -38,7 +42,17 @@ const REGISTRY_DOMAINS_NEVER_FRAUD: Array<RegExp> = [
   /(?:^|\.)ai\.fmcsa\.dot\.gov$/i,           // SMS — public registry, not fraud coverage
   /(?:^|\.)li-public\.fmcsa\.dot\.gov$/i,    // L&I licensing public lookup
   /(?:^|\.)nccdb\.fmcsa\.dot\.gov$/i,        // NCCDB — complaint forms exist for every carrier; the form itself is not a fraud signal
+  /(?:^|\.)complaint\.fmcsa\.dot\.gov$/i,    // National Consumer Complaint portal — an account page exists for any carrier
 ];
+
+// A page only counts against a company when it names the company AND uses
+// one of these terms near it (title + snippet). Being named next to the
+// search keyword isn't enough: a BBB profile, a registry listing or an
+// injury lawsuit all match "{name} fraud" searches without alleging fraud.
+const FRAUD_TERMS = /\b(fraud\w*|scam\w*|double[\s-]?brok\w*|non[\s-]?payment|never paid|didn'?t pay|unpaid|stole|stolen|theft|fake|impersonat\w*|phishing|chameleon|indict\w*|ponzi)\b/i;
+// Court cases are shown for review but not scored: for carriers they're
+// usually accident / injury claims.
+const LEGAL_TERMS = /\b(lawsuits?|sued|plaintiffs?|defendants?|v\.|vs\.|et al)(?=\s|$|[.,;:])/i;
 
 // Domains where a hit on "{name} fraud / scam" is meaningful. Random blogs
 // and SEO spam get filtered out. Government, journalism, and specific
@@ -125,13 +139,13 @@ export type WebReputationOpts = {
 
 export async function checkWebReputation(name: string, opts: WebReputationOpts = {}): Promise<WebReputationResult> {
   const key = process.env.BRAVE_SEARCH_API_KEY;
-  if (!key) return { configured: false, ok: false, hits: [], extractionHits: [], queriesRun: 0 };
+  if (!key) return { configured: false, ok: false, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0 };
   if (!name || name.trim().length < 4) {
-    return { configured: true, ok: true, hits: [], extractionHits: [], queriesRun: 0 };
+    return { configured: true, ok: true, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0 };
   }
 
   const cleanName = name.replace(/[^A-Za-z0-9 ]/g, '').trim();
-  if (!cleanName) return { configured: true, ok: true, hits: [], extractionHits: [], queriesRun: 0 };
+  if (!cleanName) return { configured: true, ok: true, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0 };
 
   // Build search seeds: the FMCSA legal name (always), plus any aliases the
   // caller passed (the user's original query string, sister-entity names),
@@ -182,6 +196,7 @@ export async function checkWebReputation(name: string, opts: WebReputationOpts =
   const settled = await Promise.allSettled(trimmed.map((q) => searchBrave(q.q, key)));
 
   const trustedHits: WebReputationHit[] = [];   // count toward fraud-mention flag
+  const reviewHits: WebReputationHit[] = [];    // trusted, names the company, no fraud term
   const allHits: WebReputationHit[] = [];        // wider set used by linked-entity extractor
   let firstError: string | undefined;
   settled.forEach((res, i) => {
@@ -194,19 +209,22 @@ export async function checkWebReputation(name: string, opts: WebReputationOpts =
       // somewhere in title+snippet. For "Super Ego Logistics" the seed
       // tokens are ['super','ego','logistics'] — an article that says
       // "Super Ego Holding" only matches if all three words appear.
+      // Whole words only — "ego" must not match "diego".
       const blob = `${hit.title} ${hit.snippet}`.toLowerCase();
       const tokens = trimmed[i].matchTokens;
       if (tokens.length === 0) continue;
-      const allTokensMatch = tokens.every((t) => blob.includes(t.toLowerCase()));
+      const allTokensMatch = tokens.every((t) => new RegExp(`\\b${escapeRegExp(t.toLowerCase())}\\b`).test(blob));
       if (!allTokensMatch) continue;
       // Registry pages (FMCSA SAFER, NCCDB, etc.) get filtered out before
       // anything else. Every active carrier has a snapshot on these — a
       // hit there means the company exists, not that it has fraud coverage.
       if (REGISTRY_DOMAINS_NEVER_FRAUD.some((re) => re.test(hit.domain))) continue;
-      const enriched = { ...hit, query: trimmed[i].q };
+      const category: WebReputationHit['category'] = FRAUD_TERMS.test(blob) ? 'fraud' : LEGAL_TERMS.test(blob) ? 'legal' : 'mention';
+      const enriched = { ...hit, query: trimmed[i].q, category };
       allHits.push(enriched);
       if (TRUSTED_REPUTATION_DOMAINS.some((re) => re.test(hit.domain))) {
-        trustedHits.push(enriched);
+        if (category === 'fraud') trustedHits.push(enriched);
+        else reviewHits.push(enriched);
       }
     }
   });
@@ -218,12 +236,15 @@ export async function checkWebReputation(name: string, opts: WebReputationOpts =
   };
 
   const uniqueTrusted = dedupe(trustedHits, 12);
+  const trustedUrls = new Set(uniqueTrusted.map((h) => h.url));
+  const uniqueReview = dedupe(reviewHits.filter((h) => !trustedUrls.has(h.url)), 8);
   const uniqueAll = dedupe(allHits, 30);
 
   return {
     configured: true,
     ok: settled.some((r) => r.status === 'fulfilled'),
     hits: uniqueTrusted,
+    reviewHits: uniqueReview,
     extractionHits: uniqueAll,
     queriesRun: trimmed.length,
     error: firstError && uniqueAll.length === 0 ? firstError : undefined,
@@ -242,6 +263,10 @@ function tokenizeNameForMatch(name: string): string[] {
 }
 
 // ----- internal -----------------------------------------------------------
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 type RawBraveHit = { title: string; url: string; domain: string; snippet: string };
 

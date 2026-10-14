@@ -10,18 +10,29 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     && c.commonAuthority !== 'Active'
     && c.contractAuthority !== 'Active';
   const isCarrier = c.commonAuthority === 'Active' || c.contractAuthority === 'Active';
+  const isBrokerActive = c.brokerAuthority === 'Active';
 
-  if (isPureBroker) {
-    // For brokers, the "authority" we care about is broker authority, already
-    // confirmed Active above. Skip the carrier-authority check.
-  } else if (c.authorityStatus && c.authorityStatus !== 'Active') {
+  // Authority: a company is fine if ANY of its roles is active — common or
+  // contract (carrier) or broker. `authorityStatus` reflects common
+  // authority only, so it's just the fallback when FMCSA returned no
+  // per-role statuses (e.g. data came from a fallback source).
+  const roleStatuses = [c.commonAuthority, c.contractAuthority, c.brokerAuthority].filter(Boolean);
+  const noActiveAuthority = roleStatuses.length > 0
+    ? !isCarrier && !isBrokerActive
+    : Boolean(c.authorityStatus && c.authorityStatus !== 'Active');
+  if (noActiveAuthority) {
+    const parts = [
+      c.commonAuthority && `common: ${c.commonAuthority}`,
+      c.contractAuthority && `contract: ${c.contractAuthority}`,
+      c.brokerAuthority && `broker: ${c.brokerAuthority}`,
+    ].filter(Boolean).join(' · ');
     flags.push({
       sev: 'critical',
-      title: 'Operating authority is not active',
-      desc: `FMCSA reports authority as "${c.authorityStatus}". Do not book.`,
+      title: 'No active operating authority',
+      desc: `FMCSA shows no active carrier or broker authority${parts ? ` (${parts})` : c.authorityStatus ? ` (status: ${c.authorityStatus})` : ''}.`,
       pts: 50,
-      details: 'Authority must be "Active" for a carrier to legally haul freight in interstate commerce. Inactive, revoked, or suspended status means any load picked up could be seized and the carrier has no recourse for payment.',
-      recommendation: 'Do not book. Ask the broker to use a carrier with active authority.',
+      details: 'A company needs active carrier authority to haul interstate freight, or active broker authority to arrange it. Without either, a load could be seized, and you have no federal protection if something goes wrong or you aren\'t paid.',
+      recommendation: 'Do not book or tender. Ask for their MC number again and re-check, in case you were given the wrong one.',
     });
   }
 
@@ -54,15 +65,15 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         desc: `Granted ${c.authorityAge} ago.`,
         pts: 15,
         details: 'New authorities aren\'t automatically fraud, but many freight scams run on brand-new MC numbers because they have no history to investigate. Legitimate new carriers usually have real-world references you can call.',
-        recommendation: 'Ask the broker for references from shippers or other carriers they\'ve worked with.',
+        recommendation: 'Ask for references from shippers, brokers or carriers they\'ve worked with, and call them.',
       });
     }
   }
 
-  // BIPD (liability) insurance — only relevant to motor carriers. Pure brokers
-  // don't haul freight, so FMCSA doesn't require them to carry BIPD. Brokers
-  // are required to have a surety bond (BMC-84) instead — checked below.
-  if (isCarrier || !isPureBroker) {
+  // BIPD (liability) insurance — only for motor carriers, or when FMCSA
+  // itself lists a required amount. Brokers don't haul freight, so FMCSA
+  // doesn't require BIPD from them; they need a surety bond (checked below).
+  if (isCarrier || (c.bipdRequired != null && c.bipdRequired > 0)) {
     if (c.bipdOnFile != null && c.bipdOnFile === 0) {
       flags.push({
         sev: 'critical',
@@ -110,16 +121,23 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  // Broker surety bond / trust fund — federal requirement for all property
-  // brokers. Minimum is $75,000 (stored as 75 in thousands). A broker without
-  // the bond can't legally pay carriers and is almost certainly a fraud front.
-  if (isPureBroker) {
-    // No bond on file: explicit $0 OR the field is entirely missing from
-    // the FMCSA response. Both states mean the broker hasn't filed a
-    // BMC-84 with FMCSA — operating illegally either way.
-    const hasBond = (c.bondOnFile != null && c.bondOnFile > 0);
-    if (!hasBond) {
-      const bondLabel = c.bondOnFile === 0 ? '$0' : 'Not filed with FMCSA';
+  // Broker surety bond / trust fund — federal requirement for anyone with
+  // active broker authority, including companies that are also carriers.
+  // Minimum is $75,000 (stored as 75 in thousands).
+  if (isBrokerActive) {
+    // $0 means FMCSA shows no bond. A MISSING field means we couldn't read
+    // it (fallback data sources don't carry it) — unknown, not "not filed".
+    if (c.bondOnFile == null) {
+      flags.push({
+        sev: 'info',
+        title: 'Broker bond status couldn’t be confirmed',
+        desc: 'The FMCSA data we received didn’t include bond information.',
+        pts: 0,
+        details: 'Brokers must keep a $75,000 surety bond (BMC-84) or trust fund (BMC-85). This doesn\'t mean the bond is missing, only that this lookup couldn\'t confirm it.',
+        recommendation: 'Check the bond on FMCSA\'s Licensing & Insurance site, or run Scan again.',
+      });
+    } else if (c.bondOnFile === 0) {
+      const bondLabel = '$0';
       flags.push({
         sev: 'critical',
         title: 'No surety bond on file',
@@ -150,7 +168,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       desc: 'Federal safety rating indicates compliance issues.',
       pts: 15,
       details: `FMCSA issues safety ratings after compliance reviews. "${c.safetyRating}" means the carrier was found in violation of federal safety regulations. "Unsatisfactory" ratings can lead to loss of authority if not cured.`,
-      recommendation: 'Check their latest compliance review date. If more than 2 years old, ask the broker for current documentation.',
+      recommendation: 'Check their latest compliance review date. If it\'s more than 2 years old, ask the carrier for current documentation.',
     });
   }
 
@@ -227,21 +245,28 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
     });
   }
 
-  if (!isPureBroker && c.crashTotal != null && c.crashTotal >= 10 && (!c.fatalCrash || c.fatalCrash === 0)) {
-    const perTruck = c.powerUnits ? (c.crashTotal / c.powerUnits).toFixed(2) : null;
+  // FMCSA counts crashes over 24 months; the usual benchmark is about
+  // 0.2–0.4 reportable crashes per truck per YEAR. Only flag when the
+  // carrier is clearly above that (or when we can't tell the fleet size).
+  const crashesPerTruckYear = c.crashTotal != null && c.powerUnits ? c.crashTotal / 2 / c.powerUnits : null;
+  const crashesHigh = crashesPerTruckYear != null ? crashesPerTruckYear > 0.4 && (c.crashTotal ?? 0) >= 3 : (c.crashTotal ?? 0) >= 10;
+  if (!isPureBroker && c.crashTotal != null && crashesHigh && (!c.fatalCrash || c.fatalCrash === 0)) {
+    const perTruck = crashesPerTruckYear != null ? crashesPerTruckYear.toFixed(2) : null;
     flags.push({
       sev: 'info',
-      title: `${c.crashTotal} total crashes on record`,
-      desc: 'Above average for the fleet size — review details.',
+      title: `${c.crashTotal} crashes in 24 months`,
+      desc: perTruck
+        ? `About ${perTruck} per truck per year — above the usual 0.2–0.4.`
+        : 'Fleet size unknown, so we can\'t compare this to similar carriers.',
       pts: 5,
       details: 'FMCSA tracks reportable crashes (fatal, injury, or tow-away) over the last 24 months. A higher count for a small fleet can indicate training or maintenance issues. Large fleets often have proportionally more crashes simply due to more miles driven.',
       metrics: [
         { label: 'Total crashes (24mo)', value: String(c.crashTotal) },
         { label: 'Injury crashes', value: String(c.injCrash ?? 0) },
         { label: 'Fleet size', value: c.powerUnits ? `${c.powerUnits} power units` : 'Unknown' },
-        ...(perTruck ? [{ label: 'Crashes per truck', value: perTruck }] : []),
+        ...(perTruck ? [{ label: 'Per truck per year', value: perTruck }] : []),
       ],
-      recommendation: 'For context, the average US fleet sees roughly 0.2–0.4 reportable crashes per truck per year.',
+      recommendation: 'Review their crash details on FMCSA SMS before tendering high-value or time-critical freight.',
     });
   }
 
@@ -252,13 +277,16 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       // Systems Inc → owneroperatorsapollo.com). We deliberately do NOT
       // flag it; the report still surfaces the mismatch in a neutral
       // badge for transparency, but it does not affect the score.
-      if (c.webPresence.domainAgeDays != null && c.webPresence.domainAgeDays <= 90) {
+      // Only judge the site's age / email setup when the site's name matches
+      // the company — otherwise we may have found someone else's website.
+      const siteIsTheirs = c.webPresence.nameMatch === true;
+      if (siteIsTheirs && c.webPresence.domainAgeDays != null && c.webPresence.domainAgeDays <= 90) {
         flags.push({
           sev: 'warning',
           title: `Website domain registered ${c.webPresence.domainAgeDays} day${c.webPresence.domainAgeDays === 1 ? '' : 's'} ago`,
-          desc: 'Brand-new website is a textbook freight-fraud signal.',
+          desc: 'Established companies usually have websites that are years old.',
           pts: 25,
-          details: 'Established carriers have domains that are years old. A website registered in the last 3 months for an MC that\'s also new is the classic "ghost broker" setup.',
+          details: 'A website registered in the last 3 months is a common setup for impersonators: they copy a real company\'s name onto a new site and email domain. Legitimate new companies exist too, so check how long they\'ve had authority.',
           metrics: [
             { label: 'Domain age', value: `${c.webPresence.domainAgeDays} days` },
             { label: 'Domain', value: c.webPresence.domain || '—' },
@@ -266,20 +294,20 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
           recommendation: 'Do not trust contact info from this website without independent verification.',
         });
       }
-      if (c.webPresence.hasMx === false) {
+      if (siteIsTheirs && c.webPresence.hasMx === false) {
         flags.push({
           sev: 'info',
-          title: 'Carrier website has no email server',
-          desc: 'The website domain has no MX records — they can\'t receive email at @' + c.webPresence.domain + '.',
+          title: 'Their website domain has no email server',
+          desc: 'The website domain has no MX records, so email to @' + c.webPresence.domain + ' won\'t arrive.',
           pts: 5,
-          details: 'Many small carriers use Gmail and never set up email on their own domain. Not a hard red flag, but combined with other signals it adds suspicion.',
+          details: 'Many small companies use Gmail and never set up email on their own domain, so this isn\'t a red flag on its own. It does mean an email "from @' + c.webPresence.domain + '" wasn\'t sent from a real mailbox there.',
         });
       }
     } else if (!c.webPresence.error) {
       flags.push({
         sev: 'info',
         title: 'No website found',
-        desc: 'Couldn\'t find a public website for this carrier.',
+        desc: 'Couldn\'t find a public website for this company.',
         pts: 5,
         details: 'Many small carriers operate without a website, so this isn\'t conclusive on its own. Combined with new authority + missing insurance, it strengthens the suspicion.',
       });
@@ -301,7 +329,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         ],
         recommendation: 'Ask the carrier for a physical operating address (terminal/yard) and verify with a phone call.',
       });
-    } else if (!c.addressCheck.found && c.address) {
+    } else if (!c.addressCheck.found && c.address && !c.addressCheck.error) {
       flags.push({
         sev: 'info',
         title: 'Address could not be verified',

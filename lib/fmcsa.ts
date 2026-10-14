@@ -5,6 +5,8 @@ export type RiskFlag = {
   pts: number;
   details?: string;
   metrics?: { label: string; value: string }[];
+  // Web pages behind the flag (web reputation), shown as links in the report.
+  links?: { title: string; url: string; domain: string; snippet?: string; category?: string }[];
   recommendation?: string;
 };
 
@@ -102,7 +104,8 @@ export type CarrierReport = {
   webReputation?: {
     configured: boolean;
     ok: boolean;
-    hits: { title: string; url: string; domain: string; snippet: string; query: string }[];
+    hits: { title: string; url: string; domain: string; snippet: string; query: string; category?: 'fraud' | 'legal' | 'mention' }[];
+    reviewHits?: { title: string; url: string; domain: string; snippet: string; query: string; category?: 'fraud' | 'legal' | 'mention' }[];
     extractionHits?: { title: string; url: string; domain: string; snippet: string; query: string }[];
     queriesRun: number;
     error?: string;

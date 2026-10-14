@@ -245,9 +245,9 @@ export async function GET(req: Request) {
             dot: carrier.dot,
           }).catch((e) => {
             console.error('[verify] web reputation FAILED', e?.message);
-            return { configured: true, ok: false, hits: [], extractionHits: [], queriesRun: 0, error: e?.message };
+            return { configured: true, ok: false, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0, error: e?.message };
           })
-        : Promise.resolve({ configured: false, ok: false, hits: [], extractionHits: [], queriesRun: 0 }),
+        : Promise.resolve({ configured: false, ok: false, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0 }),
     ),
     timed('legacy',
       findLegacyCrossReferences(carrier).catch((e) => {
@@ -528,26 +528,42 @@ export async function GET(req: Request) {
     ];
   }
 
-  // Web-reputation hits → flag. We only count hits from trusted domains
-  // (FMCSA / Land Line / FreightWaves / TruckersReport / BBB / Reddit /
-  // government), so even one hit is meaningful.
+  // Web-reputation hits → flag. Only pages from trusted domains that name
+  // the company AND use a fraud term count (see lib/web-reputation.ts).
+  // Pages that just name it — court cases, BBB profiles, articles — are
+  // listed for review with 0 points.
+  const reviewHits = (webReputation as any).reviewHits || [];
   if (webReputation.hits.length > 0) {
+    const n = webReputation.hits.length;
     const top = webReputation.hits.slice(0, 3);
-    const sev = webReputation.hits.length >= 3 ? 'critical' : 'warning';
-    const pts = webReputation.hits.length >= 3 ? 30 : 20;
+    const sev = n >= 3 ? 'critical' : 'warning';
+    const pts = n >= 3 ? 30 : n === 2 ? 20 : 15;
     carrier.flags = [
       ...(carrier.flags || []),
       {
         sev,
-        title: `Web reputation: ${webReputation.hits.length} fraud-related mention${webReputation.hits.length === 1 ? '' : 's'}`,
-        desc: `Brave Search found ${webReputation.hits.length} hit${webReputation.hits.length === 1 ? '' : 's'} on "${carrier.name}" + fraud/scam/lawsuit keywords from trusted sources (industry press, forums, government). Examples: ${top.map((h) => h.domain).join(', ')}.`,
+        title: `Web reputation: ${n} page${n === 1 ? '' : 's'} mention${n === 1 ? 's' : ''} fraud or scams`,
+        desc: `${n} page${n === 1 ? '' : 's'} on trusted sites name ${carrier.name} together with words like fraud, scam or non-payment (${top.map((h) => h.domain).join(', ')}). Open them to see what they say.`,
         pts,
         details: top.map((h) => `• ${h.domain} — ${h.title}`).join('\n'),
+        links: [...webReputation.hits, ...reviewHits],
         metrics: [
-          { label: 'Trusted-source hits', value: String(webReputation.hits.length) },
-          { label: 'Queries run', value: String(webReputation.queriesRun) },
+          { label: 'Pages mentioning fraud', value: String(n) },
+          { label: 'Other pages to review', value: String(reviewHits.length) },
         ],
-        recommendation: 'Read the linked articles before booking. A handful of mentions on TruckersReport, Land Line, or BBB usually points to a real pattern.',
+        recommendation: 'Read each page before booking. One forum post can be a dispute; several independent reports usually point to a real pattern.',
+      },
+    ];
+  } else if (reviewHits.length > 0) {
+    carrier.flags = [
+      ...(carrier.flags || []),
+      {
+        sev: 'info',
+        title: `Web: ${reviewHits.length} page${reviewHits.length === 1 ? '' : 's'} to review (not scored)`,
+        desc: `Court cases, business profiles or articles that name ${carrier.name}. None of them mention fraud or scams, so they don't affect the score.`,
+        pts: 0,
+        links: reviewHits,
+        recommendation: 'Skim them if this load matters. For carriers, court cases are usually accident or injury claims.',
       },
     ];
   }
@@ -566,7 +582,8 @@ export async function GET(req: Request) {
       ]);
       if (dc) {
         domainAgeDays = dc.whois.ageDays ?? null;
-        hasMx = dc.mx.hasMx;
+        // Unknown (undefined) when the DNS lookup itself failed.
+        hasMx = dc.mx.error ? undefined : dc.mx.hasMx;
         hasSpf = dc.spf.hasSpf;
       }
       if (sc && sc.length) socials = sc;
@@ -705,12 +722,17 @@ export async function GET(req: Request) {
       name: 'Web reputation',
       // Green when nothing fraud-related found in trusted sources. Dim
       // grey + the loud red flag if hits exist.
-      ok: Boolean(carrier.webReputation?.configured) && (carrier.webReputation?.hits.length ?? 0) === 0,
+      ok: Boolean(carrier.webReputation?.configured) && Boolean(carrier.webReputation?.ok) && (carrier.webReputation?.hits.length ?? 0) === 0,
       note: !carrier.webReputation?.configured
         ? 'Brave Search not configured'
-        : (carrier.webReputation?.hits.length ?? 0) > 0
-          ? `${carrier.webReputation!.hits.length} mention${carrier.webReputation!.hits.length === 1 ? '' : 's'} on trusted sources`
-          : 'No fraud mentions found',
+        : !carrier.webReputation?.ok
+          // Every search failed — that's "couldn't check", not "clean".
+          ? 'Search didn’t respond — try Scan again'
+          : (carrier.webReputation?.hits.length ?? 0) > 0
+            ? `${carrier.webReputation!.hits.length} page${carrier.webReputation!.hits.length === 1 ? '' : 's'} mention fraud`
+            : (carrier.webReputation?.reviewHits?.length ?? 0) > 0
+              ? `No fraud mentions · ${carrier.webReputation!.reviewHits!.length} page${carrier.webReputation!.reviewHits!.length === 1 ? '' : 's'} to review`
+              : 'No fraud mentions found',
     },
     {
       name: 'Linked entities',

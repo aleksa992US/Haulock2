@@ -967,6 +967,8 @@ export type SalesEmailLookup = {
   topFlag: string | null;
   flagCount: number;
   at: string;
+  recheckedAt?: string | null;
+  sample?: 'own';
 };
 
 const LOOKUPS_TOKEN = /\{\{\s*lookups\s*\}\}/gi;
@@ -997,8 +999,13 @@ const EXAMPLE_LOOKUP: SalesEmailLookup = {
 
 function lookupRow(l: SalesEmailLookup, last: boolean): string {
   const v = VERDICT_STYLE[l.verdict];
-  const date = l.at ? new Date(l.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-  const meta = [l.idLabel, date ? `checked ${date}` : ''].filter(Boolean).join(' · ');
+  const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
+  // "checked Jun 3 · updated Oct 13" when we re-scanned it before sending.
+  const meta = [
+    l.idLabel,
+    l.sample === 'own' ? (l.at ? `scanned ${fmt(l.at)}` : '') : l.at ? `checked ${fmt(l.at)}` : '',
+    l.recheckedAt ? `updated ${fmt(l.recheckedAt)}` : '',
+  ].filter(Boolean).join(' · ');
   const flag = l.topFlag
     ? `<div style="margin-top:6px;font-size:13px;color:${l.verdict === 'low' ? 'rgba(11,30,63,0.6)' : v.color};">&#9888; ${escapeHtml(l.topFlag)}${l.flagCount > 1 ? ` <span style="color:rgba(11,30,63,0.45);">+${l.flagCount - 1} more</span>` : ''}</div>`
     : `<div style="margin-top:6px;font-size:13px;color:#16A34A;">&#10003; No warning signs found</div>`;
@@ -1016,17 +1023,30 @@ function lookupRow(l: SalesEmailLookup, last: boolean): string {
 </td></tr>`;
 }
 
+// Three cases, each with its own intro line so the operator's message never
+// has to guess which one a recipient gets: their own recent checks; a free
+// scan of their own company when they've checked nothing ("on us"); or a
+// clearly-labelled fictional example when we don't know their company.
 function salesLookupsBlock(lookups: SalesEmailLookup[], siteUrl: string): string {
   const example = lookups.length === 0;
+  const own = !example && lookups[0].sample === 'own';
   const rows = example ? [EXAMPLE_LOOKUP] : lookups;
   const flagged = rows.filter((l) => l.verdict !== 'low').length;
-  const label = example ? 'Example check' : 'Your recent checks';
+  const verifyLink = `<a href="${siteUrl}/verify" style="color:#0B1E3F;text-decoration:underline;">haulock.com/verify</a>`;
+  const intro = example
+    ? 'You haven&rsquo;t checked a company yet. Here&rsquo;s what a check looks like:'
+    : own
+      ? 'You haven&rsquo;t checked a company yet, so we ran a free check for you, on us. We picked the company we know best: yours. This is what anyone sees when they look you up on Haulock:'
+      : 'Here&rsquo;s what you checked recently:';
+  const label = example ? 'Example check' : own ? 'Free check · on us' : 'Your recent checks';
   const note = example
-    ? `This is an example. Run your own in seconds at <a href="${siteUrl}/verify" style="color:#0B1E3F;text-decoration:underline;">haulock.com/verify</a>.`
-    : flagged > 0
-      ? `Haulock flagged ${flagged === 1 ? 'one of these' : `${flagged} of these`} &mdash; exactly what&rsquo;s easy to miss on a busy day.`
-      : `All clear on these. That&rsquo;s the peace of mind you can have on every load.`;
-  return `<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.5);margin:4px 0 8px 0;">${label}</div>
+    ? `This is an example. Run your own in seconds at ${verifyLink}.`
+    : own
+      ? `Next time a rate con lands, run the broker through Haulock the same way at ${verifyLink}.`
+      : flagged > 0
+        ? `Haulock flagged ${flagged === 1 ? 'one of these' : `${flagged} of these`} &mdash; exactly what&rsquo;s easy to miss on a busy day.`
+        : `All clear on these. That&rsquo;s the peace of mind you can have on every load.`;
+  return `${p(intro)}<div style="font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.5);margin:4px 0 8px 0;">${label}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid rgba(11,30,63,0.1);border-radius:12px;background:#FAF9F6;margin-bottom:10px;">
 ${rows.map((l, i) => lookupRow(l, i === rows.length - 1)).join('\n')}
 </table>

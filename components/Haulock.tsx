@@ -1506,9 +1506,28 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
         );
       })()}
 
+      {/* Progress — right under the header so it's always on screen. */}
+      {(() => {
+        const anySpooky = result ? sources.some((s) => isSourceSpooky(s.key, result)) : false;
+        return (
+          <div className="px-6 md:px-10 pt-4">
+            <div className="h-1.5 bg-[#0B1E3F]/8 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-200 ease-linear ${anySpooky ? 'bg-gradient-to-r from-[#DC2626] to-[#FF6B35]' : 'bg-gradient-to-r from-[#16A34A] to-[#0B1E3F]'}`}
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[#0B1E3F]/55">
+              <div className="mono uppercase tracking-wider truncate">FMCSA · Socrata · Google Places · Brave · WHOIS · DNS · Safe Browsing</div>
+              <div className={`mono ${anySpooky ? 'text-[#DC2626] font-semibold' : ''}`}>{progressPct}%</div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Body — the 14-source radar (same design as the promo reels) on a dark
           panel, then the per-source detail list below it. */}
-      <div className="px-4 md:px-10 pt-6 md:pt-8 pb-10">
+      <div className="px-4 md:px-10 pt-4 pb-6">
         {(() => {
           const spookyKeys = result ? sources.filter((s) => isSourceSpooky(s.key, result)).map((s) => s.key) : [];
           const complete = completedCount === sources.length;
@@ -1541,7 +1560,8 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
                   backgroundSize: '36px 36px',
                 }}
               />
-              <svg viewBox="0 0 1000 640" className="relative w-full max-w-[920px] mx-auto h-auto block">
+              {/* Height-capped so the whole radar fits on screen with the header above it. */}
+              <svg viewBox="0 0 1000 640" className="relative w-full max-w-[920px] mx-auto h-auto block" style={{ maxHeight: 'min(46vh, 520px)' }}>
                 <defs>
                   <radialGradient id="radar-glow">
                     <stop offset="0%" stopColor="#FF6B35" stopOpacity="0.35" />
@@ -1668,9 +1688,9 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
         })()}
 
         {/* Sources list — detail for each check, under the radar. */}
-        <div className="mt-8">
-          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-4">Cross-checking 14 sources in parallel</div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        <div className="mt-5">
+          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-3">Cross-checking 14 sources in parallel</div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
             {sources.map((s) => {
               const active = elapsed >= s.activateAt;
               const spooky = isSourceSpooky(s.key, result);
@@ -1692,21 +1712,15 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
               const labelCls = !active ? 'text-[#0B1E3F]/60' : spooky ? 'text-[#DC2626]' : 'text-[#0B1E3F]';
               const StatusIcon = !active ? Icon : spooky ? AlertTriangle : CheckCircle2;
               return (
-                <div key={s.key} className={`flex items-start gap-3 p-3 rounded-xl border transition ${cardCls}`}>
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition ${iconCls}`}>
-                    <StatusIcon className="w-4 h-4" />
+                <div key={s.key} title={`${s.desc}${s.chip ? ` · ${s.chip}` : ''}`} className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition ${cardCls}`}>
+                  <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 transition ${iconCls}`}>
+                    <StatusIcon className="w-3.5 h-3.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-semibold leading-tight ${labelCls}`}>
+                    <div className={`text-xs font-semibold leading-tight truncate ${labelCls}`}>
                       {s.label}
                       {spooky && <span className="ml-1.5 text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#DC2626] text-white align-middle">Caught</span>}
                     </div>
-                    <div className={`text-[11px] mt-1 leading-snug ${active ? (spooky ? 'text-[#DC2626]/85' : 'text-[#0B1E3F]/65') : 'text-[#0B1E3F]/40'}`}>{s.desc}</div>
-                    {s.chip && (
-                      <div className={`mt-1.5 inline-block text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded ${active ? (spooky ? 'bg-[#DC2626]/15 text-[#DC2626]' : 'bg-[#0B1E3F]/8 text-[#0B1E3F]/60') : 'bg-[#0B1E3F]/4 text-[#0B1E3F]/35'}`}>
-                        {s.chip}
-                      </div>
-                    )}
                   </div>
                 </div>
               );
@@ -1715,24 +1729,6 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
         </div>
       </div>
 
-      {/* Footer — progress bar + caption */}
-      {(() => {
-        const anySpooky = result ? sources.some((s) => isSourceSpooky(s.key, result)) : false;
-        return (
-          <div className="px-8 md:px-10 pb-8">
-            <div className="h-1.5 bg-[#0B1E3F]/8 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-200 ease-linear ${anySpooky ? 'bg-gradient-to-r from-[#DC2626] to-[#FF6B35]' : 'bg-gradient-to-r from-[#16A34A] to-[#0B1E3F]'}`}
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-            <div className="mt-3 flex items-center justify-between text-[11px] text-[#0B1E3F]/55">
-              <div className="mono uppercase tracking-wider">FMCSA · Socrata · Google Places · Brave · WHOIS · DNS · Safe Browsing</div>
-              <div className={`mono ${anySpooky ? 'text-[#DC2626] font-semibold' : ''}`}>{progressPct}%</div>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }
@@ -6663,7 +6659,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Hottest lead. They picked a plan but didn’t pay — offer help and the NEW20 code (20% off).',
     template: {
       subject: '{{first_name}}, need a hand finishing your Haulock signup?',
-      body: `Hi {{first_name}},\n\nI saw you started signing up for a Haulock plan but didn't finish. Did something get in the way? Just reply and I'll help. Here's what you checked before you left:\n\n{{lookups}}\n\nCode **NEW20** takes 20% off your first month, so every load you book gets checked first.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nI saw you started signing up for a Haulock plan but didn't finish. Did something get in the way? Just reply and I'll help.\n\n{{lookups}}\n\nCode **NEW20** takes 20% off your first month, so every load you book gets checked first.\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'Finish with 20% off →', ctaUrl: 'https://haulock.com/pricing', showLookups: true,
     },
   },
@@ -6672,7 +6668,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Used all free lookups this month — they clearly need it. Pitch the Carrier plan.',
     template: {
       subject: '{{first_name}}, you’ve used all {{free_limit}} free lookups',
-      body: `Hi {{first_name}},\n\nYou've used all {{free_limit}} of your free lookups this month, so Haulock is clearly part of how you book loads. Here's what it found for you:\n\n{{lookups}}\n\nThe **Carrier plan** gives you unlimited lookups, 15 rate con scans a month and alerts when a broker you watch changes, so you never book blind waiting for next month.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nYou've used all {{free_limit}} of your free lookups this month, so Haulock is clearly part of how you book loads.\n\n{{lookups}}\n\nThe **Carrier plan** gives you unlimited lookups, 15 rate con scans a month and alerts when a broker you watch changes, so you never book blind waiting for next month.\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'See plans →', ctaUrl: 'https://haulock.com/pricing', showLookups: true,
     },
   },
@@ -6681,7 +6677,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Never confirmed their email, so they can’t log in. Send a short personal nudge.',
     template: {
       subject: 'Finish setting up your Haulock account',
-      body: `Hi {{first_name}},\n\nYou signed up for Haulock but haven't confirmed your email yet, so you can't log in. Look for our confirmation email (check spam too), or just reply here and I'll sort it out.\n\nOnce you're in, this is what a check looks like:\n\n{{lookups}}\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nYou signed up for Haulock but haven't confirmed your email yet, so you can't log in. Look for our confirmation email (check spam too), or just reply here and I'll sort it out.\n\n{{lookups}}\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'Log in to Haulock →', ctaUrl: 'https://haulock.com/login', showLookups: true,
     },
   },
@@ -6690,7 +6686,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Signed up this week but hasn’t run a lookup. Show them how to check their first broker.',
     template: {
       subject: '{{first_name}}, check your first broker in 10 seconds',
-      body: `Hi {{first_name}},\n\nWelcome to Haulock! The quickest way to see what it does: pick MC or DOT, type the number from your next rate con, and you'll get a risk score and any red flags in seconds. Here's an example:\n\n{{lookups}}\n\nYou have {{free_limit}} free lookups every month. Any questions, just reply.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nWelcome to Haulock! The quickest way to see what it does: pick MC or DOT, type the number from your next rate con, and you'll get a risk score and any red flags in seconds.\n\n{{lookups}}\n\nYou have {{free_limit}} free lookups every month. Any questions, just reply.\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'Run my first check →', ctaUrl: 'https://haulock.com/verify', showLookups: true,
     },
   },
@@ -6699,7 +6695,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Using it but still free. Check in, ask what they haul, and mention what paid plans add.',
     template: {
       subject: '{{first_name}}, how’s Haulock working for you?',
-      body: `Hi {{first_name}},\n\nThanks for using Haulock. Here's a quick look at what you've checked lately:\n\n{{lookups}}\n\nWhat kind of loads are you booking, and is there anything you wish Haulock did? On a paid plan you also get unlimited lookups, rate con scans and a watchlist that emails you when a broker changes.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nThanks for using Haulock.\n\n{{lookups}}\n\nWhat kind of loads are you booking, and is there anything you wish Haulock did? On a paid plan you also get unlimited lookups, rate con scans and a watchlist that emails you when a broker changes.\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'Compare plans →', ctaUrl: 'https://haulock.com/pricing', showLookups: true,
     },
   },
@@ -6708,7 +6704,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Signed up a while ago and never ran a lookup. Re-introduce what it does with one example.',
     template: {
       subject: 'Still booking loads without checking the broker?',
-      body: `Hi {{first_name}},\n\nYou signed up for Haulock a while back but haven't run a lookup yet. Double-brokering and fake MCs are still everywhere, and this is what Haulock catches:\n\n{{lookups}}\n\nType any MC number and you'll see in seconds if something's off. Your {{free_limit}} free lookups are waiting.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nYou signed up for Haulock a while back but haven't run a lookup yet. Double-brokering and fake MCs are still everywhere.\n\n{{lookups}}\n\nType any MC number and you'll see in seconds if something's off. Your {{free_limit}} free lookups are waiting.\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'Check a broker now →', ctaUrl: 'https://haulock.com/verify', showLookups: true,
     },
   },
@@ -6717,7 +6713,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Used it before, nothing in 30+ days. Win-back: ask why, share something new.',
     template: {
       subject: '{{first_name}}, a lot has changed since your last check',
-      body: `Hi {{first_name}},\n\nIt's been a while since you used Haulock. Here's what you checked last time:\n\n{{lookups}}\n\nSince then we've added rate con scanning and PDF forensics, which catch edited or fake rate cons. Was there a reason you stopped? Your honest answer helps a lot.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nIt's been a while since you used Haulock.\n\n{{lookups}}\n\nSince then we've added rate con scanning and PDF forensics, which catch edited or fake rate cons. Was there a reason you stopped? Your honest answer helps a lot.\n\n${SALES_SIGNOFF}`,
       ctaLabel: 'Check a broker →', ctaUrl: 'https://haulock.com/verify', showLookups: true,
     },
   },
@@ -6726,7 +6722,7 @@ const SALES_SEGMENTS: Record<SalesSegment, { label: string; tone: string; action
     action: 'Customer. Ask for a review or referral, or offer a bigger plan if they’re near their limits.',
     template: {
       subject: 'Thanks for being a Haulock customer, {{first_name}}',
-      body: `Hi {{first_name}},\n\nThanks for being a Haulock customer. Here's what you've checked recently:\n\n{{lookups}}\n\nIs everything working the way you need? If Haulock has saved you from a bad load, would you tell a friend about it? It really helps.\n\n${SALES_SIGNOFF}`,
+      body: `Hi {{first_name}},\n\nThanks for being a Haulock customer.\n\n{{lookups}}\n\nIs everything working the way you need? If Haulock has saved you from a bad load, would you tell a friend about it? It really helps.\n\n${SALES_SIGNOFF}`,
       ctaLabel: '', ctaUrl: '', showLookups: true,
     },
   },
@@ -7121,9 +7117,12 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
   const [showLookups, setShowLookups] = useState(initial.showLookups);
   const [cooldownDays, setCooldownDays] = useState(3);
   const [idx, setIdx] = useState(0);
-  const [preview, setPreview] = useState<{ subject: string; html: string; lookupCount: number } | null>(null);
+  const [preview, setPreview] = useState<{ subject: string; html: string; lookupCount: number; lookupKind?: 'theirs' | 'own' | 'example' } | null>(null);
+  // Progress of the pre-send re-scan; previewTick re-renders the preview after it.
+  const [rescan, setRescan] = useState<{ done: number; total: number; failed: number } | null>(null);
+  const [previewTick, setPreviewTick] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [busy, setBusy] = useState<'test' | 'send' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'test' | 'send' | 'save' | 'rescan' | null>(null);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [result, setResult] = useState<any | null>(null);
   const bodyRef = React.useRef<HTMLTextAreaElement | null>(null);
@@ -7170,7 +7169,7 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
       }
     }, 450);
     return () => clearTimeout(t);
-  }, [recipient?.id, subject, body, ctaLabel, ctaUrl, showLookups]);
+  }, [recipient?.id, subject, body, ctaLabel, ctaUrl, showLookups, previewTick]);
 
   const allTemplates = [...BUILT_IN_TEMPLATES, ...saved];
   const pickTemplate = (id: string) => {
@@ -7229,11 +7228,70 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
   const recentCount = cooldownDays > 0 ? recipients.filter((r) => !r.unsubscribed && r.lastEmailedAt && r.lastEmailedAt > cooldownIso).length : 0;
   const willSend = recipients.length - unsubCount - recentCount;
 
+  // Before anything goes out, re-run the full scan (the same /api/verify a
+  // user gets, force=1) for every company in these emails whose last result
+  // is over a week old — including a recipient's own company for the free
+  // "on us" check — and store it for the emails. 3 at a time; a company that
+  // fails to re-scan keeps its previous result.
+  const refreshCompanies = async (ids: string[]): Promise<{ total: number; failed: number }> => {
+    const planRes = await fetch('/api/admin/sales/rescans/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userIds: ids }),
+    });
+    const plan = await planRes.json();
+    if (!planRes.ok) throw new Error(plan?.error || 'Could not check which companies need a re-scan');
+    const companies: { key: string; query: string }[] = plan.companies || [];
+    if (companies.length === 0) return { total: 0, failed: 0 };
+    let done = 0, failed = 0, next = 0;
+    setRescan({ done: 0, total: companies.length, failed: 0 });
+    const worker = async () => {
+      while (next < companies.length) {
+        const c = companies[next++];
+        try {
+          const r = await fetch(`/api/verify?q=${encodeURIComponent(c.query)}&force=1`);
+          const report = await r.json();
+          if (!r.ok) throw new Error(report?.error || 'scan failed');
+          const saved = await fetch('/api/admin/sales/rescans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: c.key, report }),
+          });
+          if (!saved.ok) throw new Error('save failed');
+        } catch {
+          failed += 1;
+        }
+        done += 1;
+        setRescan({ done, total: companies.length, failed });
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    setPreviewTick((t) => t + 1);
+    return { total: companies.length, failed };
+  };
+
+  const rescanPreviewed = async () => {
+    if (!recipient) return;
+    setBusy('rescan'); setNotice(null);
+    try {
+      const r = await refreshCompanies([recipient.id]);
+      setNotice({ tone: 'ok', text: r.total === 0 ? 'Everything in this email was scanned in the last 7 days.' : `Re-scanned ${r.total - r.failed} of ${r.total} compan${r.total === 1 ? 'y' : 'ies'}${r.failed ? ` · ${r.failed} kept their last result` : ''}.` });
+    } catch (e: any) {
+      setNotice({ tone: 'err', text: e?.message || 'Re-scan failed' });
+    } finally {
+      setRescan(null); setBusy(null);
+    }
+  };
+
   const send = async (test: boolean) => {
     if (!subject.trim() || !body.trim()) { setNotice({ tone: 'err', text: 'Add a subject and a message first.' }); return; }
-    if (!test && !window.confirm(`Send this email to ${willSend} ${willSend === 1 ? 'person' : 'people'}?\n\nThis can't be undone.`)) return;
+    if (!test && !window.confirm(`Send this email to ${willSend} ${willSend === 1 ? 'person' : 'people'}?${showLookups ? '\n\nCompanies in these emails that weren’t scanned in the last 7 days get a fresh scan first, so this can take a few minutes for a big group.' : ''}\n\nThis can't be undone.`)) return;
     setBusy(test ? 'test' : 'send'); setNotice(null);
     try {
+      if (showLookups) {
+        await refreshCompanies(test ? [recipient.id] : recipients.filter((r) => !r.unsubscribed).map((r) => r.id));
+        setRescan(null);
+      }
       const res = await fetch('/api/admin/sales/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -7249,6 +7307,7 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
     } catch (e: any) {
       setNotice({ tone: 'err', text: e?.message || 'Send failed' });
     } finally {
+      setRescan(null);
       setBusy(null);
     }
   };
@@ -7328,7 +7387,7 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
               <input type="checkbox" checked={showLookups} onChange={(e) => setShowLookups(e.target.checked)} className="w-4 h-4 mt-0.5 accent-[#0B1E3F]" />
               <span className="text-sm">
                 <span className="font-medium">Show their recent lookups</span>
-                <span className="block text-xs text-[#0B1E3F]/55 mt-0.5">Their last 3 companies checked, with risk score and top warning sign, placed where <span className="mono">{'{{lookups}}'}</span> is in the message. People with no lookups see a labelled example instead.</span>
+                <span className="block text-xs text-[#0B1E3F]/55 mt-0.5">Their last 3 companies checked, with risk score and top warning sign, placed where <span className="mono">{'{{lookups}}'}</span> is in the message. People with no lookups get a free check of their own company (from their profile MC/DOT), or a labelled example if they haven&apos;t set one. The block writes its own intro line. Anything not scanned in the last 7 days is re-scanned before sending.</span>
               </span>
             </label>
 
@@ -7371,7 +7430,12 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
             <div className="bg-white border border-[#0B1E3F]/10 rounded-t-xl px-4 py-3 text-sm">
               <div className="truncate"><span className="text-[#0B1E3F]/50">Subject:</span> <strong>{preview?.subject || subject}</strong></div>
               {showLookups && preview && (
-                <div className="text-xs text-[#0B1E3F]/50 mt-0.5">{preview.lookupCount > 0 ? `Includes ${preview.lookupCount} of their lookups` : 'No lookups yet — shows the example check'}</div>
+                <div className="text-xs text-[#0B1E3F]/50 mt-0.5 flex flex-wrap items-center gap-x-2">
+                  <span>{preview.lookupKind === 'own' ? 'No lookups — shows a free check of their own company' : preview.lookupKind === 'example' ? 'No lookups or MC on profile — shows the example check' : `Includes ${preview.lookupCount} of their lookups`}</span>
+                  {preview.lookupKind !== 'example' && (
+                    <button type="button" onClick={rescanPreviewed} disabled={!!busy} className="underline hover:text-[#0B1E3F] disabled:opacity-50">{busy === 'rescan' ? 'Re-scanning…' : 'Re-scan now'}</button>
+                  )}
+                </div>
               )}
             </div>
             <iframe
@@ -7387,7 +7451,14 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
         {!result && (
           <div className="px-5 py-4 bg-white border-t border-[#0B1E3F]/10 flex flex-col md:flex-row md:items-center gap-3">
             <div className="flex-1 text-sm min-w-0">
-              {notice
+              {rescan
+                ? (
+                  <div className="space-y-1.5 max-w-md">
+                    <div className="text-[#0B1E3F]/75">Re-scanning companies in {busy === 'test' || busy === 'rescan' ? 'this email' : 'these emails'} · <strong className="text-[#0B1E3F]">{rescan.done}/{rescan.total}</strong>{rescan.failed ? ` · ${rescan.failed} kept their last result` : ''}</div>
+                    <div className="h-1.5 bg-[#0B1E3F]/10 rounded-full overflow-hidden"><div className="h-full bg-[#FF6B35] transition-all" style={{ width: `${rescan.total ? (rescan.done / rescan.total) * 100 : 0}%` }} /></div>
+                  </div>
+                )
+                : notice
                 ? <span className={notice.tone === 'ok' ? 'text-[#16A34A]' : 'text-[#DC2626]'}>{notice.text}</span>
                 : <span className="text-[#0B1E3F]/60">
                     Will send to <strong className="text-[#0B1E3F]">{willSend}</strong>
@@ -7397,11 +7468,11 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
             </div>
             <div className="flex gap-2">
               <button onClick={() => send(true)} disabled={!!busy || !adminEmail} className="px-4 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 disabled:opacity-50">
-                {busy === 'test' ? 'Sending test…' : 'Send test to me'}
+                {busy === 'test' ? (rescan ? 'Re-scanning…' : 'Sending test…') : 'Send test to me'}
               </button>
               <button onClick={() => send(false)} disabled={!!busy || willSend === 0} className="px-5 py-2.5 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#FF6B35]/90 disabled:opacity-50 flex items-center gap-1.5">
                 <Mail className="w-3.5 h-3.5" />
-                {busy === 'send' ? 'Sending…' : `Send to ${willSend}`}
+                {busy === 'send' ? (rescan ? 'Re-scanning…' : 'Sending…') : `Send to ${willSend}`}
               </button>
             </div>
           </div>
@@ -8278,7 +8349,18 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const usageRes = useCachedFetch<{ plan: any; usage: any; isAdmin?: boolean }>('usage', '/api/usage');
   const usagePlan = getPlan(user?.plan || usageRes.data?.plan?.id);
   const usageNums = usageRes.data?.usage || { fmcsaLookups: 0, rateConScans: 0 };
-  const isAdmin = Boolean(usageRes.data?.isAdmin);
+  // /api/usage takes a moment, so remember the last answer per user on this
+  // device and show Admin / Sales immediately. The server still checks
+  // admin on every admin API call — this only decides what the sidebar shows.
+  const adminKey = `haulock:isAdmin:${user?.id || user?.email || ''}`;
+  const [cachedAdmin] = useState<boolean>(() => {
+    try { return typeof window !== 'undefined' && localStorage.getItem(adminKey) === '1'; } catch { return false; }
+  });
+  const isAdmin = usageRes.data ? Boolean(usageRes.data.isAdmin) : cachedAdmin;
+  useEffect(() => {
+    if (!usageRes.data) return;
+    try { localStorage.setItem(adminKey, usageRes.data.isAdmin ? '1' : '0'); } catch {}
+  }, [usageRes.data, adminKey]);
   // Open-tickets count for the Admin sidebar badge. Lightweight endpoint
   // that returns just `{ open, working, solved }` — no joins, head-only
   // count queries. Non-admins always get zeros so this hook is safe to
@@ -10139,11 +10221,13 @@ function CarrierReport({ report, navigate }: any) {
           <div className="text-sm mono text-[#0B1E3F]/50">{(r.flags?.length || 0)} flags</div>
         </div>
         <div className="space-y-3">
-          {(r.flags || []).map((flag: any, i: number) => <FlagRow key={i} {...flag} />)}
+          {(r.flags || []).map((flag: any, i: number) => (
+            <FlagRow key={i} {...flag} webHits={flag.links || (/^Web reputation/i.test(String(flag.title || '')) ? r.webReputation?.hits : undefined)} />
+          ))}
           {(!r.flags || r.flags.length === 0) && (
             <div className="py-12 text-center text-[#0B1E3F]/60">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-[#16A34A]" />
-              No red flags detected for this broker.
+              No red flags detected for this company.
             </div>
           )}
         </div>
@@ -10679,18 +10763,36 @@ function SmsStatCard({ label, value, alert, footnote }: { label: string; value: 
 // "FMCSA archive ~5 years ago" — never as Haulock's verdict. We
 // explicitly note that sharing identifiers can be legitimate.
 function FmcsaArchivePanel({ data, navigate }: { data: NonNullable<any>; navigate: any }) {
-  const ratingTone = (() => {
-    const r = (data.rating?.riskOverall || '').toLowerCase();
-    if (r.includes('unaccept')) return { fg: '#DC2626', bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30' };
-    if (r.includes('moderate')) return { fg: '#F59E0B', bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30' };
-    if (r.includes('accept'))   return { fg: '#16A34A', bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30' };
-    return { fg: '#0B1E3F', bg: 'bg-[#0B1E3F]/5', border: 'border-[#0B1E3F]/15' };
-  })();
+  // Neutral on purpose: a rating from ~5 years ago is background, not a
+  // current warning, and it isn't part of today's score.
+  const ratingTone = { fg: '#0B1E3F', bg: 'bg-[#0B1E3F]/[0.03]', border: 'border-[#0B1E3F]/10' };
   const emailMatches: any[] = data.emailMatches || [];
+  // Collapsed by default — it's old reference data, so it shouldn't compete
+  // with today's findings for attention.
+  const [open, setOpen] = useState(false);
+  const summary = [
+    data.rating?.riskOverall ? `rated ${String(data.rating.riskOverall).toLowerCase()}` : '',
+    typeof data.rating?.trucksTotal === 'number' ? `${data.rating.trucksTotal} truck${data.rating.trucksTotal === 1 ? '' : 's'} then` : '',
+    emailMatches.length ? `email shared with ${emailMatches.length} other record${emailMatches.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ');
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="w-full text-left bg-white rounded-2xl border border-[#0B1E3F]/10 px-6 py-4 text-[#0B1E3F] hover:bg-[#0B1E3F]/[0.02] transition flex items-center gap-3">
+        <Clock className="w-4 h-4 text-[#0B1E3F]/40 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium">Old FMCSA snapshot, about 5 years ago{summary ? <span className="text-[#0B1E3F]/55 font-normal"> · {summary}</span> : null}</div>
+          <div className="text-xs text-[#0B1E3F]/50 mt-0.5">Background only. A lot changes in 5 years, so this isn&apos;t part of today&apos;s score.</div>
+        </div>
+        <span className="text-xs text-[#0B1E3F]/55 flex-shrink-0">Show</span>
+        <ChevronRight className="w-4 h-4 text-[#0B1E3F]/40 flex-shrink-0" />
+      </button>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
-      <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
+      <div className="flex items-start justify-between mb-5 flex-wrap gap-2">
         <div>
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 font-semibold">FMCSA archive</span>
@@ -10698,9 +10800,10 @@ function FmcsaArchivePanel({ data, navigate }: { data: NonNullable<any>; navigat
           </div>
           <h2 className="text-xl font-semibold text-[#0B1E3F]">Historical reference data</h2>
           <div className="text-sm text-[#0B1E3F]/60 mt-1">
-            What FMCSA had on file for this carrier in our archive snapshot from a few years back. Useful for spotting changes; <span className="font-medium">not Haulock's current assessment</span>.
+            What FMCSA had on file for this company about 5 years ago. Useful for spotting big changes (new owner, new address, much bigger fleet). <span className="font-medium">It isn&apos;t part of today&apos;s score</span>, because a lot changes in 5 years.
           </div>
         </div>
+        <button type="button" onClick={() => setOpen(false)} className="text-xs text-[#0B1E3F]/55 hover:text-[#0B1E3F] underline">Hide</button>
       </div>
 
       {data.rating && data.rating.riskOverall && (
@@ -11027,12 +11130,31 @@ function DetailPanel({ title, items }: any) {
   );
 }
 
-function FlagRow({ sev, title, desc, pts, details, metrics, recommendation }: any) {
+// What kind of page a web-reputation hit is, in plain words. The search
+// matches the company name next to words like "fraud" or "lawsuit", so the
+// page type matters: a BBB profile exists for every listed business, and a
+// court case against a carrier is often an accident claim, not fraud.
+function describeWebHit(domain: string, title: string): { kind: string; note: string } {
+  const d = domain.toLowerCase();
+  const t = title.toLowerCase();
+  if (/bbb\.org$/.test(d)) return { kind: 'BBB profile', note: 'Every listed business has a BBB page. Open it to see the rating and whether any complaints were filed.' };
+  if (/complaint\.fmcsa\.dot\.gov$|nccdb\.fmcsa/.test(d)) return { kind: 'FMCSA complaint portal', note: 'A page on FMCSA’s complaint system. Open it to see whether complaints were actually filed.' };
+  if (/justia\.com$|courtlistener\.com$|casetext\.com$|pacermonitor\.com$|unicourt\.com$|law\.cornell\.edu$/.test(d) || /\bv\.\s|\bvs?\.\s/.test(t)) {
+    return { kind: 'Court case', note: 'The company is named in a lawsuit. For carriers this is often an accident or injury claim rather than fraud, so open it to see what the case is about.' };
+  }
+  if (/freightwaves\.com$|landline\.media$|ttnews\.com$|overdriveonline\.com$|ccjdigital\.com$|freightcaviar\.com$/.test(d)) return { kind: 'Trucking news', note: 'An industry news article that mentions the company.' };
+  if (/truckersreport\.com$|reddit\.com$|thetruckersreport\.com$/.test(d)) return { kind: 'Forum post', note: 'A discussion where drivers or dispatchers mention the company.' };
+  if (/\.gov$/.test(d)) return { kind: 'Government page', note: 'A government page that mentions the company.' };
+  return { kind: 'Web page', note: 'A page that mentions the company near words like fraud, scam or lawsuit.' };
+}
+
+function FlagRow({ sev, title, desc, pts, details, metrics, recommendation, webHits }: any) {
   const [open, setOpen] = useState(false);
+  const hits: any[] = Array.isArray(webHits) ? webHits.filter((h: any) => h?.url) : [];
   const bgMap: any = { critical: 'rgba(220,38,38,0.08)', warning: 'rgba(245,158,11,0.08)', info: 'rgba(11,30,63,0.05)' };
   const borderMap: any = { critical: 'rgba(220,38,38,0.2)', warning: 'rgba(245,158,11,0.2)', info: 'rgba(11,30,63,0.1)' };
   const iconColor = sev === 'critical' ? '#DC2626' : sev === 'warning' ? '#F59E0B' : 'rgba(11,30,63,0.6)';
-  const expandable = Boolean(details || (metrics && metrics.length) || recommendation);
+  const expandable = Boolean(details || (metrics && metrics.length) || recommendation || hits.length);
   return (
     <div className="rounded-xl border text-[#0B1E3F] overflow-hidden" style={{ backgroundColor: bgMap[sev], borderColor: borderMap[sev] }}>
       <button
@@ -11062,7 +11184,33 @@ function FlagRow({ sev, title, desc, pts, details, metrics, recommendation }: an
               ))}
             </div>
           )}
-          {details && (
+          {hits.length > 0 ? (
+            // Web reputation: every source as a link, what kind of page it is,
+            // and the search snippet, so the user can judge each one.
+            <div className={metrics && metrics.length > 0 ? '' : 'pt-4'}>
+              <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">What this means</div>
+              <div className="text-sm text-[#0B1E3F]/80 leading-relaxed mb-3">
+                Haulock searched the web for this company&apos;s name together with words like fraud, scam and lawsuit, and kept results from trusted sites.
+                A result means the name appears on that page, not that the page accuses the company. Open each one to see what it actually says.
+              </div>
+              <div className="space-y-2">
+                {hits.slice(0, 8).map((h: any, i: number) => {
+                  const info = describeWebHit(String(h.domain || ''), String(h.title || ''));
+                  return (
+                    <a key={i} href={h.url} target="_blank" rel="noopener noreferrer" className="block bg-white rounded-lg border px-3 py-2.5 hover:border-[#0B1E3F]/40 transition" style={{ borderColor: borderMap[sev] }}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/70 font-semibold">{info.kind}</span>
+                        <span className="text-xs mono text-[#0B1E3F]/50">{h.domain}</span>
+                      </div>
+                      <div className="text-sm font-medium text-[#0B1E3F] mt-1 underline decoration-[#0B1E3F]/20 underline-offset-2">{h.title}</div>
+                      {h.snippet && <div className="text-xs text-[#0B1E3F]/65 mt-1 leading-relaxed line-clamp-3">{String(h.snippet).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;|&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')}</div>}
+                      <div className="text-[11px] text-[#0B1E3F]/50 mt-1.5">{info.note}</div>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          ) : details && (
             <div className={metrics && metrics.length > 0 ? '' : 'pt-4'}>
               <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1">What this means</div>
               <div className="text-sm text-[#0B1E3F]/80 leading-relaxed">{details}</div>
@@ -11751,13 +11899,18 @@ function SearchHistory({ navigate }: any) {
           tool uses so the experience is identical no matter where the scan
           was triggered from. Auto-dismisses when navigate() runs. */}
       {scanQuery && (
-        <div className="fixed inset-0 z-50 bg-[#F5F3EE]/95 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        // Scroll container + min-h-full inner box: centred when it fits, and
+        // scrollable from the very top when it doesn't (items-center on the
+        // scroll container itself pushed the top off-screen).
+        <div className="fixed inset-0 z-50 bg-[#F5F3EE]/95 backdrop-blur-sm overflow-y-auto">
+          <div className="min-h-full flex items-center justify-center p-3 md:p-6">
           <div className="w-full max-w-5xl">
-            <div className="text-center mb-6">
-              <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-2">Re-running scan</div>
-              <div className="text-2xl serif italic text-[#0B1E3F]">Pulling fresh data for {scanQuery}…</div>
+            <div className="text-center mb-3">
+              <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-1">Re-running scan</div>
+              <div className="text-xl serif italic text-[#0B1E3F]">Pulling fresh data for {scanQuery}…</div>
             </div>
             <VerifyScanProgress query={scanQuery} result={scanResult} />
+          </div>
           </div>
         </div>
       )}
