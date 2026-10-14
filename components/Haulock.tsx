@@ -9003,7 +9003,7 @@ function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedd
         {d.monitoring?.on ? (
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm font-medium text-[#16A34A]"><span className="w-2 h-2 rounded-full bg-[#16A34A]" /> On</div>
-            <p className="text-sm text-[#0B1E3F]/70">We check your FMCSA record every day and email you the moment anything changes: insurance, authority, address, phone, email or officers. A change you didn&apos;t make is the first sign of a hijacked identity.</p>
+            <p className="text-sm text-[#0B1E3F]/70">We check your FMCSA record every day and email you the moment anything changes (insurance, authority, address, phone, email or officers) and each time a new roadside inspection or crash is filed on your DOT. A change you didn&apos;t make is the first sign of a hijacked identity.</p>
             <div className="text-xs text-[#0B1E3F]/55">
               {d.monitoring.lastChecked ? `Last checked ${timeAgo(d.monitoring.lastChecked)}` : 'First check runs tonight'}
               {d.monitoring.lastChangeAt ? ` · last change found ${timeAgo(d.monitoring.lastChangeAt)}` : ' · no changes found yet'}
@@ -9012,13 +9012,55 @@ function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedd
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm text-[#0B1E3F]/70">Get an email the moment your FMCSA record changes (insurance, authority, address, phone, email or officers), so you hear about it before your customers do.</p>
+            <p className="text-sm text-[#0B1E3F]/70">Get an email the moment your FMCSA record changes (insurance, authority, address, phone, email or officers) and each time a roadside inspection or crash is filed on your DOT, so you hear about it before your customers and insurer do.</p>
             <button onClick={() => act({ action: 'monitor', on: true }, 'monitor')} disabled={busy !== null} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-60">{busy === 'monitor' ? 'Turning on…' : 'Turn on monitoring'}</button>
           </div>
         )}
       </div>
+      {/* Roadside inspections & crashes */}
+      {d.usdot && (
+        <div className={embedded ? '' : 'md:col-span-2'}>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Roadside inspections &amp; crashes</div>
+          <OwnSafetySummary dot={String(d.usdot)} monitoringOn={Boolean(d.monitoring?.on)} />
+        </div>
+      )}
       {message && <div className={`${embedded ? '' : 'md:col-span-2'} text-sm ${message.tone === 'ok' ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{message.text}</div>}
     </div>,
+  );
+}
+
+// Latest inspection, last 30 days and last crash for the user's own DOT.
+function OwnSafetySummary({ dot, monitoringOn, compact = false }: { dot: string; monitoringOn?: boolean; compact?: boolean }) {
+  const res = useCachedFetch<any>(`safety:${dot}`, `/api/fmcsa/safety-activity?dot=${encodeURIComponent(dot)}`);
+  const a = res.data;
+  if (!a) return <div className="text-xs text-[#0B1E3F]/50">{res.loading ? 'Checking FMCSA inspection records…' : 'FMCSA inspection records didn’t respond.'}</div>;
+  const last = a.inspections.last;
+  const lastCrash = a.crashes.last;
+  const l30 = a.last30;
+  if (!last && !lastCrash) return <div className="text-sm text-[#0B1E3F]/65">No inspections or crashes on file in the last 24 months.</div>;
+  return (
+    <div className={compact ? 'space-y-1' : 'space-y-1.5'}>
+      {last && (
+        <div className="text-sm flex items-center gap-2 flex-wrap">
+          <span className="text-[#0B1E3F]/60">Last inspection</span>
+          <strong>{fmtEventDate(last.date)}</strong>
+          {!compact && <span className="text-[#0B1E3F]/60">· {eventPlace(last.location, last.state)}</span>}
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${inspectionResult(last).cls}`}>{inspectionResult(last).label}</span>
+        </div>
+      )}
+      <div className="text-xs text-[#0B1E3F]/60">
+        Last 30 days: {l30.inspections} inspection{l30.inspections === 1 ? '' : 's'}
+        {l30.oos > 0 && <span className="text-[#DC2626] font-medium"> · {l30.oos} out of service</span>}
+        {l30.withViolations > 0 && ` · ${l30.withViolations} with violations`}
+        {l30.crashes > 0 && <span className="text-[#DC2626] font-medium"> · {l30.crashes} crash{l30.crashes === 1 ? '' : 'es'}</span>}
+      </div>
+      {!compact && lastCrash && <div className="text-xs text-[#0B1E3F]/60">Last crash {fmtEventDate(lastCrash.date)} · {eventPlace(lastCrash.city || lastCrash.location, lastCrash.state)}</div>}
+      {!compact && (
+        <div className="text-[11px] text-[#0B1E3F]/45">
+          {monitoringOn ? 'We email you each new inspection and crash filed on your DOT.' : 'Turn on monitoring to get an email for each new inspection and crash.'} Full history is on your report.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -9347,6 +9389,12 @@ function Dashboard({ navigate, user }: any) {
                     </div>
                   </div>
                   <div className="text-xs text-[#0B1E3F]/55 mt-3">This is the score others see when they check you on Haulock.</div>
+                  {(ownReport.dot || own.ownDot) && (
+                    <div className="mt-4 pt-4 border-t border-[#0B1E3F]/10">
+                      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1.5">Roadside inspections</div>
+                      <OwnSafetySummary dot={String(ownReport.dot || own.ownDot)} compact />
+                    </div>
+                  )}
                   <button onClick={() => window.dispatchEvent(new CustomEvent('haulock:open-own-company'))} className="mt-4 w-full py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 flex items-center justify-center gap-2">
                     <Eye className="w-4 h-4" /> Score, monitoring &amp; who&apos;s checking
                   </button>
@@ -11647,6 +11695,7 @@ function CarrierReport({ report, navigate }: any) {
         </div>
       )}
       {r.sms?.fetched && <FmcsaSmsPanel sms={r.sms} dot={r.dot} carrier={r} />}
+      {r.dot && <SafetyActivityPanel dot={String(r.dot)} />}
       {r.legacyReference && (r.legacyReference.rating || (r.legacyReference.emailMatches?.length ?? 0) > 0) && (
         <FmcsaArchivePanel data={r.legacyReference} navigate={navigate} />
       )}
@@ -11774,6 +11823,207 @@ function CarrierReport({ report, navigate }: any) {
 // inspection breakdown, and crash detail we pulled from FMCSA SMS. The
 // data is FMCSA's own; we cite the source clearly and link the canonical
 // SMS Overview page so the user can verify directly.
+const fmtEventDate = (d: string, withYear = true) => d ? new Date(`${d}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' }) : '—';
+const eventPlace = (loc: string, state: string) => [loc && loc.toUpperCase() !== state ? loc : '', state].filter(Boolean).join(', ') || 'Location not reported';
+
+function inspectionResult(e: any): { label: string; cls: string } {
+  if (e.oos > 0) {
+    const who = e.driverOos && !e.vehicleOos ? ' · driver' : e.vehicleOos && !e.driverOos ? ' · vehicle' : '';
+    return { label: `Out of service${who}`, cls: 'bg-[#DC2626]/10 text-[#DC2626]' };
+  }
+  if (e.violations > 0) return { label: `${e.violations} violation${e.violations === 1 ? '' : 's'}`, cls: 'bg-[#F59E0B]/15 text-[#B45309]' };
+  return { label: 'Clean', cls: 'bg-[#16A34A]/10 text-[#16A34A]' };
+}
+
+// Every roadside inspection and crash in the last 24 months, from FMCSA's
+// inspection and crash files (refreshed daily).
+function SafetyActivityPanel({ dot }: { dot: string }) {
+  const res = useCachedFetch<any>(`safety:${dot}`, `/api/fmcsa/safety-activity?dot=${encodeURIComponent(dot)}`);
+  const a = res.data;
+  const [hover, setHover] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const shell = (children: React.ReactNode) => (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 md:p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 font-semibold">FMCSA roadside inspections &amp; crashes</span>
+        <span className="px-2 py-0.5 bg-[#0B1E3F]/5 text-[#0B1E3F]/65 rounded-full text-[10px] mono uppercase tracking-wider font-semibold">Last 24 months · updated daily</span>
+      </div>
+      {children}
+    </div>
+  );
+  if (!a) {
+    return shell(res.loading
+      ? <div className="py-8 flex items-center gap-3 text-sm text-[#0B1E3F]/55"><div className="w-4 h-4 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> Pulling every inspection and crash from FMCSA…</div>
+      : <div className="py-6 text-sm text-[#0B1E3F]/60">FMCSA&apos;s inspection records didn&apos;t respond. <button onClick={res.refetch} className="underline font-medium">Try again</button></div>);
+  }
+  const ins = a.inspections, cr = a.crashes;
+  if (ins.total === 0 && cr.total === 0) {
+    return shell(
+      <div className="mt-2">
+        <h2 className="text-xl font-semibold">No inspections or crashes on file</h2>
+        <p className="text-sm text-[#0B1E3F]/65 mt-1">FMCSA has no roadside inspections or reportable crashes for DOT-{dot} in the last 24 months. Common for new or small fleets. It also means there&apos;s no safety history to judge by.</p>
+      </div>,
+    );
+  }
+  const pct = (n: number) => (ins.total ? Math.round((n / ins.total) * 100) : 0);
+  const months: any[] = a.byMonth || [];
+  const max = Math.max(1, ...months.map((m) => m.clean + m.violations + m.oos));
+  const list: any[] = showAll ? ins.recent : ins.recent.slice(0, 8);
+  const last = ins.last;
+
+  return shell(
+    <div>
+      <div className="flex items-start justify-between gap-4 flex-wrap mt-1 mb-5">
+        <h2 className="text-xl font-semibold">Every inspection and crash</h2>
+        {last && (
+          <div className="text-xs text-[#0B1E3F]/60 text-right">
+            Last inspected <strong className="text-[#0B1E3F]">{fmtEventDate(last.date)}</strong> · {eventPlace(last.location, last.state)}
+            <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] font-semibold ${inspectionResult(last).cls}`}>{inspectionResult(last).label}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-3.5 rounded-xl bg-[#0B1E3F]/[0.04]">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Inspections</div>
+          <div className="text-2xl font-semibold mt-1">{ins.total.toLocaleString()}{ins.truncated ? '+' : ''}</div>
+          <div className="text-[11px] text-[#0B1E3F]/55">{a.last30.inspections} in the last 30 days</div>
+        </div>
+        <div className="p-3.5 rounded-xl bg-[#16A34A]/[0.07]">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Clean</div>
+          <div className="text-2xl font-semibold mt-1 text-[#16A34A]">{pct(ins.clean)}%</div>
+          <div className="text-[11px] text-[#0B1E3F]/55">{ins.clean.toLocaleString()} with no violations</div>
+        </div>
+        <div className={`p-3.5 rounded-xl ${ins.oos ? 'bg-[#DC2626]/[0.07]' : 'bg-[#0B1E3F]/[0.04]'}`}>
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Out of service</div>
+          <div className={`text-2xl font-semibold mt-1 ${ins.oos ? 'text-[#DC2626]' : ''}`}>{ins.oos.toLocaleString()}</div>
+          <div className="text-[11px] text-[#0B1E3F]/55">{ins.vehicleOos} vehicle · {ins.driverOos} driver</div>
+        </div>
+        <div className={`p-3.5 rounded-xl ${cr.fatal ? 'bg-[#DC2626]/[0.07]' : 'bg-[#0B1E3F]/[0.04]'}`}>
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Crashes</div>
+          <div className={`text-2xl font-semibold mt-1 ${cr.fatal ? 'text-[#DC2626]' : ''}`}>{cr.total}</div>
+          <div className="text-[11px] text-[#0B1E3F]/55">{cr.fatal ? `${cr.fatal} fatal · ` : ''}{cr.injury} with injuries</div>
+        </div>
+      </div>
+
+      {/* Inspections per month, split by result; crash count underneath. */}
+      <div className="mt-6">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <div className="text-xs text-[#0B1E3F]/60">Inspections per month</div>
+          <div className="flex items-center gap-3 text-[11px] text-[#0B1E3F]/60">
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-[#16A34A]" />Clean</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-[#F59E0B]" />Violations</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-[#DC2626]" />Out of service</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-[#0B1E3F]" />Crash</span>
+          </div>
+        </div>
+        <div className="relative">
+          <div className="flex items-end h-28" style={{ gap: 2 }} role="img" aria-label={`Inspections per month, oldest first: ${months.map((m) => m.clean + m.violations + m.oos).join(', ')}`}>
+            {months.map((m, i) => {
+              const total = m.clean + m.violations + m.oos;
+              const h = (n: number) => `${(n / max) * 100}%`;
+              return (
+                <div key={m.month} className="flex-1 h-full flex flex-col justify-end cursor-default" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ opacity: hover == null || hover === i ? 1 : 0.55 }}>
+                  {total === 0 ? <div className="w-full rounded-sm bg-[#0B1E3F]/10" style={{ height: 3 }} /> : (
+                    <div className="w-full flex flex-col overflow-hidden rounded-t-[4px]" style={{ height: h(total), gap: 1, minHeight: 4 }}>
+                      {m.oos > 0 && <div className="w-full bg-[#DC2626]" style={{ flexGrow: m.oos }} />}
+                      {m.violations > 0 && <div className="w-full bg-[#F59E0B]" style={{ flexGrow: m.violations }} />}
+                      {m.clean > 0 && <div className="w-full bg-[#16A34A]" style={{ flexGrow: m.clean }} />}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex mt-1.5" style={{ gap: 2 }}>
+            {months.map((m) => (
+              <div key={m.month} className="flex-1 flex justify-center">
+                {m.crashes > 0 && <span className="min-w-[14px] h-[14px] px-0.5 rounded-full bg-[#0B1E3F] text-white text-[9px] font-bold flex items-center justify-center">{m.crashes}</span>}
+              </div>
+            ))}
+          </div>
+          {hover != null && months[hover] && (
+            <div className="absolute -top-10 px-2.5 py-1.5 rounded-lg bg-[#0B1E3F] text-white text-[11px] whitespace-nowrap pointer-events-none z-10" style={{ left: `clamp(0px, calc(${((hover + 0.5) / months.length) * 100}% - 90px), calc(100% - 180px))` }}>
+              <strong>{new Date(`${months[hover].month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })}</strong>: {months[hover].clean + months[hover].violations + months[hover].oos} inspections
+              {months[hover].oos ? ` · ${months[hover].oos} out of service` : ''}{months[hover].crashes ? ` · ${months[hover].crashes} crash${months[hover].crashes === 1 ? '' : 'es'}` : ''}
+            </div>
+          )}
+          <div className="flex justify-between text-[10px] mono text-[#0B1E3F]/40 mt-1">
+            <span>{months[0] ? new Date(`${months[0].month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : ''}</span>
+            <span>This month</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Latest inspections */}
+      {ins.recent.length > 0 && (
+        <div className="mt-6">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Latest inspections</div>
+          <div className="divide-y divide-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-xl overflow-hidden">
+            {list.map((e: any) => {
+              const rs = inspectionResult(e);
+              const expandable = (e.details?.length || 0) > 0;
+              const isOpen = open === e.id;
+              return (
+                <div key={e.id}>
+                  <button onClick={() => expandable && setOpen(isOpen ? null : e.id)} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left ${expandable ? 'hover:bg-[#0B1E3F]/[0.03]' : 'cursor-default'}`}>
+                    <div className="w-24 flex-shrink-0 text-sm font-medium">{fmtEventDate(e.date)}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm truncate">{eventPlace(e.location, e.state)}</div>
+                      <div className="text-[11px] text-[#0B1E3F]/50 truncate">{e.levelLabel}{e.postCrash ? ' · after a crash' : ''}</div>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${rs.cls}`}>{rs.label}</span>
+                    {expandable ? <ChevronRight className={`w-4 h-4 text-[#0B1E3F]/35 transition-transform ${isOpen ? 'rotate-90' : ''}`} /> : <span className="w-4" />}
+                  </button>
+                  {isOpen && (
+                    <div className="px-3.5 pb-3 pl-[7.5rem] space-y-1.5">
+                      {e.details.map((v: any, k: number) => (
+                        <div key={k} className="text-xs text-[#0B1E3F]/75 flex items-start gap-2">
+                          <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${v.oos ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'}`} />
+                          <span>{v.desc}{v.oos && <strong className="text-[#DC2626]"> · out of service</strong>}<span className="text-[#0B1E3F]/40"> · {v.unit === 'driver' ? 'driver' : v.unit === 'vehicle' ? 'vehicle' : v.code}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {ins.recent.length > 8 && (
+            <button onClick={() => setShowAll((v) => !v)} className="mt-2 text-xs font-medium underline text-[#0B1E3F]/65">{showAll ? 'Show fewer' : `Show the latest ${ins.recent.length}`}</button>
+          )}
+        </div>
+      )}
+
+      {/* Crashes */}
+      {cr.recent.length > 0 && (
+        <div className="mt-6">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Crashes</div>
+          <div className="divide-y divide-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-xl overflow-hidden">
+            {cr.recent.slice(0, 6).map((c: any) => (
+              <div key={c.id} className="flex items-center gap-3 px-3.5 py-2.5">
+                <div className="w-24 flex-shrink-0 text-sm font-medium">{fmtEventDate(c.date)}</div>
+                <div className="flex-1 min-w-0 text-sm truncate">{eventPlace(c.city || c.location, c.state)}{c.city && c.location ? <span className="text-[#0B1E3F]/45"> · {c.location}</span> : null}</div>
+                <div className="flex gap-1.5 flex-shrink-0">
+                  {c.fatalities > 0 && <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#DC2626]/10 text-[#DC2626]">{c.fatalities} fatal</span>}
+                  {c.injuries > 0 && <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#F59E0B]/15 text-[#B45309]">{c.injuries} injur{c.injuries === 1 ? 'y' : 'ies'}</span>}
+                  {c.towAway && <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#0B1E3F]/5 text-[#0B1E3F]/70">Tow-away</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-[11px] text-[#0B1E3F]/50">FMCSA crash records don&apos;t say who was at fault.</div>
+        </div>
+      )}
+      <div className="mt-5 pt-4 border-t border-[#0B1E3F]/10 text-[11px] text-[#0B1E3F]/50">
+        Source: FMCSA Vehicle Inspection File and Crash File on data.transportation.gov. Inspections show up a few days after they happen. Driver names aren&apos;t public.
+      </div>
+    </div>,
+  );
+}
+
 function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?: any }) {
   const BASIC_LABELS: Record<string, string> = {
     unsafeDriving: 'Unsafe Driving',
