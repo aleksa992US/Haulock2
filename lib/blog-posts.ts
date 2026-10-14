@@ -36,6 +36,246 @@ const unsplashHero = (id: string, alt: string, credit: string, creditUrl: string
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    slug: 'empty-miles-deadhead-real-rate-per-mile',
+    title: 'Empty Miles: How to Calculate Deadhead and Your Real Rate per Mile',
+    description: 'A load that pays $2.59 a mile can really pay $2.47 once you count the drive to the pickup. Here is how to work out deadhead, fuel and break-even before you book.',
+    topic: 'Load planning',
+    publishedAt: '2026-10-12',
+    readingMinutes: 5,
+    hero: {
+      src: 'https://images.pexels.com/photos/6563903/pexels-photo-6563903.jpeg?auto=compress&cs=tinysrgb&w=2000',
+      alt: 'Red semi-truck with a white trailer on a desert highway below rocky hills',
+      credit: 'Pexels',
+      creditUrl: 'https://www.pexels.com/photo/red-semi-truck-on-the-road-6563903/',
+    },
+    haulockHelps: true,
+    haulockHelpsCopy: 'The Haulock Load planner does this math for you. Upload the rate con (or type the pickup, delivery and rate), add where the truck is, and you get a truck route on the map, empty and loaded miles, drive time with the required breaks, fuel at this week\'s diesel price for the region, and what is left of the rate after your costs.',
+    keywords: ['deadhead miles', 'empty miles trucking', 'rate per mile calculator', 'cost per mile trucking', 'is this load worth it'],
+    bodyHtml: `
+<p>Every load has two parts: the miles you get paid for, and the miles you drive to get there. The second part is deadhead, or empty miles. Brokers quote the rate on loaded miles, so a load can look great on the rate con and still lose money once the truck has to drive 150 miles empty to pick it up.</p>
+
+<h2>The two numbers that matter</h2>
+<p><strong>Loaded rate per mile</strong> is what the rate con implies: the rate divided by the miles from pickup to delivery. <strong>All-in rate per mile</strong> is what the truck actually earns: the rate divided by empty miles plus loaded miles.</p>
+<p>Take a load from Joliet, IL to Dallas, TX that pays $2,400 for 927 loaded miles. That is $2.59 a mile. If the truck is 44 miles away from the pickup, the trip is 971 miles, and the real rate is $2.47 a mile. Forty-four miles is a small deadhead. At 200 miles empty, the same load drops to about $2.13 a mile.</p>
+
+<h2>Fuel is the biggest cost on most loads</h2>
+<p>Fuel cost is simple to estimate: total miles divided by your miles per gallon, times the price of diesel. At 6.5 mpg, the 971-mile trip burns about 149 gallons. At $6.05 a gallon, that is roughly $904, and it applies to the empty miles too.</p>
+<p>Diesel prices are not the same everywhere. The U.S. Energy Information Administration publishes weekly on-highway diesel averages by region, and the gap between regions can be large. California usually runs well above the Gulf Coast. Use the price for where you will actually fuel, or your fuel card price if you know it.</p>
+
+<h2>Know your break-even per mile</h2>
+<p>Your break-even is your costs divided by total miles. Add fuel, driver pay and everything else that scales with miles: truck payment, insurance, maintenance, tires, tolls. If fuel is $904, the driver earns $0.65 a mile ($631 on this trip), and nothing else is counted yet, the break-even is about $1.58 a mile. The $2,400 load leaves about $865, or $0.89 a mile. Add your other costs per mile and that number shrinks.</p>
+<p>The point is not the exact figure. It is that you compare every load against the same yardstick: the all-in rate against your break-even.</p>
+
+<h2>Drive time sets how many days the load takes</h2>
+<p>Under the federal hours-of-service rules for property carriers, a driver can drive up to 11 hours after 10 consecutive hours off duty. A trip with about 15 hours of driving needs at least one 10-hour break, so it is a two-day run even though the miles look like a long day. That matters when you stack the next load.</p>
+
+<h2>Before you say yes</h2>
+<ol>
+  <li>Measure empty miles from where the truck really is, not where it will be "around noon".</li>
+  <li>Work out the all-in rate, not just the loaded rate.</li>
+  <li>Price fuel for the lane you are running.</li>
+  <li>Compare against your break-even per mile.</li>
+  <li>Ask for more when the deadhead is long. Many brokers will move on rate when you show the numbers.</li>
+</ol>
+`,
+  },
+
+  {
+    slug: 'owner-operator-vs-company-driver-who-pays-fuel',
+    title: 'Owner-Operator or Company Driver: Who Pays for Fuel, and What Is Left of the Rate',
+    description: 'Flat pay, per mile or a percentage of the rate, and who buys the fuel. The same load can leave very different money for the carrier and the driver.',
+    topic: 'Driver pay',
+    publishedAt: '2026-10-07',
+    readingMinutes: 5,
+    hero: {
+      src: 'https://images.pexels.com/photos/4744710/pexels-photo-4744710.jpeg?auto=compress&cs=tinysrgb&w=2000',
+      alt: 'Fuel pump with diesel and unleaded grades at a gas station',
+      credit: 'Pexels',
+      creditUrl: 'https://www.pexels.com/photo/gasoline-pump-in-a-gas-station-4744710/',
+    },
+    haulockHelps: true,
+    haulockHelpsCopy: 'In the Haulock Load planner, pick how the driver is paid (flat, per mile or a percentage of the rate) and tick "Driver pays for fuel" for owner-operators. You see what your company keeps and what the driver keeps after fuel, side by side, before you book the load.',
+    keywords: ['owner operator pay', 'percentage pay trucking', 'who pays fuel owner operator', 'driver pay per mile', 'dispatcher load math'],
+    bodyHtml: `
+<p>When a dispatcher or a small carrier looks at a load, the question is not only "does it pay?" but "who gets what?" The answer depends on two things: how the driver is paid, and who buys the fuel.</p>
+
+<h2>Three common ways drivers get paid</h2>
+<ul>
+  <li><strong>Per mile.</strong> A set amount for every mile, for example $0.65. Simple, and it pays the driver for empty miles too if you count them.</li>
+  <li><strong>Flat per load.</strong> A fixed amount for the trip, for example $900. Common for regional runs and dedicated lanes.</li>
+  <li><strong>Percentage of the rate.</strong> The driver gets a share of what the load pays, for example 88%. This is the usual setup for owner-operators leased to a carrier or working with a dispatcher.</li>
+</ul>
+
+<h2>Who buys the fuel changes everything</h2>
+<p>With a company driver, the company buys the fuel. Fuel and driver pay both come out of the rate, and the company keeps the rest.</p>
+<p>With an owner-operator on percentage pay, the driver usually buys the fuel. The company keeps its share of the rate and does not pay for fuel at all. The owner-operator pays fuel out of their share.</p>
+
+<h2>One load, two setups</h2>
+<p>Take a $2,400 load of 971 total miles, with about $904 of fuel at this week's prices.</p>
+<p><strong>Company driver at $0.65 a mile:</strong> the driver earns about $631. The company pays $904 for fuel and $631 for the driver, and keeps about $865.</p>
+<p><strong>Owner-operator at 88% who buys the fuel:</strong> the owner-operator's share is $2,112. After about $904 of fuel, they keep roughly $1,208. The company keeps the other 12%, or $288, and pays no fuel.</p>
+<p>Neither setup is better on its own. What matters is that both sides can see the numbers before the load is booked, so nobody is surprised when the settlement comes.</p>
+
+<h2>Questions to settle up front</h2>
+<ol>
+  <li><strong>Percentage of what?</strong> Agree whether the percentage applies to the linehaul only or to the full rate including fuel surcharge and extras.</li>
+  <li><strong>Are empty miles paid?</strong> On per-mile pay, decide whether deadhead counts.</li>
+  <li><strong>Who pays detention, lumpers and tolls?</strong> Write it down. These are where most settlement disputes start.</li>
+  <li><strong>Which fuel price?</strong> For planning, use the regional weekly average or the fuel card price the driver actually pays.</li>
+</ol>
+`,
+  },
+
+  {
+    slug: 'how-to-read-carrier-roadside-inspection-history',
+    title: 'How to Read a Carrier\'s Roadside Inspection History Before You Book',
+    description: 'Inspections and crashes tell you how a carrier really runs. Here is what to look for in the last 24 months, and what not to read too much into.',
+    topic: 'Safety data',
+    publishedAt: '2026-10-01',
+    readingMinutes: 6,
+    hero: {
+      src: 'https://images.pexels.com/photos/12261472/pexels-photo-12261472.jpeg?auto=compress&cs=tinysrgb&w=2000',
+      alt: 'White semi-truck on a highway under a stormy sky',
+      credit: 'Pexels',
+      creditUrl: 'https://www.pexels.com/photo/a-white-truck-on-the-road-12261472/',
+    },
+    haulockHelps: true,
+    haulockHelpsCopy: 'Every Haulock carrier report now lists each roadside inspection and crash from the last 24 months, from FMCSA\'s daily inspection and crash files: a month-by-month chart, the latest inspections with each violation, and whether a truck or driver was put out of service.',
+    keywords: ['carrier inspection history', 'roadside inspection levels', 'out of service rate', 'FMCSA crash history', 'vet a carrier safety'],
+    bodyHtml: `
+<p>Authority and insurance tell you a carrier is allowed to haul. Roadside inspections tell you how it actually runs. Every time a truck is pulled in at a scale or on the roadside, the result goes to FMCSA, and it stays on the carrier's record.</p>
+
+<h2>Inspection levels in plain English</h2>
+<ul>
+  <li><strong>Level I</strong> is a full inspection of the driver and the vehicle.</li>
+  <li><strong>Level II</strong> is a walk-around: driver and vehicle, without getting under the truck.</li>
+  <li><strong>Level III</strong> is driver only: license, medical card, hours of service.</li>
+  <li><strong>Level V</strong> is vehicle only, often done at the carrier's terminal.</li>
+</ul>
+<p>A Level III with no violations says the paperwork was in order. It says nothing about brakes. A clean Level I says much more.</p>
+
+<h2>What out of service means</h2>
+<p>An out-of-service result means the officer found a problem serious enough that the truck or the driver could not continue until it was fixed. Vehicle out-of-service is usually brakes, tires or lights. Driver out-of-service is usually hours of service, a missing or invalid license, or a medical card issue.</p>
+
+<h2>Five things to look for</h2>
+<ol>
+  <li><strong>The trend.</strong> Are out-of-service results getting less common, or more? A carrier that had a bad spring and a clean summer is different from one getting worse every month.</li>
+  <li><strong>Rates, not counts.</strong> A 300-truck fleet will have far more inspections than a 3-truck one. Compare the share of inspections that ended out of service. FMCSA shows national averages on each carrier's SAFER page.</li>
+  <li><strong>The same violation again and again.</strong> One brake problem is a bad day. Brakes on every other inspection is a maintenance program problem.</li>
+  <li><strong>Driver versus vehicle.</strong> Driver out-of-service results point at hiring and logs. Vehicle results point at the shop.</li>
+  <li><strong>Recent crashes with injuries.</strong> Look at when and where. Tow-away crashes are common on busy lanes. Several injury crashes in a short time are worth a question.</li>
+</ol>
+
+<h2>What not to read too much into</h2>
+<p><strong>Crash records do not say who was at fault.</strong> A carrier that was rear-ended at a light gets the same crash record as one that caused the crash. For some crash types FMCSA reviews preventability, but most records do not show it.</p>
+<p><strong>No inspections is not the same as a clean record.</strong> A new or very small carrier may have no history at all. That is not a red flag, but it means you are trusting other checks: authority age, insurance, identity and references.</p>
+<p><strong>Recent events weigh more.</strong> FMCSA's Safety Measurement System counts the last 24 months and gives the most recent events the most weight, so a carrier's scores can improve as old problems age out.</p>
+
+<h2>Timing</h2>
+<p>Inspections reach FMCSA a few days after they happen, sometimes longer. The record you see today may be missing last week's inspection.</p>
+`,
+  },
+
+  {
+    slug: 'email-alert-fmcsa-inspection-crash-your-dot',
+    title: 'Get an Email When FMCSA Posts an Inspection or Crash on Your DOT',
+    description: 'Brokers, shippers and insurers read your inspection record. Here is why you should see each new inspection and crash first, and what to do when one is wrong.',
+    topic: 'Your company',
+    publishedAt: '2026-09-24',
+    readingMinutes: 5,
+    hero: {
+      src: 'https://images.pexels.com/photos/6325904/pexels-photo-6325904.jpeg?auto=compress&cs=tinysrgb&w=2000',
+      alt: 'Person going through paperwork next to a laptop',
+      credit: 'Vanessa Garcia',
+      creditUrl: 'https://www.pexels.com/photo/photo-of-person-flipping-pages-6325904/',
+    },
+    haulockHelps: true,
+    haulockHelpsCopy: 'On Haulock paid plans, turn on monitoring for your own company and we check FMCSA every day. You get an email for each new roadside inspection and crash filed on your DOT, with the date, place, result and each violation, plus an email when your FMCSA record itself changes: insurance, authority, address, phone, email or officers.',
+    keywords: ['FMCSA inspection alert', 'CSA score monitoring', 'DataQs challenge inspection', 'carrier safety record', 'monitor my DOT number'],
+    bodyHtml: `
+<p>Most owners find out about a bad inspection when an insurer brings it up at renewal, or when a broker turns them down for a load. By then it has been on the record for weeks. You can do better by watching your own DOT the same way your customers do.</p>
+
+<h2>Who reads your record</h2>
+<ul>
+  <li><strong>Brokers and shippers</strong> check your inspections, out-of-service results and crashes before they tender loads.</li>
+  <li><strong>Insurers</strong> look at the same data when they price your renewal.</li>
+  <li><strong>FMCSA</strong> uses it in the Safety Measurement System. Recent events count the most, for 24 months.</li>
+</ul>
+
+<h2>Why seeing it first matters</h2>
+<p>Inspection reports reach FMCSA a few days after the stop. When you see each one as soon as it posts, you can act while the details are fresh: the driver remembers the stop, the repair receipt is in the truck, and there is time to fix a pattern before it becomes a trend.</p>
+
+<h2>When an inspection or crash is wrong</h2>
+<p>Mistakes happen. An inspection can land on the wrong DOT number, list a violation that was not there, or miss that a defect was fixed on the spot. FMCSA's <strong>DataQs</strong> system is how you ask for a review. Send the inspection report number, a clear explanation and your proof: photos, repair receipts, logs or a statement from the driver.</p>
+<p>Crash records do not show fault. For certain crash types, such as being rear-ended or hit while legally stopped, you can ask FMCSA through DataQs to review whether the crash was preventable. A not-preventable finding is noted on your record.</p>
+
+<h2>A simple routine for every new event</h2>
+<ol>
+  <li><strong>Read the report.</strong> Check the DOT number, the truck, the date and every violation.</li>
+  <li><strong>Talk to the driver</strong> the same day.</li>
+  <li><strong>Fix and document.</strong> Keep repair receipts and photos with the report number.</li>
+  <li><strong>Challenge errors</strong> in DataQs, with proof.</li>
+  <li><strong>Look for patterns.</strong> Two brake violations in a month is a shop conversation, not bad luck.</li>
+</ol>
+
+<h2>Watch the rest of your record too</h2>
+<p>Identity thieves hijack carriers by quietly changing the phone, email, address or officers on the FMCSA record, so broker verification calls go to them. A change you did not make is the first sign. Watching inspections and record changes together covers both the safety side and the fraud side of your DOT.</p>
+`,
+  },
+
+  {
+    slug: 'how-to-spot-edited-rate-con-pdf',
+    title: 'How to Spot an Edited Rate Con: Saved Versions, White-Out Boxes and Typed-On-Top Text',
+    description: 'A changed rate on a forwarded rate con leaves traces inside the PDF. Here is what editing looks like, and what is normal and should not worry you.',
+    topic: 'PDF forensics',
+    publishedAt: '2026-09-17',
+    readingMinutes: 6,
+    hero: {
+      src: 'https://images.pexels.com/photos/8441818/pexels-photo-8441818.jpeg?auto=compress&cs=tinysrgb&w=2000',
+      alt: 'Man reading a document next to a laptop',
+      credit: 'Kampus Production',
+      creditUrl: 'https://www.pexels.com/photo/a-man-looking-at-documents-8441818/',
+    },
+    haulockHelps: true,
+    haulockHelpsCopy: 'Haulock\'s PDF check opens the file itself: it rebuilds every saved version, shows the exact text that changed (for example $1,625.00 to $1,525.00), finds white-out boxes, typed-on-top text and hidden text, and highlights each spot on a preview of your PDF. It also tells you what is normal, like filled-in form fields and signatures. No AI, and the file is never stored on our servers.',
+    keywords: ['edited rate con', 'PDF tampering', 'rate confirmation fraud', 'detect edited PDF', 'dispatcher changed rate'],
+    bodyHtml: `
+<p>Here is how it usually goes. A broker sends a rate con for $1,625. Someone in the middle, often a dispatcher, opens the PDF in a free online editor or in Acrobat, changes the 6 to a 5, saves it, and forwards the $1,525 version to the driver. The driver hauls the load and never sees the real number.</p>
+<p>The good news is that editing a PDF almost always leaves traces inside the file.</p>
+
+<h2>PDFs keep the earlier version</h2>
+<p>When a PDF is edited and saved, most programs do not rewrite the whole file. They add the changes to the end and keep the original inside. That earlier version can be rebuilt and compared with the current one, page by page, so you can see exactly which text changed and when.</p>
+
+<h2>Signs of editing</h2>
+<ul>
+  <li><strong>Text that changed in a later save.</strong> The strongest sign: the earlier version said $1,625.00 and the current one says $1,525.00.</li>
+  <li><strong>A white box over text, with new text on top.</strong> The classic cover-up when an editor cannot change the original text directly.</li>
+  <li><strong>A typed text box sitting on the page.</strong> Some editors add a text box on top of the original number instead of changing it.</li>
+  <li><strong>Acrobat's edit marker.</strong> When text is retyped with Acrobat's Edit Text tool, it often leaves a marker on that text.</li>
+  <li><strong>Online editors in the file's history.</strong> Tools like free web PDF editors often write their name into the file.</li>
+  <li><strong>Hidden text</strong> drawn invisibly on a page that is not a scan.</li>
+  <li><strong>Changes after a digital signature,</strong> when the signature covers an earlier version only.</li>
+</ul>
+
+<h2>What is normal</h2>
+<p>Not every change is fraud, and a good check tells you that too.</p>
+<ul>
+  <li><strong>Filled-in form fields</strong> are meant to be filled in after the document is made.</li>
+  <li><strong>Digital signatures</strong> add a saved version. That is how signing works.</li>
+  <li><strong>Scanned pages with a text layer</strong> carry invisible text so they can be searched. That is OCR, not hiding.</li>
+  <li><strong>Accessibility tags and re-saves</strong> that do not change any visible text or drawing are harmless.</li>
+</ul>
+
+<h2>What to do when the check says edited</h2>
+<ol>
+  <li>Ask for the rate con straight from the broker, not forwarded.</li>
+  <li>Call the broker on the phone number FMCSA has for them, not the number on the PDF, and confirm the rate and load number.</li>
+  <li>Keep both versions of the file. If money is involved, the earlier version inside the PDF is evidence.</li>
+</ol>
+`,
+  },
+
+  {
     slug: 'spoofed-broker-emails-one-letter-thousands',
     title: 'Spoofed Broker Emails: How One Letter Costs You Thousands',
     description: 'Scammers forge broker email addresses to redirect carrier payments. The address looks right at a glance, but a single swapped character drains the account.',

@@ -71,6 +71,40 @@ function PageSlot({ routeId, current, children }: { routeId: string; current: st
   return <div style={{ display: isActive ? 'block' : 'none' }}>{children}</div>;
 }
 
+// ---------- one computer + one phone per login ----------
+// Each browser keeps a device id; /api/session/device holds one computer
+// slot and one phone/tablet slot per login. A fresh sign-in takes over its
+// slot; the device it replaced is signed out at its next check-in.
+const DEVICE_ID_KEY = 'haulock:deviceId';
+const FRESH_LOGIN_KEY = 'haulock:freshLogin';
+const SIGNED_OUT_REASON_KEY = 'haulock:signedOutReason';
+
+function deviceInfo(): { deviceId: string; kind: 'computer' | 'phone'; label: string } {
+  let id = '';
+  try { id = localStorage.getItem(DEVICE_ID_KEY) || ''; } catch {}
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) {
+    id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? crypto.randomUUID() : `d-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    try { localStorage.setItem(DEVICE_ID_KEY, id); } catch {}
+  }
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const touchMac = /Macintosh/.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1; // iPad
+  const phone = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || touchMac;
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || touchMac ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'device';
+  return { deviceId: id, kind: phone ? 'phone' : 'computer', label: `${browser} on ${os}` };
+}
+function markFreshLogin() {
+  try { sessionStorage.setItem(FRESH_LOGIN_KEY, String(Date.now())); } catch {}
+}
+// True once, within 15 minutes of starting a sign-in in this tab.
+function consumeFreshLogin(): boolean {
+  try {
+    const at = Number(sessionStorage.getItem(FRESH_LOGIN_KEY) || 0);
+    sessionStorage.removeItem(FRESH_LOGIN_KEY);
+    return at > 0 && Date.now() - at < 15 * 60_000;
+  } catch { return false; }
+}
+
 function userFromSession(u: any): any {
   if (!u) return null;
   const meta = u.user_metadata || {};
@@ -260,9 +294,10 @@ export default function Haulock() {
     });
     navigate('plan');
   };
+  // Signs out this device only; Settings → Your devices signs out the others.
   const logout = async () => {
     const sb = getSupabase();
-    if (sb) await sb.auth.signOut();
+    if (sb) await sb.auth.signOut({ scope: 'local' });
     setUser(null);
     navigate('landing');
   };
@@ -880,6 +915,8 @@ function Landing({ navigate, user }: any) {
           real searches. */}
       <InspectionShowcase navigate={navigate} />
 
+      <PlannerShowcase navigate={navigate} />
+
       <section id="your-company" className="py-24 px-6 bg-white border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
         <div className="max-w-7xl mx-auto">
           <div className="mb-12 max-w-3xl">
@@ -1060,6 +1097,7 @@ function Landing({ navigate, user }: any) {
               { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER and Company Census (authority, address, MCS-150 officers and contact details), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes) plus every roadside inspection and crash from FMCSA’s inspection and crash files, MC name lookup, authority, insurance, and identity-change history (name, address, phone), our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
               { q: 'Can I see who owns a carrier or broker?', a: 'Yes. Reports show the company officers listed on the FMCSA filing (the MCS-150, from FMCSA’s public Company Census), plus the phone and email on that filing and the date it was last updated. Before you book, call the number FMCSA has, not the one on the rate con, and ask for the owner by name. The names are only as current as the company’s last MCS-150 update, which we show next to them. If FMCSA has no names on file, the report says so.' },
               { q: 'Can I see a carrier’s roadside inspections and crashes?', a: 'Yes. Every carrier report lists the roadside inspections and crashes from the last 24 months, from FMCSA’s public inspection and crash files, which are refreshed daily: the date, where it happened, the inspection level, each violation, and whether a driver or truck was put out of service. A month-by-month chart shows whether things are getting better or worse. Inspections reach FMCSA a few days after they happen, and crash records don’t say who was at fault. On paid plans, we also email you each new inspection and crash filed on your own DOT.' },
+              { q: 'Can Haulock work out empty miles, fuel and profit on a load?', a: 'Yes. The Load planner takes the pickup, delivery and rate (type them, or upload the rate con and they fill in while the broker is checked) plus where the truck is now. It shows a truck route on the map, empty and loaded miles, drive time with the required 10-hour breaks, fuel at this week’s EIA diesel average for the region (or your own price), and what’s left after fuel, driver pay and other costs, with your break-even rate per mile. It handles company drivers and owner-operators: pay as a flat amount, per mile or a percentage, and who buys the fuel. US loads only. Free plans include 10 load plans a month; paid plans are unlimited.' },
               { q: 'Does it work for freight brokers?', a: `Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.${COI_CHECK_ON ? ' On paid plans, brokers can also check a carrier’s certificate of insurance against its FMCSA filings.' : ''}` },
               { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, the officer names on the FMCSA filing, and any web-reputation hits from trusted sources. Second, the PDF tamper check: drop the rate confirmation and we open the file, rebuild every saved version, and show exactly what text changed after it was made. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'How does the PDF tamper check work?', a: 'We open the PDF itself, not just its metadata. When a PDF is edited and saved, the earlier version often stays inside the file, so we rebuild every saved version and compare them page by page, showing the exact text that changed (before → after). We also look for white-out boxes drawn over text with new text on top, text boxes typed on top of the page, invisible text, changes made after a digital signature, Acrobat “Edit Text” markers, the same font embedded twice, online editors like iLovePDF, Sejda, or Smallpdf, impossible dates, stripped metadata, and JavaScript. Changed spots are highlighted on a preview of your PDF. We also tell you what’s normal, like filled-in form fields, signatures, the text layer on a scan, or a re-save that changed nothing, so an honest document isn’t flagged. No AI and no broker lookup: the file itself is checked, and it isn’t stored. Free plan: 3 scans a month. Paid plans: unlimited.' },
@@ -2562,6 +2600,7 @@ function Login({ navigate, loginAs }: any) {
   const [mode, setMode] = useState<'signin' | 'forgot'>('signin');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const configured = isSupabaseConfigured();
 
@@ -2574,6 +2613,11 @@ function Login({ navigate, loginAs }: any) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try { setLastProvider(localStorage.getItem('haulock:lastAuthProvider')); } catch {}
+    // Signed out because the account was used on another device.
+    try {
+      const reason = sessionStorage.getItem(SIGNED_OUT_REASON_KEY);
+      if (reason) { setNotice(reason); sessionStorage.removeItem(SIGNED_OUT_REASON_KEY); }
+    } catch {}
     // Surface auth errors bounced in from /auth/callback (OAuth + magic links).
     // Strip the param from the URL so a refresh doesn't re-show the message.
     try {
@@ -2598,6 +2642,7 @@ function Login({ navigate, loginAs }: any) {
     if (!configured) { loginAs(); return; }
     setLoading(true);
     const sb = getSupabase()!;
+    markFreshLogin();
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) { setError(error.message); return; }
@@ -2634,6 +2679,7 @@ function Login({ navigate, loginAs }: any) {
     // redirect there after exchanging the code for a session.
     const next = peekPostLoginRedirect();
     const callback = `${site}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`;
+    markFreshLogin();
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: callback },
@@ -2662,6 +2708,9 @@ function Login({ navigate, loginAs }: any) {
 
   return (
     <AuthShell title="Welcome back" subtitle="Log in to verify brokers and protect your loads." navigate={navigate}>
+      {notice && (
+        <div className="mb-4 p-3.5 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-sm text-[#92400E]">{notice}</div>
+      )}
       <form onSubmit={onSubmit} className="space-y-4">
         <Field label="Email" name="email" type="email" placeholder="you@company.com" autoComplete="email" required />
         <Field label="Password" name="password" type="password" placeholder="••••••••" autoComplete="current-password" required />
@@ -2717,6 +2766,7 @@ function Signup({ navigate, loginAs }: any) {
     setLoading(true);
     const sb = getSupabase()!;
     const site = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
+    markFreshLogin();
     const { data, error } = await sb.auth.signUp({
       email,
       password,
@@ -2742,6 +2792,7 @@ function Signup({ navigate, loginAs }: any) {
     const site = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
     const next = peekPostLoginRedirect();
     const callback = `${site}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`;
+    markFreshLogin();
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: callback },
@@ -8764,6 +8815,111 @@ function MiniStat({ label, value, good, warn }: any) {
   );
 }
 
+// Checks this device in (on load, every minute, when the tab comes back).
+// Signs it out if a newer sign-in on another device of the same kind took
+// its slot; tells the user when their sign-in replaced another device.
+function DeviceGuard({ userId, navigate, logout }: { userId: string; navigate: any; logout: () => Promise<void> }) {
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!userId || !isSupabaseConfigured()) return;
+    let stopped = false;
+    let hideTimer: any;
+    const check = async () => {
+      if (stopped) return;
+      const fresh = consumeFreshLogin();
+      try {
+        const r = await fetch('/api/session/device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...deviceInfo(), fresh }) });
+        if (!r.ok) return; // signed out or offline: normal auth handling takes over
+        const j = await r.json();
+        if (j.ok === false && j.reason === 'replaced') {
+          stopped = true;
+          const kind = j.by?.kind === 'phone' ? 'phone or tablet' : 'computer';
+          try {
+            sessionStorage.setItem(SIGNED_OUT_REASON_KEY, `You were signed out because this account was signed in on another ${kind}${j.by?.label ? ` (${j.by.label})` : ''}. Each login works on one computer and one phone at a time. Need more people on Haulock? Team and Fleet plans include more users.`);
+          } catch {}
+          await logout();
+          navigate('login');
+          return;
+        }
+        if (j.replaced) {
+          setToast(`You're signed in here, so we signed out your other ${j.replaced.kind === 'phone' ? 'phone or tablet' : 'computer'}${j.replaced.label ? ` (${j.replaced.label})` : ''}.`);
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => setToast(null), 10000);
+        }
+      } catch { /* try again next time */ }
+    };
+    check();
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') check(); }, 60_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stopped = true; clearInterval(timer); clearTimeout(hideTimer); document.removeEventListener('visibilitychange', onVisible); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+  if (!toast) return null;
+  return (
+    <div role="status" aria-live="polite" className="fixed bottom-5 left-5 z-[70] max-w-sm w-[calc(100%-2.5rem)] bg-white border border-[#0B1E3F]/15 rounded-2xl shadow-2xl p-4 flex items-start gap-3 text-[#0B1E3F]">
+      <div className="w-9 h-9 rounded-xl bg-[#0B1E3F] flex items-center justify-center flex-shrink-0"><Lock className="w-4 h-4 text-white" /></div>
+      <div className="flex-1 min-w-0 text-sm">{toast}</div>
+      <button onClick={() => setToast(null)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F]" aria-label="Dismiss"><X className="w-4 h-4" /></button>
+    </div>
+  );
+}
+
+// Settings → Profile: the computer and phone this login is signed in on.
+function DevicesCard() {
+  const res = useCachedFetch<{ devices: any; exempt?: boolean }>('session-devices', '/api/session/device');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const me = typeof window !== 'undefined' ? deviceInfo() : null;
+  const devices = res.data?.devices || {};
+  const signOutOthers = async () => {
+    if (!me) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/session/device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...me, action: 'signout_others' }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j?.error || 'Couldn’t sign out the other devices');
+      setMsg('Signed out everywhere except this device.');
+      invalidateCache('session-devices');
+    } catch (e: any) {
+      setMsg(e?.message || 'Couldn’t sign out the other devices');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const row = (kind: 'computer' | 'phone') => {
+    const d = devices[kind];
+    const isMe = d && me && d.id === me.deviceId;
+    return (
+      <div key={kind} className="flex items-center justify-between gap-3 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">{kind === 'computer' ? 'Computer' : 'Phone or tablet'}</div>
+          <div className="text-xs text-[#0B1E3F]/60 truncate">{d ? `${d.label}${isMe ? ' · this device' : ''} · last active ${timeAgo(d.seen || d.at)}` : 'Not signed in'}</div>
+        </div>
+        {isMe && <span className="px-2 py-0.5 rounded-full bg-[#16A34A]/10 text-[#16A34A] text-[11px] font-semibold">This device</span>}
+      </div>
+    );
+  };
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F] mt-6">
+      <div className="flex items-center gap-2 mb-1"><Lock className="w-4 h-4 text-[#0B1E3F]/60" /><h2 className="text-lg font-semibold">Your devices</h2></div>
+      {res.data?.exempt ? (
+        <p className="text-sm text-[#0B1E3F]/65">Admin accounts aren&apos;t limited to two devices.</p>
+      ) : (
+        <>
+          <p className="text-sm text-[#0B1E3F]/65">Each login works on one computer and one phone or tablet at a time. Signing in on another computer signs out the previous one. Team and Fleet plans give each person their own login.</p>
+          <div className="divide-y divide-[#0B1E3F]/5 mt-2">{row('computer')}{row('phone')}</div>
+          <div className="flex items-center gap-3 mt-3 flex-wrap">
+            <button onClick={signOutOthers} disabled={busy} className="px-4 py-2 border border-[#0B1E3F]/15 rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5 disabled:opacity-60">{busy ? 'Signing out…' : 'Sign out other devices'}</button>
+            {msg && <span className="text-xs text-[#0B1E3F]/65">{msg}</span>}
+          </div>
+          <p className="text-[11px] text-[#0B1E3F]/45 mt-3">See a device you don&apos;t recognize? Sign out other devices and change your password.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AppShell({ user, route, navigate, logout, children }: any) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Badges stay live: any page that changes alerts/tickets invalidates the
@@ -8881,6 +9037,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
         </header>
         <main className="p-6 md:p-10 max-w-7xl mx-auto text-[#0B1E3F]">{children}</main>
         <CompanyCheckToaster userId={user?.id} />
+        <DeviceGuard userId={user?.id} navigate={navigate} logout={logout} />
       </div>
     </div>
   );
@@ -9135,6 +9292,16 @@ function LoadPlanner({ navigate }: { navigate: any }) {
   const [rc, setRc] = useState<{ status: 'idle' | 'reading' | 'done' | 'error'; name?: string; error?: string; broker?: any; started?: number }>({ status: 'idle' });
   const [tick, setTick] = useState(0);
   const originRef = React.useRef<HTMLInputElement>(null);
+  // Re-plan by itself when a place is settled (picked, filled, located, or
+  // the box is left) — never per keystroke. `commitTick` marks those moments.
+  const [commitTick, setCommitTick] = useState(0);
+  const commit = () => setCommitTick((n) => n + 1);
+  const lastPlannedKey = React.useRef('');
+  // Fair-use pause (after many plans in a few minutes) and the Free plan's
+  // monthly limit, both set by /api/planner/route.
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [limitHit, setLimitHit] = useState<string | null>(null);
+  const [planUsage, setPlanUsage] = useState<{ used: number; limit: number | null } | null>(null);
 
   useEffect(() => { setSettings(loadPlannerSettings()); }, []);
   useEffect(() => {
@@ -9160,6 +9327,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
       if (d.delivery) { setDelivery(String(d.delivery)); setDeliveryPlace(null); }
       if (d.rate) setRate(String(d.rate));
       setPlan(null);
+      setCommitTick((n) => n + 1);
     };
     apply();
     window.addEventListener('haulock:planner-prefill', apply);
@@ -9177,6 +9345,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
     setPickup(rcData.origin || ''); setDelivery(rcData.destination || ''); setPickupPlace(null); setDeliveryPlace(null);
     if (rcData.rate_amount) setRate(String(rcData.rate_amount));
     setPlan(null);
+    commit();
     if (!origin) setTimeout(() => originRef.current?.focus(), 80);
   };
 
@@ -9211,28 +9380,38 @@ function LoadPlanner({ navigate }: { navigate: any }) {
     if (!navigator.geolocation) { setError('This browser can’t share its location. Type a city, ZIP or address instead.'); return; }
     setLocating(true); setError(null);
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setOriginPlace(null); setOrigin('My current location'); setLocating(false); },
+      (pos) => { setOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setOriginPlace(null); setOrigin('My current location'); setLocating(false); commit(); },
       () => { setLocating(false); setError('Location wasn’t shared. Type the truck’s city, ZIP or address instead.'); },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     );
   };
 
+  const routeBody = () => ({
+    origin: originCoords && origin === 'My current location' ? { ...originCoords, label: 'Truck’s current location' } : originPlace || origin,
+    pickup: pickupPlace || pickup,
+    delivery: deliveryPlace || delivery,
+  });
   const calculate = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (busy) return;
-    setBusy(true); setError(null);
+    if (busy || Date.now() < cooldownUntil) return;
+    const body = routeBody();
+    lastPlannedKey.current = JSON.stringify(body);
+    setBusy(true); setError(null); setLimitHit(null);
     try {
       const r = await fetch('/api/planner/route', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          origin: originCoords && origin === 'My current location' ? { ...originCoords, label: 'Truck’s current location' } : originPlace || origin,
-          pickup: pickupPlace || pickup,
-          delivery: deliveryPlace || delivery,
-        }),
+        body: JSON.stringify(body),
       });
       const j = await r.json();
+      if (r.status === 429 && j?.code === 'cooldown') {
+        lastPlannedKey.current = ''; // re-plan once the pause is over
+        setCooldownUntil(Date.now() + (Number(j.retryAfter) || 30) * 1000);
+        return;
+      }
+      if (r.status === 402 && j?.code === 'limit_reached') { setLimitHit(j.error); setPlanUsage({ used: j.used, limit: j.limit }); return; }
       if (!r.ok) throw new Error(j?.error || `Couldn’t plan the route (${r.status})`);
+      if (j.usage) setPlanUsage({ used: j.usage.used, limit: j.usage.limit });
       setPlan(j);
       track('load_planned', { routing: j.routingSource, hasOrigin: Boolean(j.hasOrigin) });
     } catch (err: any) {
@@ -9241,6 +9420,36 @@ function LoadPlanner({ navigate }: { navigate: any }) {
       setBusy(false);
     }
   };
+
+  // Auto re-plan: once pickup and delivery are set, a settled change to any
+  // place re-runs the route (half a second later, skipping repeats).
+  useEffect(() => {
+    if (!commitTick || !pickup.trim() || !delivery.trim() || Date.now() < cooldownUntil) return;
+    const t = setTimeout(() => {
+      if (JSON.stringify(routeBody()) !== lastPlannedKey.current) calculate();
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commitTick]);
+  // Count down the pause, then re-plan the latest places by itself.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const t = setInterval(() => {
+      setNowTick((n) => n + 1);
+      if (Date.now() >= cooldownUntil) {
+        clearInterval(t);
+        setCooldownUntil(0);
+        if (pickup.trim() && delivery.trim()) setCommitTick((n) => n + 1);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cooldownUntil]);
+  const cooldownSecs = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000)) : 0;
+  const freeLimit = plnLimits.loadPlans;
+  const freeUsed = planUsage?.used ?? (usage?.usage?.loadPlans || 0);
+  const showFreeCount = Boolean(usage) && !usage?.isAdmin && freeLimit != null;
 
   // Numbers (recomputed instantly when rate or costs change).
   const legs: any[] = plan?.legs || [];
@@ -9359,11 +9568,11 @@ function LoadPlanner({ navigate }: { navigate: any }) {
             )}
             <div>
               <label className={label}>Pickup</label>
-              <PlaceInput className={input} leading={dot('#0B1E3F')} value={pickup} picked={Boolean(pickupPlace)} onText={(v) => { setPickup(v); setPickupPlace(null); }} onPick={(pl) => { setPickup(pl.label); setPickupPlace(pl); }} placeholder="Start typing a US city or ZIP" required />
+              <PlaceInput className={input} leading={dot('#0B1E3F')} value={pickup} picked={Boolean(pickupPlace)} onText={(v) => { setPickup(v); setPickupPlace(null); }} onPick={(pl) => { setPickup(pl.label); setPickupPlace(pl); commit(); }} onCommit={commit} placeholder="Start typing a US city or ZIP" required />
             </div>
             <div>
               <label className={label}>Delivery</label>
-              <PlaceInput className={input} leading={dot('#FF6B35')} value={delivery} picked={Boolean(deliveryPlace)} onText={(v) => { setDelivery(v); setDeliveryPlace(null); }} onPick={(pl) => { setDelivery(pl.label); setDeliveryPlace(pl); }} placeholder="Start typing a US city or ZIP" required />
+              <PlaceInput className={input} leading={dot('#FF6B35')} value={delivery} picked={Boolean(deliveryPlace)} onText={(v) => { setDelivery(v); setDeliveryPlace(null); }} onPick={(pl) => { setDelivery(pl.label); setDeliveryPlace(pl); commit(); }} onCommit={commit} placeholder="Start typing a US city or ZIP" required />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -9380,7 +9589,7 @@ function LoadPlanner({ navigate }: { navigate: any }) {
           <PlannerStep n={2} title="Where’s the truck now?" hint={needTruck ? 'Last step: add the truck’s location to count the empty miles.' : 'Optional · used to count empty miles to the pickup.'} highlight={needTruck}>
             <div className="flex gap-2">
               <div className="flex-1 min-w-0">
-                <PlaceInput inputRef={originRef} className={input} leading={dot('#2563EB')} value={origin} picked={Boolean(originPlace || originCoords)} onText={(v) => { setOrigin(v); setOriginCoords(null); setOriginPlace(null); }} onPick={(pl) => { setOrigin(pl.label); setOriginPlace(pl); setOriginCoords(null); }} placeholder="US city, ZIP or address" />
+                <PlaceInput inputRef={originRef} className={input} leading={dot('#2563EB')} value={origin} picked={Boolean(originPlace || originCoords)} onText={(v) => { setOrigin(v); setOriginCoords(null); setOriginPlace(null); }} onPick={(pl) => { setOrigin(pl.label); setOriginPlace(pl); setOriginCoords(null); commit(); }} onCommit={commit} placeholder="US city, ZIP or address" />
               </div>
               <button type="button" onClick={useMyLocation} disabled={locating} title="Use this device’s location" className="px-3 border border-[#0B1E3F]/15 rounded-xl hover:bg-[#0B1E3F]/5 disabled:opacity-60 flex-shrink-0">
                 {locating ? <div className="w-4 h-4 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <Navigation className="w-4 h-4" />}
@@ -9439,10 +9648,30 @@ function LoadPlanner({ navigate }: { navigate: any }) {
 
           <div className="p-4 pt-2 space-y-2">
             {error && <div className="text-sm text-[#DC2626]">{error}</div>}
-            <button type="submit" disabled={busy} className="w-full py-3.5 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#F25A22] disabled:opacity-60 flex items-center justify-center gap-2 shadow-sm">
-              {busy ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Planning the route…</> : <><RouteIcon className="w-4 h-4" /> {plan ? 'Update the plan' : 'Plan this load'}</>}
+            {cooldownSecs > 0 && (
+              <div className="p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-xs text-[#92400E] flex items-center gap-2">
+                <Clock className="w-4 h-4 flex-shrink-0" />
+                <span>Quick pause so every dispatcher gets fast routes: you can plan again in <strong>{cooldownSecs}s</strong>. We&apos;ll re-plan your latest change by itself.</span>
+              </div>
+            )}
+            {limitHit && (
+              <div className="p-3 rounded-xl bg-[#FF6B35]/10 border border-[#FF6B35]/30 text-xs">
+                <div className="font-semibold text-[#C2410C] mb-1">Free plan limit reached</div>
+                <div className="text-[#0B1E3F]/70">{limitHit}</div>
+                <button type="button" onClick={() => navigate('plan')} className="mt-2 px-3 py-1.5 bg-[#0B1E3F] text-white rounded-full font-semibold">See plans</button>
+              </div>
+            )}
+            <button type="submit" disabled={busy || cooldownSecs > 0} className="w-full py-3.5 bg-[#FF6B35] text-white rounded-full text-sm font-semibold hover:bg-[#F25A22] disabled:opacity-60 flex items-center justify-center gap-2 shadow-sm">
+              {busy ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Planning the route…</>
+                : cooldownSecs > 0 ? <><Clock className="w-4 h-4" /> Ready in {cooldownSecs}s</>
+                : <><RouteIcon className="w-4 h-4" /> {plan ? 'Re-plan the route' : 'Plan this load'}</>}
             </button>
-            <div className="text-[10px] text-[#0B1E3F]/40 text-center">US loads only · city &amp; ZIP list from GeoNames (CC BY 4.0)</div>
+            {showFreeCount && (
+              <div className="text-[11px] text-center text-[#0B1E3F]/60">
+                {Math.max(0, (freeLimit as number) - freeUsed)} of {freeLimit} free load plans left this month · <button type="button" onClick={() => navigate('plan')} className="underline">unlimited on paid plans</button>
+              </div>
+            )}
+            <div className="text-[10px] text-[#0B1E3F]/40 text-center">Updates by itself as you change places and costs · US loads only · city &amp; ZIP list from GeoNames (CC BY 4.0)</div>
           </div>
         </form>
 
@@ -9529,7 +9758,10 @@ function LoadPlanner({ navigate }: { navigate: any }) {
                       : 'This week’s diesel price didn’t load. Enter yours in step 3.'}
                 </div>
                 <div className="flex items-center gap-1.5"><RouteIcon className="w-3 h-3" />
-                  {plan.routingSource === 'ors' ? 'Truck route by OpenRouteService.' : plan.routingSource === 'valhalla' ? 'Truck route by Valhalla (FOSSGIS, OpenStreetMap data).' : 'Miles estimated from straight-line distance with a typical road factor; drive time at 55 mph.'}
+                  {plan.routingSource === 'ors' ? 'Truck route by OpenRouteService.'
+                    : plan.routingSource === 'valhalla' ? 'Truck route by Valhalla (FOSSGIS, OpenStreetMap data).'
+                    : plan.routingSource === 'osrm' ? 'Road route by OSRM (FOSSGIS, OpenStreetMap data). Long trips use the general road route; truck-only road limits aren’t applied.'
+                    : 'Miles estimated from straight-line distance with a typical road factor; drive time at 55 mph.'}
                 </div>
               </div>
             </>
@@ -9555,9 +9787,11 @@ function LoadPlanner({ navigate }: { navigate: any }) {
 }
 
 // Type-ahead for US cities and ZIP codes (our own GeoNames list, /api/planner/suggest).
-function PlaceInput({ value, onText, onPick, placeholder, required, picked, className, leading, inputRef }: {
+function PlaceInput({ value, onText, onPick, onCommit, placeholder, required, picked, className, leading, inputRef }: {
   value: string; onText: (v: string) => void; onPick: (p: any) => void; placeholder: string; required?: boolean; picked?: boolean; className: string;
   leading?: React.ReactNode; inputRef?: React.Ref<HTMLInputElement>;
+  // Typed text is final (left the box, or Enter without a suggestion).
+  onCommit?: () => void;
 }) {
   const [items, setItems] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
@@ -9589,8 +9823,9 @@ function PlaceInput({ value, onText, onPick, placeholder, required, picked, clas
         value={value}
         onChange={(e) => { onText(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => setTimeout(() => { setOpen(false); if (!picked) onCommit?.(); }, 150)}
         onKeyDown={(e) => {
+          if (e.key === 'Enter' && (!open || items.length === 0 || active < 0)) { onCommit?.(); return; }
           if (!open || items.length === 0) return;
           if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(items.length - 1, a + 1)); }
           else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
@@ -9784,7 +10019,7 @@ function Dashboard({ navigate, user }: any) {
   const usage = usageRes.data;
   const plan = getPlan(user?.plan || usage?.plan?.id);
   const isAdmin = Boolean(usage?.isAdmin);
-  const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, pdfForensics: 0, coiChecks: 0, watchlist: 0 };
+  const u = usage?.usage || { fmcsaLookups: 0, rateConScans: 0, pdfForensics: 0, coiChecks: 0, watchlist: 0, loadPlans: 0 };
   const showCoi = COI_CHECK_ON || isAdmin;
 
   const all = lookups || [];
@@ -9852,6 +10087,7 @@ function Dashboard({ navigate, user }: any) {
     { tab: 'ratecon', title: 'Scan a rate con', desc: 'We find the broker on it and check them.', icon: FileText, q: quota(u.rateConScans, plan.limits.rateConScans) },
     { tab: 'forensics', title: 'Check a PDF for edits', desc: 'See what changed and where, on the page.', icon: ScanLine, q: quota(u.pdfForensics ?? 0, plan.limits.pdfForensics) },
     ...(showCoi ? [{ tab: 'coi', title: 'Check a COI', desc: 'Certificate vs the carrier’s FMCSA filings.', icon: ShieldCheck, q: quota(u.coiChecks ?? 0, plan.limits.coiChecks) }] : []),
+    { tab: 'planner', title: 'Plan a load', desc: 'Empty miles, fuel and what’s left of the rate.', icon: RouteIcon, q: quota(u.loadPlans ?? 0, plan.limits.loadPlans) },
   ];
 
   return (
@@ -9872,9 +10108,9 @@ function Dashboard({ navigate, user }: any) {
       </div>
 
       {/* Tools */}
-      <div className={`grid gap-3 sm:grid-cols-2 ${tools.length === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+      <div className={`grid gap-3 sm:grid-cols-2 ${tools.length >= 5 ? 'lg:grid-cols-5' : tools.length === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         {tools.map((t) => (
-          <button key={t.tab} onClick={() => navigate('verify', { tab: t.tab })} className="group text-left bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow hover:border-[#FF6B35]/50 hover:-translate-y-0.5 transition flex flex-col">
+          <button key={t.tab} onClick={() => (t.tab === 'planner' ? navigate('planner') : navigate('verify', { tab: t.tab }))} className="group text-left bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow hover:border-[#FF6B35]/50 hover:-translate-y-0.5 transition flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="w-10 h-10 rounded-xl bg-[#0B1E3F] flex items-center justify-center group-hover:bg-[#FF6B35] transition"><t.icon className="w-5 h-5 text-white" /></div>
               <ArrowRight className="w-4 h-4 text-[#0B1E3F]/25 group-hover:text-[#FF6B35] group-hover:translate-x-0.5 transition" />
@@ -12606,6 +12842,96 @@ function CarrierReport({ report, navigate }: any) {
 // inspection breakdown, and crash detail we pulled from FMCSA SMS. The
 // data is FMCSA's own; we cite the source clearly and link the canonical
 // SMS Overview page so the user can verify directly.
+// Homepage example of the Load planner (made-up load and numbers).
+function PlannerShowcase({ navigate }: { navigate: any }) {
+  return (
+    <section id="load-planner" className="py-24 px-6 bg-white border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
+      <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+        {/* Example planner card */}
+        <div className="order-2 lg:order-1 bg-[#F5F3EE] rounded-3xl p-5 md:p-6 border border-[#0B1E3F]/10 card-shadow-lg">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-semibold">Joliet, IL → Dallas, TX</div>
+            <span className="px-2 py-0.5 rounded-full bg-white text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/60">Example</span>
+          </div>
+          {/* Stylized route (illustration, not a real map) */}
+          <div className="relative rounded-2xl overflow-hidden bg-[#E8EEE6] border border-[#0B1E3F]/10" style={{ height: 210 }} aria-hidden="true">
+            <svg viewBox="0 0 400 210" className="absolute inset-0 w-full h-full">
+              <defs>
+                <pattern id="pl-grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#0B1E3F" strokeOpacity="0.06" /></pattern>
+              </defs>
+              <rect width="400" height="210" fill="url(#pl-grid)" />
+              <path d="M30 150 C 90 120, 140 170, 210 120 S 330 60, 380 40" fill="none" stroke="#9DB4C8" strokeWidth="2" strokeOpacity="0.5" />
+              <path d="M318 30 C 310 36, 300 42, 290 50" fill="none" stroke="#fff" strokeWidth="7" strokeLinecap="round" />
+              <path d="M318 30 C 310 36, 300 42, 290 50" fill="none" stroke="#2563EB" strokeWidth="3.5" strokeDasharray="5 5" strokeLinecap="round" />
+              <path d="M290 50 C 270 80, 250 90, 230 110 S 170 150, 150 165 S 110 180, 92 182" fill="none" stroke="#fff" strokeWidth="9" strokeLinecap="round" />
+              <path d="M290 50 C 270 80, 250 90, 230 110 S 170 150, 150 165 S 110 180, 92 182" fill="none" stroke="#FF6B35" strokeWidth="5" strokeLinecap="round" />
+              <circle cx="318" cy="30" r="11" fill="#2563EB" stroke="#fff" strokeWidth="3" />
+              <circle cx="290" cy="50" r="12" fill="#0B1E3F" stroke="#fff" strokeWidth="3" />
+              <text x="290" y="54" textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff">P</text>
+              <circle cx="92" cy="182" r="12" fill="#FF6B35" stroke="#fff" strokeWidth="3" />
+              <text x="92" y="186" textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff">D</text>
+            </svg>
+            <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+              <span className="px-2.5 py-1 rounded-full bg-white/95 shadow text-[11px] font-semibold flex items-center gap-1.5"><span className="w-3.5 border-t-[3px] border-dashed border-[#2563EB]" />44 mi empty</span>
+              <span className="px-2.5 py-1 rounded-full bg-white/95 shadow text-[11px] font-semibold flex items-center gap-1.5"><span className="w-3.5 border-t-[3px] border-[#FF6B35]" />927 mi loaded</span>
+              <span className="px-2.5 py-1 rounded-full bg-white/95 shadow text-[11px] font-semibold">15h 10m driving</span>
+            </div>
+          </div>
+          <div className="mt-4 rounded-2xl p-4 text-white" style={{ background: 'linear-gradient(135deg, #0B1E3F 0%, #14305F 100%)' }}>
+            <div className="text-[10px] mono uppercase tracking-wider text-white/60">What&apos;s left after costs</div>
+            <div className="flex items-end justify-between gap-3">
+              <div className="text-4xl font-semibold">$865</div>
+              <div className="text-right text-xs text-white/75 leading-relaxed">Rate $2,400<br />Fuel −$904<br />Driver ($0.65/mi) −$631</div>
+            </div>
+            <div className="flex h-2.5 rounded-full overflow-hidden mt-3" style={{ gap: 2 }}>
+              <div style={{ flexGrow: 904, background: '#F59E0B' }} />
+              <div style={{ flexGrow: 631, background: '#64748B' }} />
+              <div style={{ flexGrow: 865, background: '#16A34A' }} />
+            </div>
+            <div className="text-[11px] text-white/60 mt-2">$0.89/mi after costs · break-even $1.58/mi</div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-3">
+            {[
+              { k: 'Rate per mile', v: '$2.59', s: '$2.47 with empty miles' },
+              { k: 'Diesel', v: '$6.05', s: 'EIA weekly, by region' },
+              { k: 'Drive time', v: '15h 10m', s: '1 required 10-hr break' },
+            ].map((x) => (
+              <div key={x.k} className="p-2.5 rounded-xl bg-white border border-[#0B1E3F]/10">
+                <div className="text-[9px] mono uppercase tracking-wider text-[#0B1E3F]/55">{x.k}</div>
+                <div className="text-base font-semibold">{x.v}</div>
+                <div className="text-[10px] text-[#0B1E3F]/55">{x.s}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 text-[10px] text-[#0B1E3F]/45">Example numbers. Real plans use truck routes and this week&apos;s diesel prices.</div>
+        </div>
+
+        <div className="order-1 lg:order-2">
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— For dispatchers &amp; owner-operators</div>
+          <h2 className="text-4xl md:text-5xl leading-[1.05] mb-6">Is this load <span className="serif italic">worth it?</span></h2>
+          <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
+            Drop the rate con, add where the truck is, and see the real numbers before you book: empty miles, loaded miles, drive time, fuel at this week&apos;s diesel price, and what&apos;s left of the rate.
+          </p>
+          <ul className="space-y-3 mb-6 text-[#0B1E3F]/80">
+            <li className="flex items-start gap-3"><Upload className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-1" /><span>Upload the rate con: pickup, delivery and rate fill in, and the broker gets checked at the same time.</span></li>
+            <li className="flex items-start gap-3"><RouteIcon className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-1" /><span>Truck route on the map, with empty miles from the truck&apos;s location to the pickup.</span></li>
+            <li className="flex items-start gap-3"><Fuel className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-1" /><span>Fuel at this week&apos;s EIA diesel average for the region, or your own fuel card price.</span></li>
+            <li className="flex items-start gap-3"><Truck className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-1" /><span>Company or owner-operator: driver pay as a flat amount, per mile or a % of the rate, and who buys the fuel.</span></li>
+            <li className="flex items-start gap-3"><Clock className="w-4 h-4 text-[#FF6B35] flex-shrink-0 mt-1" /><span>Drive time with the required 10-hour breaks, and your break-even rate per mile.</span></li>
+          </ul>
+          <p className="text-[#0B1E3F]/55 text-sm mb-8 leading-relaxed">US loads only. Type-ahead for every US city and ZIP code.</p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
+              Sign up free &amp; plan a load <ArrowRight className="w-4 h-4" />
+            </button>
+            <div className="text-xs text-[#0B1E3F]/55 self-center">10 load plans/month free · unlimited on paid plans</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // Homepage example of the report's inspections & crashes panel. All data
 // here is made up (marketing never shows a real company's record).
 const SHOWCASE_MONTHS = {
@@ -12632,7 +12958,7 @@ function InspectionShowcase({ navigate }: { navigate: any }) {
     <section id="inspections" className="py-24 px-6 bg-[#F5F3EE] border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
       <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
         <div>
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Inspections &amp; crashes</div>
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Inspections, crashes &amp; alerts</div>
           <h2 className="text-4xl md:text-5xl leading-[1.05] mb-6">Every roadside inspection. <span className="serif italic">Every crash.</span></h2>
           <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
             Totals only tell you so much. Every Haulock carrier report lists each roadside inspection and crash from the last 24 months, straight from FMCSA&apos;s daily files: when, where, what the officer found, and whether a truck or driver was put out of service.
@@ -12641,8 +12967,20 @@ function InspectionShowcase({ navigate }: { navigate: any }) {
             <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>See whether out-of-service results are getting better or worse, month by month.</span></li>
             <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] flex-shrink-0 mt-2" /><span>Open any inspection to see each violation: brakes, lights, tires, hours of service, speeding.</span></li>
             <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#0B1E3F] flex-shrink-0 mt-2" /><span>Crashes by date and place, with injuries, fatalities and tow-aways.</span></li>
-            <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0 mt-2" /><span>Your own company: an email for each new inspection and crash filed on your DOT (paid plans).</span></li>
           </ul>
+          <div className="mb-6 p-5 rounded-2xl bg-white border-2 border-[#FF6B35]/40 card-shadow">
+            <div className="flex items-center gap-2 text-xs mono uppercase tracking-wider text-[#FF6B35] font-semibold"><Bell className="w-4 h-4" /> Email alerts for your own company</div>
+            <div className="mt-2 text-lg font-semibold leading-snug">Know as soon as FMCSA posts a new inspection or crash on your DOT.</div>
+            <p className="text-sm text-[#0B1E3F]/70 mt-1.5">We check FMCSA&apos;s files every day. When a new roadside inspection or crash shows up on your DOT, you get an email with the date, place, result and each violation, so you can fix it, tell your insurer, or challenge it through FMCSA&apos;s DataQs before it weighs on your safety scores.</p>
+            <div className="mt-4 rounded-xl border border-[#0B1E3F]/10 bg-[#F5F3EE] p-3.5 text-sm">
+              <div className="text-[11px] text-[#0B1E3F]/50">Haulock · Your company · FMCSA safety record</div>
+              <div className="font-semibold mt-0.5">Out-of-service inspection on your DOT</div>
+              <div className="mt-2 flex items-center justify-between gap-2 flex-wrap"><span><strong>Oct 2</strong> <span className="text-[#0B1E3F]/60">· Joplin, MO · Level II walk-around</span></span><span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#DC2626]/10 text-[#DC2626]">Out of service · vehicle</span></div>
+              <div className="text-xs text-[#0B1E3F]/65 mt-1">• Brake out of adjustment <strong className="text-[#DC2626]">(out of service)</strong></div>
+              <div className="text-xs text-[#0B1E3F]/65">• Inoperable required lamp</div>
+            </div>
+            <div className="mt-3 text-[11px] text-[#0B1E3F]/55">Paid plans · plus an email when your FMCSA record changes: insurance, authority, address, phone, email or officers. Example data.</div>
+          </div>
           <p className="text-[#0B1E3F]/55 text-sm mb-8 leading-relaxed">Inspections reach FMCSA a few days after they happen. Crash records don&apos;t say who was at fault.</p>
           <div className="flex flex-col sm:flex-row gap-3">
             <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
@@ -15579,7 +15917,7 @@ function SettingsPage({ user, navigate, initialTab }: any) {
           ))}
         </div>
         <div className="md:col-span-3 bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
-          {tab === 'profile' && <ProfileTab user={user} />}
+          {tab === 'profile' && <><ProfileTab user={user} /><DevicesCard /></>}
           {tab === 'billing' && <BillingTab user={user} navigate={navigate} planId={planId} plan={plan} upgradeTarget={upgradeTarget} />}
           {tab === 'team' && <TeamTab navigate={navigate} user={user} />}
           {tab === 'api' && <ApiKeysTab user={user} navigate={navigate} />}

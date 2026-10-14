@@ -184,6 +184,7 @@ const jsonLd = {
         'Rate confirmation PDF analysis',
         'PDF tamper detection: saved versions compared page by page, white-out boxes, typed-on-top and hidden text',
         'Web reputation scan across 50+ trusted news outlets',
+        'Load planner: truck routes, empty miles, drive time with required breaks, regional diesel prices and profit per load',
         'Daily FMCSA monitoring of your own company record with email alerts, including new inspections and crashes',
       ],
     },

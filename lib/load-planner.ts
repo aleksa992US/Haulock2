@@ -7,8 +7,10 @@
 //             OpenStreetMap Nominatim (light use only).
 //   Route   — OpenRouteService truck profile (driving-hgv, ORS_API_KEY);
 //             else the public Valhalla server run by FOSSGIS (truck
-//             costing, no key, fair use); else straight-line distance × a
-//             road factor, clearly marked as an estimate.
+//             costing, no key, fair use; trips up to ~930 straight-line
+//             miles); else FOSSGIS's public OSRM road router (no distance
+//             limit, not truck-specific) for long hauls; else straight-line
+//             distance × a road factor, clearly marked as an estimate.
 //   Diesel  — EIA API v2 (EIA_API_KEY); without a key, EIA's weekly
 //             on-highway diesel table on eia.gov.
 
@@ -26,7 +28,7 @@ export type PlannerRoute = {
   legs: PlannerLeg[];
   geometry: [number, number][][];      // one [lng, lat] line per leg
   routing: 'truck' | 'estimate';
-  routingSource: 'ors' | 'valhalla' | 'estimate';
+  routingSource: 'ors' | 'valhalla' | 'osrm' | 'estimate';
 };
 
 async function fetchJson(url: string, init?: RequestInit): Promise<any> {
@@ -218,6 +220,10 @@ export async function routeBetween(points: PlannerPoint[]): Promise<PlannerRoute
     try {
       const v = await valhallaRoute(points);
       if (v) return v;
+    } catch { /* too long for the public truck router, or busy */ }
+    try {
+      const o = await osrmRoute(points);
+      if (o) return o;
     } catch { /* fall back to the estimate */ }
   }
   const legs: PlannerLeg[] = [];
@@ -246,6 +252,29 @@ function decodePolyline6(str: string): [number, number][] {
 }
 
 const routeCache = new Map<string, { at: number; value: PlannerRoute }>();
+
+// FOSSGIS's public OSRM (the router behind openstreetmap.org directions):
+// road routes of any length, one request per leg so each leg keeps its own
+// line. Requests are spaced to stay within its fair-use limit.
+async function osrmRoute(points: PlannerPoint[]): Promise<PlannerRoute | null> {
+  const key = 'osrm:' + points.map((p) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`).join(';');
+  const hit = routeCache.get(key);
+  if (hit && Date.now() - hit.at < 6 * 60 * 60 * 1000) return { ...hit.value, points };
+  const legs: PlannerLeg[] = [];
+  const geometry: [number, number][][] = [];
+  for (let i = 1; i < points.length; i++) {
+    if (i > 1) await new Promise((r) => setTimeout(r, 1000));
+    const a = points[i - 1], b = points[i];
+    const j = await fetchJson(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson`, { headers: { 'User-Agent': UA } });
+    const r = j?.code === 'Ok' ? j.routes?.[0] : null;
+    if (!r?.geometry?.coordinates?.length) return null;
+    legs.push({ miles: Math.round((Number(r.distance) / 1609.344) * 10) / 10, hours: Math.round((Number(r.duration) / 3600) * 100) / 100 });
+    geometry.push(thin(r.geometry.coordinates as [number, number][], 400));
+  }
+  const value: PlannerRoute = { points, legs, geometry, routing: 'truck', routingSource: 'osrm' };
+  routeCache.set(key, { at: Date.now(), value });
+  return value;
+}
 
 // Public Valhalla instance (FOSSGIS e.V., OpenStreetMap data), truck costing.
 async function valhallaRoute(points: PlannerPoint[]): Promise<PlannerRoute | null> {

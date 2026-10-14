@@ -48,6 +48,8 @@ export async function GET() {
       pdfForensics: forensics.count ?? 0,
       coiChecks: coi.count ?? 0,
       watchlist: ((watchlist as any).data || []).filter((w: any) => w.own !== true).length,
+      // Load planner: new loads planned this month (app_metadata.planner).
+      loadPlans: (user.app_metadata as any)?.planner?.m === new Date().toISOString().slice(0, 7) ? Number((user.app_metadata as any).planner.n) || 0 : 0,
     },
     periodStart: since,
   });
