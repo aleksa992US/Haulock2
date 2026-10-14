@@ -5,6 +5,8 @@ import { isAdmin } from '@/lib/admin';
 import { getStripe, planFromPriceId } from '@/lib/stripe';
 import { cancelReasonOf, listHaulockSubscriptions, paidSubscriptionIds } from '@/lib/billing';
 import { currentPlansFor } from '@/lib/teams';
+import { groupSubscriptionsByUser } from '@/lib/billing-sync';
+import { getServiceSupabase } from '@/lib/supabase/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -132,11 +134,28 @@ export async function GET() {
   // Gross paid = sum of successful charges. Refunded = sum of amount_refunded
   // across all charges. Net = paid - refunded.
   const lifetimeByCustomer: Record<string, { paid: number; refunded: number }> = {};
-  // The plan each person is on in the app today, so canceled rows can show
-  // they're back on Free.
-  const planNowPromise = currentPlansFor(Array.from(new Set(
-    recentSubs.map((s) => s.metadata?.user_id).filter(Boolean) as string[]
-  ))).catch(() => new Map<string, string>());
+  // Which Haulock account each row belongs to now, matched like the Users
+  // tab (user_id tag → Stripe customer id → email), and that account's plan.
+  // A deleted account reads as deleted; one signed up again as re-created.
+  const accountsPromise = (async () => {
+    const svc = getServiceSupabase();
+    if (!svc) return null;
+    const all: any[] = [];
+    for (let page = 1; ; page += 1) {
+      const { data, error } = await svc.auth.admin.listUsers({ perPage: 1000, page });
+      if (error) return null;
+      const batch = data?.users || [];
+      all.push(...batch);
+      if (batch.length < 1000) break;
+    }
+    const { byUser } = groupSubscriptionsByUser(recentSubs, all.map((u) => ({
+      id: u.id, email: u.email || null, stripeCustomerId: u.user_metadata?.stripe_customer_id || null,
+    })));
+    const userBySub = new Map<string, string>();
+    for (const [uid, list] of Array.from(byUser.entries())) for (const s of list) userBySub.set(s.id, uid);
+    const plans = await currentPlansFor(Array.from(new Set(userBySub.values())));
+    return { userBySub, plans };
+  })().catch(() => null);
   await Promise.all(customerIds.map(async (cid) => {
     try {
       const charges = await stripe.charges.list({ customer: cid, limit: 100 });
@@ -151,7 +170,7 @@ export async function GET() {
       lifetimeByCustomer[cid] = { paid: 0, refunded: 0 };
     }
   }));
-  const planNow = await planNowPromise;
+  const accounts = await accountsPromise;
 
   const recent = recentSubs.map((s) => {
     const priceId = s.items.data[0]?.price?.id;
@@ -184,8 +203,17 @@ export async function GET() {
       canceled_at: (s as any).canceled_at ?? null,
       ended_at: (s as any).ended_at ?? null,
       cancel_reason: cancelReasonOf(s),
-      // null when the user was deleted or the subscription has no user tag.
-      plan_now: s.metadata?.user_id ? planNow.get(s.metadata.user_id) ?? null : null,
+      ...(() => {
+        const uid = accounts?.userBySub.get(s.id) ?? null;
+        const tagged = s.metadata?.user_id || null;
+        return {
+          plan_now: uid ? accounts?.plans.get(uid) ?? null : null,
+          // null when accounts couldn't be read.
+          account: !accounts ? null
+            : uid ? (tagged && tagged !== uid ? 'recreated' : 'active')
+            : tagged ? 'deleted' : 'unknown',
+        };
+      })(),
       promo_code: s.metadata?.promo_code ?? null,
     };
   });

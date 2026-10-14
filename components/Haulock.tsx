@@ -5155,6 +5155,16 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isPaid = PAID_PLANS.has(current);
+  // What Stripe says, so the warning is right even when the plan stored on
+  // the account is out of date. null = still checking or couldn't check.
+  const [sub, setSub] = useState<{ has: boolean; plan?: string; periodEnd?: number | null } | null>(null);
+  useEffect(() => {
+    if (step !== 'confirm-delete' || sub) return;
+    fetch('/api/stripe/subscription')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j) setSub({ has: Boolean(j.hasSubscription), plan: j.plan, periodEnd: j.currentPeriodEnd ?? null }); })
+      .catch(() => {});
+  }, [step, sub]);
 
   const startLeave = () => {
     setError(null);
@@ -5187,7 +5197,7 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Leaving Haulock?</div>
         <p className="text-sm text-[#0B1E3F]/65 max-w-2xl mb-3">
           {isPaid
-            ? 'You can cancel your paid plan or delete your account entirely. We\'ll offer you the Free plan first — it\'s genuinely free.'
+            ? 'You can cancel your paid plan or delete your account entirely. Deleting your account also cancels your subscription. We\'ll offer you the Free plan first — it\'s genuinely free.'
             : 'You can permanently delete your account. All your lookups, watchlist, and reports will be removed.'}
         </p>
         <button onClick={startLeave} className="px-4 py-2 text-sm text-[#DC2626] hover:bg-[#DC2626]/10 rounded-full transition">
@@ -5205,7 +5215,7 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
             <CheckCircle2 className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
             <div>
               <div className="text-lg font-semibold text-[#0B1E3F] mb-1">Try Free before you leave — it&apos;s actually free.</div>
-              <div className="text-sm text-[#0B1E3F]/70">5 broker/carrier verifications per month. No card required, no expiration. Keep your lookup history, alerts, and watchlist. Come back to a paid plan anytime.</div>
+              <div className="text-sm text-[#0B1E3F]/70">{PLANS.free.limits.fmcsaLookups} broker/carrier verifications per month. No card required, no expiration. Keep your lookup history, alerts, and watchlist. Come back to a paid plan anytime.</div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -5229,6 +5239,21 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
             <div className="text-xs mono text-[#0B1E3F]/55">Type <span className="px-1.5 py-0.5 bg-[#0B1E3F]/10 rounded">DELETE</span> to confirm.</div>
           </div>
         </div>
+        {sub?.has ? (
+          <div className="mb-4 p-4 bg-white border border-[#DC2626]/25 rounded-xl text-sm text-[#0B1E3F]">
+            <div className="font-semibold mb-1">This also cancels your {sub.plan ? getPlan(sub.plan).label : 'paid'} subscription.</div>
+            <ul className="list-disc pl-5 space-y-0.5 text-[#0B1E3F]/75">
+              <li>Your subscription is canceled right away and you won&apos;t be charged again.</li>
+              <li>Paid access ends now{sub.periodEnd ? `, even though your current period runs to ${new Date(sub.periodEnd * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}.</li>
+              <li>Payments already made are not refunded (see our Terms).</li>
+            </ul>
+            <div className="text-xs text-[#0B1E3F]/60 mt-2">
+              Only want to stop paying? <button onClick={onSwitchToFree} disabled={busy} className="text-[#16A34A] font-medium underline underline-offset-2 hover:text-[#16A34A]/80">Switch to the Free plan instead</button> and keep your account.
+            </div>
+          </div>
+        ) : isPaid || !sub ? (
+          <div className="mb-4 text-xs text-[#0B1E3F]/65">If you have a paid subscription, deleting your account cancels it too, and you won&apos;t be charged again.</div>
+        ) : null}
         <input
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
@@ -5239,7 +5264,7 @@ function LeaveAccountSection({ user, current, onSwitchToFree }: any) {
         <div className="flex flex-wrap gap-2">
           <button onClick={deleteAccount} disabled={busy || typed.trim().toUpperCase() !== 'DELETE'} className="px-5 py-2.5 bg-[#DC2626] text-white rounded-full text-sm font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-60 flex items-center gap-2">
             {busy && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-            {busy ? 'Deleting…' : 'Delete my account forever'}
+            {busy ? 'Deleting…' : sub?.has ? 'Delete account and cancel subscription' : 'Delete my account forever'}
           </button>
           <button onClick={() => { setStep('idle'); setTyped(''); setError(null); }} disabled={busy} className="px-5 py-2.5 text-[#0B1E3F]/70 hover:text-[#0B1E3F] text-sm transition">Cancel</button>
         </div>
@@ -5810,15 +5835,21 @@ function StripeOverviewCard() {
                     {s.customer_email && s.customer_name && (
                       <div className="text-[10px] text-[#0B1E3F]/55 truncate">{s.customer_email}{s.promo_code ? ` · ${s.promo_code}` : ''}</div>
                     )}
+                    {s.account === 'deleted' && (
+                      <span className="inline-block mt-0.5 px-1.5 py-px rounded-full bg-[#DC2626]/10 text-[#DC2626] text-[9px] mono uppercase tracking-wider" title="The Haulock account for this subscription was deleted">Account deleted</span>
+                    )}
+                    {s.account === 'recreated' && (
+                      <span className="inline-block mt-0.5 px-1.5 py-px rounded-full bg-[#F59E0B]/10 text-[#B45309] text-[9px] mono uppercase tracking-wider" title="The original account was deleted; this person signed up again with the same email">Deleted · signed up again</span>
+                    )}
                     {(isCanceled || isCanceling) && s.cancel_reason && (
                       <div className="text-[10px] text-[#0B1E3F]/55 truncate" title={s.cancel_reason}>Reason: {s.cancel_reason}</div>
                     )}
                   </div>
                   <div className="mono text-[#0B1E3F]/80 leading-tight">
                     <div className="capitalize">{s.plan || '—'}{s.billing ? ` · ${s.billing === 'annual' ? 'yr' : 'mo'}` : ''}</div>
-                    {(isCanceled || isCanceling) && (
+                    {(isCanceled || isCanceling || s.account === 'deleted' || s.account === 'recreated') && (
                       <div className="text-[10px] text-[#0B1E3F]/55" title="Plan the app gives them today">
-                        now: <span className="capitalize">{s.plan_now || 'deleted'}</span>
+                        now: <span className="capitalize">{s.plan_now || (s.account === 'deleted' ? 'no account' : '—')}</span>
                       </div>
                     )}
                   </div>
@@ -5842,7 +5873,7 @@ function StripeOverviewCard() {
                           periodEnd: s.current_period_end,
                           canceling: isCanceling,
                         })}
-                        className="mt-0.5 text-[10px] text-[#DC2626]/80 hover:text-[#DC2626] underline-offset-2 hover:underline"
+                        className="block mt-0.5 text-[10px] text-[#DC2626]/80 hover:text-[#DC2626] underline-offset-2 hover:underline"
                       >
                         {isCanceling ? 'cancel now' : 'cancel'}
                       </button>
