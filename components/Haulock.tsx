@@ -8393,7 +8393,7 @@ function OwnScoreChip({ navigate }: { navigate: any }) {
 
   if (!data || (!data.ownMc && !data.ownDot)) {
     return (
-      <button onClick={() => navigate('settings', { tab: 'profile' })} className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-xs text-[#0B1E3F]/60 transition" title="Set your MC or DOT in Settings → Profile to see your own broker score here">
+      <button onClick={() => navigate('settings', { tab: 'profile' })} className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F]/5 hover:bg-[#0B1E3F]/10 rounded-full text-xs text-[#0B1E3F]/60 transition" title="Set your MC or DOT in Settings → Profile to see your own company's Haulock score here">
         <Shield className="w-3.5 h-3.5" /> Set your MC/DOT
       </button>
     );
@@ -8454,7 +8454,7 @@ function OwnScoreChip({ navigate }: { navigate: any }) {
         <button
           onClick={onOpen}
           className={`relative flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full transition ${bgClass}`}
-          title={hasUnseenChange ? `New change on your ${idLabel}: ${change?.summary}` : `Your ${idLabel} broker score · click for details`}
+          title={hasUnseenChange ? `New change on your ${idLabel}: ${change?.summary}` : `Your ${idLabel} Haulock score · click for details`}
         >
           <MiniRing score={r.score} color={colorHex} />
           <div className="text-left leading-tight">
@@ -8468,12 +8468,12 @@ function OwnScoreChip({ navigate }: { navigate: any }) {
           </div>
         </button>
       </div>
-      {open && <OwnScoreModal report={r} cached={r.cached} cachedAt={r.cachedAt} change={change} onClose={() => setOpen(false)} onOpenFull={() => { setOpen(false); navigate('report', r); }} />}
+      {open && <OwnScoreModal report={r} cached={r.cached} cachedAt={r.cachedAt} change={change} navigate={navigate} onClose={() => setOpen(false)} onOpenFull={() => { setOpen(false); navigate('report', r); }} />}
     </>
   );
 }
 
-function OwnScoreModal({ report, cached, cachedAt, change, onClose, onOpenFull }: any) {
+function OwnScoreModal({ report, cached, cachedAt, change, navigate, onClose, onOpenFull }: any) {
   const r = report;
   const verdict = r.verdict || (r.score >= 61 ? 'high' : r.score >= 31 ? 'medium' : 'low');
   const verdictColor = verdict === 'high' ? 'text-[#DC2626]' : verdict === 'medium' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
@@ -8489,7 +8489,7 @@ function OwnScoreModal({ report, cached, cachedAt, change, onClose, onOpenFull }
       <div className="bg-white rounded-2xl max-w-xl w-full p-6 md:p-8 card-shadow-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-1">
           <div>
-            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Your broker score</div>
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1">Your Haulock score</div>
             <h2 className="text-2xl serif italic text-[#0B1E3F]">{r.name}</h2>
             <div className="text-xs mono text-[#0B1E3F]/50 mt-1">{[r.mc && `MC-${r.mc}`, r.dot && `DOT-${r.dot}`].filter(Boolean).join(' · ')}</div>
           </div>
@@ -8574,6 +8574,8 @@ function OwnScoreModal({ report, cached, cachedAt, change, onClose, onOpenFull }
             </ul>
           </div>
         )}
+        {/* How often the company is checked on Haulock + daily FMCSA monitoring. */}
+        <YourCompanyCard navigate={(to: string, d?: any) => { onClose(); navigate(to, d); }} embedded />
         <div className="flex gap-2 pt-4 border-t border-[#0B1E3F]/10">
           <button onClick={onClose} className="flex-1 py-2.5 border border-[#0B1E3F]/15 rounded-full text-sm font-medium text-[#0B1E3F] hover:bg-[#0B1E3F]/5">Close</button>
           <button onClick={onOpenFull} className="flex-1 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Open full report</button>
@@ -8712,7 +8714,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
 // "Your company" — paid accounts: how often other Haulock users checked the
 // company (verified owners only, counts never identities), and daily
 // monitoring of its FMCSA record with an email on any change.
-function YourCompanyCard({ navigate }: { navigate: any }) {
+function YourCompanyCard({ navigate, embedded = false }: { navigate: any; embedded?: boolean }) {
   const res = useCachedFetch<any>('own-company', '/api/profile/company');
   const [data, setData] = useState<any>(null);
   const [busy, setBusy] = useState<'verify' | 'monitor' | null>(null);
@@ -8742,7 +8744,11 @@ function YourCompanyCard({ navigate }: { navigate: any }) {
     }
   };
 
-  const shell = (children: React.ReactNode) => (
+  // Embedded = inside the header chip's window (company name/score already
+  // shown above it), so no card frame or title.
+  const shell = (children: React.ReactNode) => embedded ? (
+    <div className="text-[#0B1E3F] pt-4 mb-4 border-t border-[#0B1E3F]/10">{children}</div>
+  ) : (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F]">
       <div className="flex items-center gap-2 mb-1">
         <Building2 className="w-4 h-4 text-[#0B1E3F]/60" />
@@ -8774,7 +8780,7 @@ function YourCompanyCard({ navigate }: { navigate: any }) {
   const max = c ? Math.max(1, ...c.weeks.map((w: any) => w.count)) : 1;
   const fmtWeek = (iso: string) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   return shell(
-    <div className="grid md:grid-cols-2 gap-6 mt-4">
+    <div className={`grid gap-6 ${embedded ? '' : 'md:grid-cols-2 mt-4'}`}>
       {/* Checked on Haulock */}
       <div>
         <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Checked on Haulock</div>
@@ -8832,7 +8838,7 @@ function YourCompanyCard({ navigate }: { navigate: any }) {
           </div>
         )}
       </div>
-      {message && <div className={`md:col-span-2 text-sm ${message.tone === 'ok' ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{message.text}</div>}
+      {message && <div className={`${embedded ? '' : 'md:col-span-2'} text-sm ${message.tone === 'ok' ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{message.text}</div>}
     </div>,
   );
 }
@@ -8865,7 +8871,6 @@ function Dashboard({ navigate, user }: any) {
         <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
         <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
       </div>
-      <YourCompanyCard navigate={navigate} />
       {plan.id === 'free' && (
         <div className="flex items-center justify-between gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl">
           <div className="text-sm text-[#0B1E3F]">
