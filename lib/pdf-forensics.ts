@@ -692,7 +692,12 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   const raw100 = flags.reduce((s, f) => s + f.pts, 0);
   const legit = isLegitProducer(producer) || isLegitProducer(creator);
   const score = Math.min(100, Math.max(0, legit && !flags.some((f) => f.sev === 'critical') ? raw100 - 5 : raw100));
-  const verdict: PdfForensics['verdict'] = score >= 50 || flags.some((f) => f.sev === 'critical' && f.pts >= 40) ? 'likely_tampered' : score >= 20 ? 'suspicious' : 'clean';
+  // Any single warning worth 15+ (typed text on top, invisible text, a
+  // later markup save…) makes it at least "worth a closer look", whatever
+  // the producer bonus does to the score.
+  const verdict: PdfForensics['verdict'] = score >= 50 || flags.some((f) => f.sev === 'critical' && f.pts >= 40)
+    ? 'likely_tampered'
+    : score >= 20 || flags.some((f) => f.sev !== 'info' && f.pts >= 15) ? 'suspicious' : 'clean';
   const summary = verdict === 'likely_tampered'
     ? 'Strong signs this PDF was changed after it was made. See what changed below.'
     : verdict === 'suspicious'
