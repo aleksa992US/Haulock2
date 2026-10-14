@@ -79,7 +79,7 @@ export default async function Image() {
               lineHeight: 1.35,
             }}
           >
-            FMCSA · Website · Social profiles · Google Business · Domain WHOIS — cross-checked on every lookup.
+            FMCSA records & officer names · website · social · Google Business — plus a tamper check for rate con PDFs.
           </div>
         </div>
         <div
@@ -95,7 +95,7 @@ export default async function Image() {
         >
           <span>✓ For carriers and brokers</span>
           <span>✓ 14 data sources</span>
-          <span>✓ Web reputation scan</span>
+          <span>✓ PDF tamper check</span>
         </div>
       </div>
     ),

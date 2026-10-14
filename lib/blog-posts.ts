@@ -188,7 +188,7 @@ export const BLOG_POSTS: BlogPost[] = [
       'https://unsplash.com/photos/blue-and-white-volvo-truck-on-road',
     ),
     haulockHelps: true,
-    haulockHelpsCopy: 'Haulock\'s rate con analyzer reads the PDF you upload and runs every one of these checks in about two seconds. We compare the broker name to FMCSA, score the language for scam markers, and verify the email domain matches the website. You get a clear verdict before you hook up.',
+    haulockHelpsCopy: 'Haulock\'s rate con analyzer reads the PDF you upload and runs every one of these checks in under a minute. We compare the broker name to FMCSA, score the language for scam markers, and verify the email domain matches the website. You get a clear verdict before you hook up.',
     keywords: ['rate confirmation fraud', 'rate con red flags', 'freight broker scam signs', 'PDF fraud detection', 'broker verification checklist'],
     bodyHtml: `
 <p>A rate con tells you a lot more than a load number and a rate. It tells you who really sent it. Use the next two minutes to run through this list before you sign anything. Most freight scams trip at least three of these.</p>
@@ -274,7 +274,7 @@ export const BLOG_POSTS: BlogPost[] = [
       'https://unsplash.com/photos/man-driving-tractor-trailer-close-up-photography-AeC60RYthVM',
     ),
     haulockHelps: true,
-    haulockHelpsCopy: 'Haulock runs all five of these checks in parallel in about two seconds and gives you a single risk score with a verdict. The free plan gives you three lookups a month, which is enough to vet anyone you have a doubt about. Paid plans cover everyone.',
+    haulockHelpsCopy: 'Haulock runs all five of these checks in parallel, usually in under half a minute, and gives you a single risk score with a verdict. The free plan gives you three lookups a month, which is enough to vet anyone you have a doubt about. Paid plans cover everyone.',
     keywords: ['broker verification', 'vet a freight broker', 'FMCSA SAFER lookup', 'carrier due diligence', 'how to verify a broker'],
     bodyHtml: `
 <p>Most carriers have a vetting process for new brokers. Almost none run it on every load. The reason is simple: it takes too long. Here is a five-minute version that fits inside the call where you accept the load. Run it once, save it as a checklist, never haul for a ghost again.</p>

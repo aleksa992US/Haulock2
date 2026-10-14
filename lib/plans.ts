@@ -65,6 +65,8 @@ export const PLANS: Record<PlanId, Plan> = {
       'Up to 25 watchlist entries',
       'Full risk reports',
       'Email & in-app alerts',
+      'Daily FMCSA monitoring of your own company',
+      'See how often your company is checked (counts, never who)',
       'API access',
       '1 user',
     ],
