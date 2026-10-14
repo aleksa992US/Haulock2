@@ -3,6 +3,7 @@ import type Stripe from 'stripe';
 import { getStripe } from '@/lib/stripe';
 import { pickLiveSubscription, subscriptionPlan } from '@/lib/billing';
 import { applyUserPlan } from '@/lib/teams';
+import { getServiceSupabase } from '@/lib/supabase/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,18 @@ function haulockMeta(obj: any): { isHaulock: boolean; userId?: string; plan?: st
 async function syncPlanFromStripe(stripe: Stripe, userId: string, customer: string | Stripe.Customer | Stripe.DeletedCustomer | null) {
   const customerId = typeof customer === 'string' ? customer : customer?.id;
   if (!customerId) return;
+  // The account may have been deleted while the subscription lives on.
+  // Answer 200 so Stripe doesn't retry (and eventually disable the
+  // endpoint); the admin Users page shows these subscriptions.
+  const svc = getServiceSupabase();
+  if (svc) {
+    const { data, error } = await svc.auth.admin.getUserById(userId);
+    if (error && (error as any).status !== 404) throw error;
+    if (!data?.user) {
+      console.warn(`[stripe webhook] user ${userId} no longer exists; plan not changed (customer ${customerId})`);
+      return;
+    }
+  }
   const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
   const live = pickLiveSubscription(subs.data.filter((s) => s.metadata?.product === 'haulock'));
   const plan = (live && (subscriptionPlan(live) || haulockMeta(live).plan)) || 'free';
