@@ -11,7 +11,8 @@
 const REGISTRY = process.env.FMCSA_REGISTRY_DATASET_ID || '6eyk-hxee';
 const CENSUS = process.env.FMCSA_CENSUS_DATASET_ID || 'az4n-8mr2';
 const BASE = 'https://data.transportation.gov/resource';
-const TIMEOUT_MS = 3000;
+// FMCSA's open-data API can take 2s+ on a cold query from a shared host.
+const TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_RESULTS = 8;
 
@@ -154,10 +155,14 @@ async function byDot(digits: string): Promise<CompanySuggestion[]> {
     const lo = n * 10 ** k;
     ranges.push(`(dot_number between ${lo} and ${lo + 10 ** k - 1})`);
   }
-  const [reg, cen] = await Promise.all([
-    soql(pads.join(' OR '), 'dot_number').catch(() => []),
-    soql(ranges.join(' OR '), 'dot_number', CENSUS, CENSUS_COLS).catch(() => []),
+  // Either dataset alone is useful; only when BOTH fail is it an error.
+  const [regR, cenR] = await Promise.allSettled([
+    soql(pads.join(' OR '), 'dot_number'),
+    soql(ranges.join(' OR '), 'dot_number', CENSUS, CENSUS_COLS),
   ]);
+  if (regR.status === 'rejected' && cenR.status === 'rejected') throw regR.reason;
+  const reg = regR.status === 'fulfilled' ? regR.value : [];
+  const cen = cenR.status === 'fulfilled' ? cenR.value : [];
   return mergeByDot(
     reg.map((r) => toSuggestion(r, 'dot')).filter(Boolean) as CompanySuggestion[],
     cen.map((r) => fromCensus(r, 'dot')).filter(Boolean) as CompanySuggestion[],
@@ -169,16 +174,61 @@ async function byName(text: string): Promise<CompanySuggestion[]> {
   const q = text.toUpperCase().replace(/[^A-Z0-9 &.,'-]/g, '').replace(/\s+/g, ' ').trim().replace(/'/g, "''");
   if (q.length < 3) return [];
   const where = `starts_with(upper(legal_name), '${q}') OR starts_with(upper(dba_name), '${q}')`;
-  const [reg, cen] = await Promise.all([
-    soql(where, 'legal_name').catch(() => []),
-    soql(where, 'legal_name', CENSUS, CENSUS_COLS).catch(() => []),
+  const [regR, cenR] = await Promise.allSettled([
+    soql(where, 'legal_name'),
+    soql(where, 'legal_name', CENSUS, CENSUS_COLS),
   ]);
+  if (regR.status === 'rejected' && cenR.status === 'rejected') throw regR.reason;
+  const reg = regR.status === 'fulfilled' ? regR.value : [];
+  const cen = cenR.status === 'fulfilled' ? cenR.value : [];
   const plain = q.replace(/''/g, "'");
   const on = (r: any): CompanySuggestion['matchedOn'] => (!String(r.legal_name || '').toUpperCase().startsWith(plain) && r.dba_name ? 'dba' : 'name');
   return mergeByDot(
     reg.map((r) => toSuggestion(r, on(r))).filter(Boolean) as CompanySuggestion[],
     cen.map((r) => fromCensus(r, on(r))).filter(Boolean) as CompanySuggestion[],
   );
+}
+
+// Fallback when FMCSA's open-data API fails or rate-limits us: prefix-match
+// MC/DOT keys in our own fmcsa_cache (FMCSA QCMobile responses cached by
+// the lookup pipeline and the admin prewarm). Number searches only.
+async function fromLocalCache(mode: 'mc' | 'dot' | 'both', digits: string): Promise<CompanySuggestion[]> {
+  const { getServiceSupabase } = await import('./supabase/service');
+  const svc = getServiceSupabase();
+  if (!svc) return [];
+  const prefixes = mode === 'both' ? ['mc', 'dot'] : [mode];
+  const results = await Promise.all(prefixes.map((p) =>
+    svc.from('fmcsa_cache').select('cache_key, response').like('cache_key', `${p}:${digits}%`).limit(15),
+  ));
+  const out: CompanySuggestion[] = [];
+  for (const { data } of results) {
+    for (const row of (data || []) as any[]) {
+      const content = row.response?.content;
+      const c = Array.isArray(content) ? content[0]?.carrier : content?.carrier;
+      if (!c) continue;
+      const keyDigits = String(row.cache_key).split(':')[1] || '';
+      const isMcKey = String(row.cache_key).startsWith('mc:');
+      const carrier = c.commonAuthorityStatus === 'A' || c.contractAuthorityStatus === 'A';
+      const broker = c.brokerAuthorityStatus === 'A';
+      const dot = String(c.dotNumber || (!isMcKey ? keyDigits : '')).replace(/\D/g, '').replace(/^0+/, '') || undefined;
+      const mc = isMcKey ? keyDigits : undefined;
+      const units = Number(c.totalPowerUnits);
+      out.push({
+        name: String(c.legalName || c.dbaName || 'Unknown company').trim(),
+        dba: c.dbaName ? String(c.dbaName).trim() : undefined,
+        mc,
+        dot,
+        city: toTitle(c.phyCity),
+        state: c.phyState || undefined,
+        role: carrier && broker ? 'both' : carrier ? 'carrier' : broker ? 'broker' : 'none',
+        active: carrier || broker,
+        powerUnits: Number.isFinite(units) && units > 0 ? units : undefined,
+        query: mc ? `MC-${mc}` : `DOT-${dot}`,
+        matchedOn: isMcKey ? 'mc' : 'dot',
+      });
+    }
+  }
+  return out;
 }
 
 export async function suggestCompanies(rawQuery: string, kind: SuggestKind = 'auto'): Promise<CompanySuggestion[]> {
@@ -208,12 +258,23 @@ export async function suggestCompanies(rawQuery: string, kind: SuggestKind = 'au
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
 
   let list: CompanySuggestion[] = [];
-  if (mode === 'mc') list = rank(await byMc(digits), { mc: digits });
-  else if (mode === 'dot') list = rank(await byDot(digits), { dot: digits });
-  else if (mode === 'both') {
-    const [mc, dot] = await Promise.all([byMc(digits).catch(() => []), byDot(digits).catch(() => [])]);
-    list = rank([...mc, ...dot], { mc: digits, dot: digits });
-  } else list = rank(await byName(raw));
+  const started = Date.now();
+  try {
+    if (mode === 'mc') list = rank(await byMc(digits), { mc: digits });
+    else if (mode === 'dot') list = rank(await byDot(digits), { dot: digits });
+    else if (mode === 'both') {
+      const [mcR, dotR] = await Promise.allSettled([byMc(digits), byDot(digits)]);
+      if (mcR.status === 'rejected' && dotR.status === 'rejected') throw mcR.reason;
+      list = rank([...(mcR.status === 'fulfilled' ? mcR.value : []), ...(dotR.status === 'fulfilled' ? dotR.value : [])], { mc: digits, dot: digits });
+    } else list = rank(await byName(raw));
+  } catch (e: any) {
+    console.warn('[suggest] FMCSA open-data search failed', { mode, ms: Date.now() - started, error: e?.name === 'AbortError' ? 'timeout' : e?.message });
+    if (mode === 'name') throw e;
+    // Number searches can still be answered from our own FMCSA cache.
+    list = rank(await fromLocalCache(mode, digits), mode === 'mc' ? { mc: digits } : mode === 'dot' ? { dot: digits } : { mc: digits, dot: digits });
+    if (list.length === 0) throw e;
+    return list; // don't cache fallback results — retry live next time
+  }
 
   cache.set(key, { at: Date.now(), value: list });
   if (cache.size > 500) cache.delete(cache.keys().next().value as string);

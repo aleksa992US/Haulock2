@@ -470,7 +470,7 @@ export async function GET(req: Request) {
       const sd = await findCarrierFieldsWithDates({ dot: carrier.dot, mc: carrier.mc }, 10);
       const recentCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
       const backfilled: { field: string; asOf: string }[] = [...(carrier.backfilled || [])];
-      const fill = (field: 'powerUnits' | 'drivers' | 'operation' | 'phone', recentOnly: boolean) => {
+      const fill = (field: 'powerUnits' | 'drivers' | 'operation' | 'phone' | 'emailDomain', recentOnly: boolean) => {
         const hit = sd[field];
         if (!hit || (carrier as any)[field] != null && (carrier as any)[field] !== '') return;
         if (recentOnly && hit.capturedAt < recentCutoff) return;
@@ -481,6 +481,9 @@ export async function GET(req: Request) {
       fill('drivers', true);
       fill('operation', false);
       fill('phone', false);
+      // The email domain FMCSA had on file (often only in the archive
+      // record) — used to judge the website's domain fairly below.
+      fill('emailDomain', false);
       if (backfilled.length) carrier.backfilled = backfilled;
     } catch (err) {
       console.warn('[verify] snapshot backfill failed:', err instanceof Error ? err.message : err);
@@ -656,11 +659,26 @@ export async function GET(req: Request) {
     let socials: { platform: string; url: string }[] | undefined;
     // Domain age, email setup and social links describe the site's owner —
     // only meaningful once we know the site is theirs.
+    // FMCSA's email domain, when it's a different domain from the website:
+    // a company emailing from an established domain shouldn't be marked down
+    // because its (newer) website domain has no mail server.
+    const fmcsaEmailDomain = String(carrier.emailDomain || '').toLowerCase().replace(/^www\./, '');
+    const siteDomain = String(webResult.domain || '').toLowerCase().replace(/^www\./, '');
+    let emailDomainCheck: { domain: string; ageDays: number | null; hasMx?: boolean; provider?: string | null } | undefined;
     if (siteConfirmed && webResult.domain) {
-      const [dc, sc] = await Promise.all([
+      const [dc, sc, ec] = await Promise.all([
         checkDomain(webResult.domain).catch(() => null),
         webResult.url ? findSocialLinks(webResult.url).catch(() => []) : Promise.resolve([]),
+        fmcsaEmailDomain && fmcsaEmailDomain !== siteDomain ? checkDomain(fmcsaEmailDomain).catch(() => null) : Promise.resolve(null),
       ]);
+      if (ec) {
+        emailDomainCheck = {
+          domain: fmcsaEmailDomain,
+          ageDays: ec.whois.ageDays ?? null,
+          hasMx: ec.mx.error ? undefined : ec.mx.hasMx,
+          provider: ec.mx.provider ?? null,
+        };
+      }
       if (dc) {
         domainAgeDays = dc.whois.ageDays ?? null;
         // Unknown (undefined) when the DNS lookup itself failed.
@@ -684,6 +702,7 @@ export async function GET(req: Request) {
       addressMatch: ownership ? ownership.addressMatch : undefined,
       phoneMatch: ownership ? ownership.phoneMatch : undefined,
       source: webResult.source,
+      emailDomainCheck,
       domainAgeDays,
       hasMx,
       hasSpf,
@@ -804,7 +823,13 @@ export async function GET(req: Request) {
         ? 'No domain to check'
         : !siteConfirmed
           ? 'Not checked — website not confirmed'
-          : `${carrier.webPresence.domainAgeDays != null ? `${carrier.webPresence.domainAgeDays}d old` : 'no WHOIS'}${carrier.webPresence.hasMx ? ' · MX' : ''}${carrier.webPresence.hasSpf ? ' · SPF' : ''}`,
+          : [
+              carrier.webPresence.domainAgeDays != null
+                ? (carrier.webPresence.domainAgeDays < 365 ? `website domain ${carrier.webPresence.domainAgeDays}d old` : `website domain ${Math.floor(carrier.webPresence.domainAgeDays / 365)}+ yrs old`)
+                : 'domain age unavailable',
+              carrier.webPresence.hasMx === true ? 'mail server' : carrier.webPresence.hasMx === false ? 'no mail server' : null,
+              carrier.webPresence.emailDomainCheck ? `email on ${carrier.webPresence.emailDomainCheck.domain}` : null,
+            ].filter(Boolean).join(' · '),
     },
     {
       name: 'Social media',

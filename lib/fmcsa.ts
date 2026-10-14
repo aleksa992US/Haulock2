@@ -108,6 +108,8 @@ export type CarrierReport = {
     addressMatch?: boolean;
     phoneMatch?: boolean;
     source?: string;
+    // FMCSA's email domain when it differs from the website's domain.
+    emailDomainCheck?: { domain: string; ageDays: number | null; hasMx?: boolean; provider?: string | null };
     domainAgeDays?: number | null;
     hasMx?: boolean;
     hasSpf?: boolean;

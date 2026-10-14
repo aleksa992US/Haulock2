@@ -61,14 +61,39 @@ export function extractDomain(input: string): string | null {
   return /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/.test(s) ? s : null;
 }
 
+// Registration data (RDAP). Ask the registry's own server first — Verisign
+// for .com/.net, PIR for .org — and only then the rdap.org redirector, which
+// rate-limits shared server IPs. Every request has a timeout; a failure is
+// reported as an error ("couldn't check"), never as "no age".
+const RDAP_SERVERS: Record<string, string> = {
+  com: 'https://rdap.verisign.com/com/v1/domain/',
+  net: 'https://rdap.verisign.com/net/v1/domain/',
+  org: 'https://rdap.publicinterestregistry.org/rdap/domain/',
+};
+
+async function fetchRdap(url: string, timeoutMs = 5000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { redirect: 'follow', headers: { Accept: 'application/rdap+json' }, signal: controller.signal });
+    if (!res.ok) throw new Error(`RDAP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getWhois(domain: string): Promise<DomainCheck['whois']> {
   try {
-    const res = await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`, {
-      redirect: 'follow',
-      headers: { Accept: 'application/rdap+json' },
-    });
-    if (!res.ok) return { error: `RDAP ${res.status}` };
-    const data = await res.json();
+    const tld = domain.split('.').pop() || '';
+    const direct = RDAP_SERVERS[tld];
+    let data: any;
+    try {
+      data = await fetchRdap(`${direct || 'https://rdap.org/domain/'}${encodeURIComponent(domain)}`);
+    } catch (e) {
+      if (!direct) throw e;
+      data = await fetchRdap(`https://rdap.org/domain/${encodeURIComponent(domain)}`);
+    }
     const reg = Array.isArray(data.events) ? data.events.find((e: any) => e.eventAction === 'registration') : null;
     const creationDate = reg?.eventDate as string | undefined;
     let ageDays: number | undefined;

@@ -364,7 +364,29 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       // FMCSA address or has the FMCSA phone. A site that merely ranks for
       // the name may be someone else's — or an impersonator's.
       const siteIsTheirs = wp.nameMatch === true && wp.verified === true;
-      if (siteIsTheirs && wp.domainAgeDays != null && wp.domainAgeDays <= 90) {
+      // FMCSA's email domain, when it's a different domain from the site.
+      const em = wp.emailDomainCheck;
+      const establishedEmail = em && em.ageDays != null && em.ageDays > 365 && em.hasMx === true ? em : undefined;
+      if (siteIsTheirs && wp.domainAgeDays != null && wp.domainAgeDays <= 90 && establishedEmail) {
+        // A new website while FMCSA has them on an older, working email
+        // domain: often a legitimate new site, but Google listings are also
+        // edited by impersonators. Smaller weight — the listing still has
+        // their FMCSA address/phone — and the advice is about which contact
+        // details to trust.
+        const years = Math.floor(establishedEmail.ageDays! / 365);
+        flags.push({
+          sev: 'warning',
+          title: 'Their Google listing links to a brand-new website',
+          desc: `${wp.domain} was registered ${wp.domainAgeDays} day${wp.domainAgeDays === 1 ? '' : 's'} ago. FMCSA's record has their email on ${establishedEmail.domain}, which they've had for ${years}+ year${years === 1 ? '' : 's'}.`,
+          pts: 10,
+          details: 'This can simply be a new website. But scammers sometimes edit a real company\'s Google listing to point to a site and email they control, so treat contact details from the new site with care.',
+          metrics: [
+            { label: 'Website domain', value: `${wp.domain} · ${wp.domainAgeDays} days old` },
+            { label: 'FMCSA email domain', value: `${establishedEmail.domain} · ${years}+ yrs${establishedEmail.provider ? ` · ${establishedEmail.provider}` : ''}` },
+          ],
+          recommendation: `Use the phone number from FMCSA and an @${establishedEmail.domain} email. Be careful with emails from @${wp.domain}.`,
+        });
+      } else if (siteIsTheirs && wp.domainAgeDays != null && wp.domainAgeDays <= 90) {
         flags.push({
           sev: 'warning',
           title: `Website domain registered ${wp.domainAgeDays} day${wp.domainAgeDays === 1 ? '' : 's'} ago`,
@@ -378,7 +400,10 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
           recommendation: 'Do not trust contact info from this website without independent verification.',
         });
       }
-      if (siteIsTheirs && wp.hasMx === false) {
+      // No mail server on the website domain only matters if that's where
+      // their email would be. When FMCSA has them on another domain that
+      // does take mail, it's not a finding.
+      if (siteIsTheirs && wp.hasMx === false && !(em && em.hasMx === true)) {
         flags.push({
           sev: 'info',
           title: 'Their website domain has no email server',

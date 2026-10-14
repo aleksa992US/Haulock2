@@ -8046,6 +8046,10 @@ type CompanySuggestion = {
 function useCompanySuggestions(query: string, kind: 'mc' | 'dot' | 'name' | 'auto' | null) {
   const [items, setItems] = useState<CompanySuggestion[]>([]);
   const [loading, setLoading] = useState(false);
+  // What the last finished search was for, and whether it failed — so the
+  // list can say "no companies found" / "unavailable" instead of vanishing.
+  const [searched, setSearched] = useState('');
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     const q = query.trim();
     const digits = q.replace(/\D/g, '');
@@ -8053,7 +8057,7 @@ function useCompanySuggestions(query: string, kind: 'mc' | 'dot' | 'name' | 'aut
     // Numbers need 3+ digits (and a registry choice on the Verify page);
     // names need 3+ characters.
     const ready = kind !== null && (isNumberish ? digits.length >= 3 : q.length >= 3);
-    if (!ready) { setItems([]); setLoading(false); return; }
+    if (!ready) { setItems([]); setLoading(false); setSearched(''); setFailed(false); return; }
     const controller = new AbortController();
     setLoading(true);
     const t = setTimeout(async () => {
@@ -8062,15 +8066,17 @@ function useCompanySuggestions(query: string, kind: 'mc' | 'dot' | 'name' | 'aut
         const res = await fetch(`/api/search/suggest?q=${encodeURIComponent(q)}&kind=${effKind}`, { signal: controller.signal });
         const data = await res.json().catch(() => ({}));
         setItems(Array.isArray(data?.suggestions) ? data.suggestions : []);
+        setFailed(!res.ok || Boolean(data?.error));
+        setSearched(q);
       } catch (e: any) {
-        if (e?.name !== 'AbortError') setItems([]);
+        if (e?.name !== 'AbortError') { setItems([]); setFailed(true); setSearched(q); }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     }, 250);
     return () => { clearTimeout(t); controller.abort(); };
   }, [query, kind]);
-  return { items, loading };
+  return { items, loading, searched, failed };
 }
 
 const SUGGEST_ROLE: Record<CompanySuggestion['role'], { label: string; cls: string }> = {
@@ -8081,11 +8087,21 @@ const SUGGEST_ROLE: Record<CompanySuggestion['role'], { label: string; cls: stri
   'dot-only': { label: 'USDOT only', cls: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/65' },
 };
 
-function SuggestionList({ items, loading, activeIndex, onPick, onHover, compact = false }: {
+function SuggestionList({ items, loading, activeIndex, onPick, onHover, compact = false, searched = '', failed = false }: {
   items: CompanySuggestion[]; loading: boolean; activeIndex: number;
   onPick: (s: CompanySuggestion) => void; onHover: (i: number) => void; compact?: boolean;
+  searched?: string; failed?: boolean;
 }) {
-  if (!loading && items.length === 0) return null;
+  if (!loading && items.length === 0) {
+    if (!searched) return null;
+    return (
+      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#0B1E3F]/15 rounded-xl shadow-lg z-40 px-4 py-3 text-sm text-[#0B1E3F]/60">
+        {failed
+          ? 'Suggestions are unavailable right now. Press Verify to run the full check.'
+          : <>No companies found starting with “{searched}”. Check the number, or press Verify to run the full check.</>}
+      </div>
+    );
+  }
   return (
     <div role="listbox" className={`absolute left-0 right-0 top-full mt-1 bg-white border border-[#0B1E3F]/15 rounded-xl shadow-lg z-40 overflow-hidden ${compact ? 'max-h-[70vh]' : 'max-h-[420px]'} overflow-y-auto`}>
       {items.length === 0 && loading && <div className="px-4 py-3 text-sm text-[#0B1E3F]/55">Searching FMCSA…</div>}
@@ -8155,7 +8171,7 @@ function HeaderSearch({ navigate }: { navigate: any }) {
   // names its registry); anything with letters is a name search.
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIndex, setSuggestIndex] = useState(-1);
-  const { items: suggestions, loading: suggestLoading } = useCompanySuggestions(suggestOpen && !choices ? input : '', 'auto');
+  const { items: suggestions, loading: suggestLoading, searched: suggestSearched, failed: suggestFailed } = useCompanySuggestions(suggestOpen && !choices ? input : '', 'auto');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -8248,6 +8264,8 @@ function HeaderSearch({ navigate }: { navigate: any }) {
           compact
           items={suggestions}
           loading={suggestLoading}
+          searched={suggestSearched}
+          failed={suggestFailed}
           activeIndex={suggestIndex}
           onHover={setSuggestIndex}
           onPick={(s) => { setInput(s.query); run(s.query); }}
@@ -8822,7 +8840,7 @@ function VerifyTool({ navigate }: any) {
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIndex, setSuggestIndex] = useState(-1);
   const suggestKind: 'mc' | 'dot' | 'name' | null = /[a-z]/i.test(input.replace(/^\s*(mc|usdot|dot)\b/i, '')) ? 'name' : kind;
-  const { items: suggestions, loading: suggestLoading } = useCompanySuggestions(suggestOpen ? input : '', suggestKind);
+  const { items: suggestions, loading: suggestLoading, searched: suggestSearched, failed: suggestFailed } = useCompanySuggestions(suggestOpen ? input : '', suggestKind);
   // When the API resolves we hold the result for a brief reveal moment so
   // the scanner can paint red on whichever sources caught something spooky
   // before we navigate to the full report.
@@ -9125,6 +9143,8 @@ function VerifyTool({ navigate }: any) {
               <SuggestionList
                 items={suggestions}
                 loading={suggestLoading}
+                searched={suggestSearched}
+                failed={suggestFailed}
                 activeIndex={suggestIndex}
                 onHover={setSuggestIndex}
                 onPick={(s) => { setInput(s.query); runLookup(s.query); }}
@@ -9137,7 +9157,7 @@ function VerifyTool({ navigate }: any) {
           </div>
           <div className="mt-2 text-xs text-[#0B1E3F]/55 leading-relaxed">
             {kind
-              ? <>Just type the digits — we add <span className="mono">{kind === 'mc' ? 'MC-' : 'DOT-'}</span> for you. Searching by company name? Type it here; the {kind === 'mc' ? 'MC' : 'DOT'} toggle is ignored for names.</>
+              ? <>Just type the digits — we add <span className="mono">{kind === 'mc' ? 'MC-' : 'DOT-'}</span> for you, and matching companies appear after 3 digits. Searching by company name? Type it here; the {kind === 'mc' ? 'MC' : 'DOT'} toggle is ignored for names.</>
               : <>MC and DOT are separate registries — the same number can return two different carriers (e.g. <span className="mono">MC-1162901</span> = LEADER GROUP INC, <span className="mono">DOT-1162901</span> = KIRIL GEORGIEV). Pick one on the left, then type just the digits.</>
             }
           </div>
@@ -9955,14 +9975,83 @@ function CarrierReport({ report, navigate }: any) {
               {verdict === 'high' ? 'HIGH RISK' : verdict === 'medium' ? 'CAUTION' : 'LOW RISK'}
             </div>
           </div>
+          {/* What the number means: 0–100, lower is better, three bands. */}
+          <div className="mt-5 w-full">
+            <div className="text-[11px] text-[#0B1E3F]/55 text-center mb-2">Haulock risk score out of 100. Lower is better.</div>
+            <div className="grid grid-cols-3 gap-1 text-[10px] mono uppercase tracking-wider text-center">
+              {([
+                { id: 'low', label: 'Low', range: '0–30', on: 'bg-[#16A34A] text-white' },
+                { id: 'medium', label: 'Caution', range: '31–60', on: 'bg-[#F59E0B] text-white' },
+                { id: 'high', label: 'High', range: '61–100', on: 'bg-[#DC2626] text-white' },
+              ] as const).map((band) => (
+                <div key={band.id} className={`rounded-md py-1.5 ${verdict === band.id ? band.on : 'bg-[#0B1E3F]/5 text-[#0B1E3F]/45'}`}>
+                  <div className="font-semibold">{band.label}</div>
+                  <div className="opacity-80">{band.range}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="md:col-span-3 bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
-          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Recommendation</div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Our verdict</div>
           {(() => {
             const rec = recommendationFor(r, verdict);
+            // How the score was built: every finding that added points, in
+            // order of weight. Informational findings (0 pts) aren't listed.
+            const scored = (r.flags || []).filter((f: any) => (Number(f?.pts) || 0) > 0)
+              .sort((a: any, b: any) => (b.pts || 0) - (a.pts || 0));
+            const rawTotal = scored.reduce((sum: number, f: any) => sum + (Number(f.pts) || 0), 0);
+            const infoCount = (r.flags || []).length - scored.length;
+            // The main checks that came back fine, from the report's own data.
+            const carrierActive = r.commonAuthority === 'Active' || r.contractAuthority === 'Active';
+            const brokerActive = r.brokerAuthority === 'Active';
+            const ok: string[] = [];
+            if (carrierActive || brokerActive) ok.push(`${carrierActive && brokerActive ? 'Carrier & broker' : carrierActive ? 'Carrier' : 'Broker'} authority active`);
+            if (r.authorityAge && !/reactivated/i.test(r.authorityAge)) ok.push(`${r.authorityAge} of authority`);
+            if (carrierActive && r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.bipdRequired != null && r.bipdOnFile < r.bipdRequired)) ok.push(`$${(r.bipdOnFile * 1000).toLocaleString()} liability on file`);
+            if (brokerActive && r.bondOnFile != null && r.bondOnFile >= 75) ok.push('Broker bond on file');
+            if (r.outOfService === false) ok.push('Not out of service');
+            if (r.sms?.fetched && !Object.values(r.sms.basics || {}).some((b: any) => b?.alert)) ok.push('No FMCSA safety alerts');
+            if (r.addressCheck?.found && !r.addressCheck.isMailbox) ok.push('Address checks out');
+            if (r.webPresence?.verified) ok.push('Website confirmed');
+            if (r.webReputation?.ok && (r.webReputation.hits || []).length === 0) ok.push('No fraud reports online');
             return (<>
-              <div className="text-2xl text-[#0B1E3F] leading-tight mb-4">{rec.headline}</div>
+              <div className="text-2xl text-[#0B1E3F] leading-tight mb-3">{rec.headline}</div>
               <p className="text-[#0B1E3F]/70 leading-relaxed">{rec.detail}</p>
+
+              <div className="mt-6 pt-5 border-t border-[#0B1E3F]/10">
+                <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">How we got {r.score}/100</div>
+                {scored.length === 0 ? (
+                  <div className="text-sm text-[#0B1E3F]/70">Nothing added points. Every check below came back fine.</div>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {scored.map((f: any, i: number) => (
+                      <li key={i} className="flex items-start gap-3 text-sm">
+                        <span className={`mono text-xs font-semibold w-10 text-right flex-shrink-0 pt-0.5 ${f.sev === 'critical' ? 'text-[#DC2626]' : f.sev === 'warning' ? 'text-[#B45309]' : 'text-[#0B1E3F]/60'}`}>+{f.pts}</span>
+                        <span className="text-[#0B1E3F]/80">{f.title}</span>
+                      </li>
+                    ))}
+                    <li className="flex items-start gap-3 text-sm pt-1.5 border-t border-[#0B1E3F]/5">
+                      <span className="mono text-xs font-bold w-10 text-right flex-shrink-0 pt-0.5">{r.score}</span>
+                      <span className="text-[#0B1E3F]/60">Total{rawTotal > 100 ? ` (capped at 100 — findings add up to ${rawTotal})` : ''}. Details for each are under Red flags below.</span>
+                    </li>
+                  </ul>
+                )}
+                {infoCount > 0 && <div className="mt-2 text-xs text-[#0B1E3F]/50">{infoCount} other note{infoCount === 1 ? '' : 's'} below for context, not scored.</div>}
+              </div>
+
+              {ok.length > 0 && (
+                <div className="mt-5">
+                  <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">What checked out</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ok.map((label) => (
+                      <span key={label} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#16A34A]/10 text-[#16A34A] text-xs font-medium">
+                        <CheckCircle2 className="w-3 h-3" /> {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>);
           })()}
         </div>
@@ -9988,7 +10077,7 @@ function CarrierReport({ report, navigate }: any) {
           { icon: Building2, label: 'DBA', val: r.dba || '—' },
           { icon: MapPin, label: 'Physical address', val: r.address || '—' },
           { icon: Phone, label: 'Phone', val: r.phone || '— (not in FMCSA)' },
-          { icon: Mail, label: 'Email domain', val: r.emailDomain || '— (requires enrichment)' },
+          { icon: Mail, label: 'Email domain', val: r.emailDomain ? `${r.emailDomain}${(r.backfilled || []).some((b: any) => b.field === 'emailDomain') ? ' (from an earlier FMCSA record)' : ''}` : 'Not on FMCSA record' },
           // FMCSA's carrier lookup doesn't return a grant date; age comes from
           // its authority-history data and can be unavailable.
           { icon: Clock, label: 'Authority age', val: r.authorityAge || 'Unavailable', warn: r.authorityAge && /reactivated/i.test(r.authorityAge) },
@@ -10721,16 +10810,27 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
         ? inspections.driverOosPct
         : (inspections.driverInspections > 0 ? Math.round((inspections.driverOosCount / inspections.driverInspections) * 1000) / 10 : null))
     : null;
-  // Plain-English crash readout. 24 months of zero is rare in any sized
-  // fleet; double-digit crashes warrants reading the full SMS page.
+  // Plain-English crash readout, relative to fleet size: the usual benchmark
+  // is ~0.2–0.4 reportable crashes per truck per year, and SMS counts 24
+  // months — so 18 crashes is a lot for 10 trucks and normal for 130.
+  const fleet = overview.totalTrucks ?? carrier?.powerUnits ?? null;
+  const perTruckYear = crashes && fleet ? crashes.total / 2 / fleet : null;
+  const crashesHigh = crashes
+    ? (perTruckYear != null ? perTruckYear > 0.4 && crashes.total >= 3 : crashes.total >= 10)
+    : false;
   const crashLine = crashes
     ? (crashes.total === 0
-        ? 'Zero reported crashes in the last 24 months — exceptional.'
-        : crashes.fatal > 0
-          ? `${crashes.fatal} fatal crash${crashes.fatal === 1 ? '' : 'es'} on file. Read the full SMS Crashes report before booking.`
-          : crashes.total >= 10
-            ? `${crashes.total} crashes in 24 months — above-average for most fleet sizes. Worth investigating severity and frequency.`
-            : `${crashes.total} crash${crashes.total === 1 ? '' : 'es'} in 24 months — within typical range; check trend.`)
+        ? 'Zero reported crashes in the last 24 months.'
+        : crashes.fatal > 0 && (fleet == null || fleet < 50)
+          ? `${crashes.fatal} fatal crash${crashes.fatal === 1 ? '' : 'es'} on file. Read the full SMS Crashes report before you tender.`
+          : perTruckYear != null
+            ? `${crashes.total} crash${crashes.total === 1 ? '' : 'es'} in 24 months across ${fleet} truck${fleet === 1 ? '' : 's'}: about ${perTruckYear.toFixed(2)} per truck per year, ${crashesHigh ? 'above' : perTruckYear < 0.2 ? 'below' : 'within'} the usual 0.2–0.4.${crashes.fatal > 0 ? ` Includes ${crashes.fatal} fatal crash${crashes.fatal === 1 ? '' : 'es'} — FMCSA counts crashes regardless of fault.` : ''}`
+            : `${crashes.total} crash${crashes.total === 1 ? '' : 'es'} in 24 months. Fleet size unknown, so we can't compare this to similar carriers.`)
+    : null;
+  // FMCSA's carrier record and SMS update on different schedules, so their
+  // crash totals can differ by one or two — say so instead of leaving it.
+  const crashCountNote = crashes && carrier?.crashTotal != null && carrier.crashTotal !== crashes.total
+    ? `FMCSA's carrier record shows ${carrier.crashTotal}; SMS (updated monthly) shows ${crashes.total}. The two sources update on different schedules.`
     : null;
 
   return (
@@ -11019,7 +11119,13 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
               ? 'No roadside inspections on file in the last 24 months.'
               : (vehOosPct === 0 && drvOosPct === 0)
                 ? `${inspections.vehicleInspections + inspections.driverInspections} total inspections, zero out-of-service findings — strong safety performance.`
-                : `${inspections.vehicleInspections + inspections.driverInspections} total inspections in 24 months. ${(vehOosPct ?? 0) >= 20 || (drvOosPct ?? 0) >= 5 ? 'OOS rates above national average — investigate before booking.' : 'OOS rates within typical range.'}`}
+                : (() => {
+                    // Name exactly which rate is above / below the national average.
+                    const part = (label: string, pct: number | null, nat: number | null | undefined) =>
+                      pct == null || nat == null ? null : `${label} OOS is ${pct > nat ? 'above' : 'at or below'} the national average (${pct.toFixed(1)}% vs ${nat.toFixed(1)}%)`;
+                    const parts = [part('Vehicle', vehOosPct, inspections.vehicleNationalAvgPct), part('driver', drvOosPct, inspections.driverNationalAvgPct)].filter(Boolean);
+                    return `${inspections.vehicleInspections + inspections.driverInspections} total inspections in 24 months.${parts.length ? ` ${parts.join('; ')}.` : ''}`;
+                  })()}
           </div>
         </>
       )}
@@ -11029,14 +11135,15 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
         <>
           <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-2">Crashes (last 24 months)</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
-            <SmsStatCard label="Total" value={String(crashes.total)} alert={crashes.total >= 10} />
-            <SmsStatCard label="Fatal" value={String(crashes.fatal)} alert={crashes.fatal > 0} />
+            <SmsStatCard label="Total" value={String(crashes.total)} alert={crashesHigh} />
+            <SmsStatCard label="Fatal" value={String(crashes.fatal)} alert={crashes.fatal > 0 && (fleet == null || fleet < 50)} />
             <SmsStatCard label="Injury" value={String(crashes.injury)} />
             <SmsStatCard label="Tow-away" value={String(crashes.towaway)} />
           </div>
           {crashLine && (
-            <div className={`text-[11px] mb-6 leading-relaxed ${crashes.fatal > 0 || crashes.total >= 10 ? 'text-[#DC2626]' : 'text-[#0B1E3F]/65'}`}>
+            <div className={`text-[11px] mb-6 leading-relaxed ${crashesHigh || (crashes.fatal > 0 && (fleet == null || fleet < 50)) ? 'text-[#DC2626]' : 'text-[#0B1E3F]/65'}`}>
               {crashLine}
+              {crashCountNote && <span className="block mt-1 text-[#0B1E3F]/55">{crashCountNote}</span>}
             </div>
           )}
         </>
