@@ -264,6 +264,11 @@ export async function GET(req: Request) {
       (e) => { timings[name] = Date.now() - t; throw e; },
     );
   };
+  // MCS-150 contact details (officers, email, phone) from FMCSA's census —
+  // started now so it runs alongside the other sources.
+  const censusPromise = carrier.dot
+    ? import('@/lib/fmcsa-census').then((m) => m.fetchCensusContact(carrier.dot)).catch(() => null)
+    : Promise.resolve(null);
   const [addressResult, webResult, chameleonLinks, webReputation, legacyReference, smsData] = await Promise.all([
     timed('places',
       carrier.address
@@ -322,6 +327,20 @@ export async function GET(req: Request) {
         : Promise.resolve(null),
     ),
   ]);
+  // Apply the MCS-150 contact details. The email of record is current
+  // (filed with FMCSA), so it sets emailDomain before any snapshot backfill.
+  const census = await censusPromise;
+  if (census) {
+    if (census.officers.length) carrier.officers = census.officers;
+    if (census.email) {
+      carrier.fmcsaEmail = census.email;
+      carrier.emailDomain = census.email.split('@')[1];
+    }
+    if (!carrier.phone && census.phone) carrier.phone = census.phone;
+    if (!carrier.mcs150Date && census.mcs150Date) carrier.mcs150Date = census.mcs150Date;
+    carrier.censusAsOf = census.mcs150Date;
+  }
+
   // Friendly per-source breakdown — operator opens the dev terminal,
   // searches a carrier, watches the data come in source-by-source.
   // Format: status icon · source name · timing · what came back.

@@ -27,6 +27,11 @@ export type CarrierReport = {
   address?: string;
   phone?: string;
   emailDomain?: string;
+  // From the carrier's MCS-150 filing (FMCSA Company Census File): officer
+  // names and the email of record. QCMobile doesn't return these.
+  officers?: string[];
+  fmcsaEmail?: string;
+  censusAsOf?: string;
   authorityStatus?: string;
   commonAuthority?: string;
   brokerAuthority?: string;

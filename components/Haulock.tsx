@@ -10018,6 +10018,16 @@ function CarrierReport({ report, navigate }: any) {
             return (<>
               <div className="text-2xl text-[#0B1E3F] leading-tight mb-3">{rec.headline}</div>
               <p className="text-[#0B1E3F]/70 leading-relaxed">{rec.detail}</p>
+              {/* Who to ask for, at the number FMCSA has — an impersonator
+                  on a spoofed number usually can't name the officer. */}
+              {(r.officers || []).length > 0 && r.phone && (
+                <div className="mt-4 p-3 bg-[#F5F3EE] rounded-xl text-sm text-[#0B1E3F]/80 flex items-start gap-2">
+                  <Phone className="w-4 h-4 text-[#0B1E3F]/50 flex-shrink-0 mt-0.5" />
+                  <span>
+                    To confirm who you&apos;re dealing with, call <strong className="text-[#0B1E3F]">{String(r.phone).replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3')}</strong> (the number on FMCSA&apos;s record) and ask for <strong className="text-[#0B1E3F]">{r.officers[0]}</strong>{r.officers.length > 1 ? <> or <strong className="text-[#0B1E3F]">{r.officers[1]}</strong></> : null}, {r.officers.length > 1 ? 'the officers' : 'the officer'} on the company&apos;s FMCSA filing{r.censusAsOf ? ` (updated ${new Date(r.censusAsOf + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })})` : ''}.
+                  </span>
+                </div>
+              )}
 
               <div className="mt-6 pt-5 border-t border-[#0B1E3F]/10">
                 <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">How we got {r.score}/100</div>
@@ -10077,7 +10087,12 @@ function CarrierReport({ report, navigate }: any) {
           { icon: Building2, label: 'DBA', val: r.dba || '—' },
           { icon: MapPin, label: 'Physical address', val: r.address || '—' },
           { icon: Phone, label: 'Phone', val: r.phone || '— (not in FMCSA)' },
-          { icon: Mail, label: 'Email domain', val: r.emailDomain ? `${r.emailDomain}${(r.backfilled || []).some((b: any) => b.field === 'emailDomain') ? ' (from an earlier FMCSA record)' : ''}` : 'Not on FMCSA record' },
+          // Officers and email as filed on the company's MCS-150 (FMCSA
+          // census) — the person to ask for when calling the FMCSA number.
+          { icon: UserCheck, label: (r.officers || []).length > 1 ? 'Company officers' : 'Company officer', val: (r.officers || []).length ? r.officers.join(' · ') : 'Not on FMCSA record' },
+          r.fmcsaEmail
+            ? { icon: Mail, label: 'Email on FMCSA filing', val: r.fmcsaEmail }
+            : { icon: Mail, label: 'Email domain', val: r.emailDomain ? `${r.emailDomain}${(r.backfilled || []).some((b: any) => b.field === 'emailDomain') ? ' (from an earlier FMCSA record)' : ''}` : 'Not on FMCSA record' },
           // FMCSA's carrier lookup doesn't return a grant date; age comes from
           // its authority-history data and can be unavailable.
           { icon: Clock, label: 'Authority age', val: r.authorityAge || 'Unavailable', warn: r.authorityAge && /reactivated/i.test(r.authorityAge) },

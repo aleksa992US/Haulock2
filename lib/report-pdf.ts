@@ -371,7 +371,8 @@ function identityItems(r: Carrier): Array<{ label: string; value: string }> {
     { label: 'DBA', value: r.dba || '—' },
     { label: 'Physical address', value: r.address || '—' },
     { label: 'Phone', value: r.phone || '—' },
-    { label: 'Email domain', value: r.emailDomain || '—' },
+    { label: (r.officers || []).length > 1 ? 'Company officers' : 'Company officer', value: (r.officers || []).length ? r.officers.join(', ') : '-' },
+    { label: r.fmcsaEmail ? 'Email on FMCSA filing' : 'Email domain', value: r.fmcsaEmail || r.emailDomain || '-' },
     // QCMobile has no grant date; age comes from FMCSA's authority history
     // when it could be fetched. Say so instead of a bare dash.
     { label: 'Authority age', value: r.authorityAge || (r.authorityHistory?.checked ? 'No grant on record' : 'Unavailable') },
