@@ -166,6 +166,19 @@ export async function GET() {
   const parsed = parseQuery(queryStr);
   if (!parsed) return NextResponse.json({ ownMc, ownDot, report: null, error: 'Invalid ID' });
   const carrier = await lookupCarrier(parsed);
+  // MCS-150 contact details from FMCSA's census (QCMobile often lacks the
+  // phone): officers, email of record, phone, filing date.
+  try {
+    const { fetchCensusContact } = await import('@/lib/fmcsa-census');
+    const census = carrier.dot ? await fetchCensusContact(carrier.dot) : null;
+    if (census) {
+      if (census.officers.length) carrier.officers = census.officers;
+      if (census.email) { carrier.fmcsaEmail = census.email; carrier.emailDomain = census.email.split('@')[1]; }
+      if (!carrier.phone && census.phone) carrier.phone = census.phone;
+      if (!carrier.mcs150Date && census.mcs150Date) carrier.mcs150Date = census.mcs150Date;
+      carrier.censusAsOf = census.mcs150Date;
+    }
+  } catch { /* contact details are optional */ }
   if (carrier.address) {
     const ac = await checkAddress(carrier.address, carrier.name);
     if (ac.configured) carrier.addressCheck = ac;
