@@ -8741,7 +8741,9 @@ function MiniStat({ label, value, good, warn }: any) {
 
 function AppShell({ user, route, navigate, logout, children }: any) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const alertsRes = useCachedFetch<{ unseenCount: number }>('alerts', '/api/alerts');
+  // Badges stay live: any page that changes alerts/tickets invalidates the
+  // shared cache key, and these re-check every minute while the tab is open.
+  const alertsRes = useCachedFetch<{ unseenCount: number }>('alerts', '/api/alerts', { refreshMs: 60_000 });
   const alertCount = alertsRes.data?.unseenCount || 0;
   const usageRes = useCachedFetch<{ plan: any; usage: any; isAdmin?: boolean }>('usage', '/api/usage');
   const usagePlan = getPlan(user?.plan || usageRes.data?.plan?.id);
@@ -8765,6 +8767,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const supportCountsRes = useCachedFetch<{ open: number; working: number; solved: number }>(
     'admin-support-counts',
     isAdmin ? '/api/admin/support/counts' : null,
+    { refreshMs: 60_000 },
   );
   const openTickets = isAdmin ? (supportCountsRes.data?.open || 0) : 0;
   const lookupsLeft = isAdmin || usagePlan.limits.fmcsaLookups == null ? null : Math.max(0, usagePlan.limits.fmcsaLookups - usageNums.fmcsaLookups);
@@ -9936,22 +9939,13 @@ function PdfForensicsPanel() {
     }
   };
 
-  const verdictTone = (v: string) =>
-    v === 'likely_tampered' ? { bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30', text: 'text-[#DC2626]', label: 'LIKELY TAMPERED' }
-    : v === 'suspicious' ? { bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30', text: 'text-[#F59E0B]', label: 'SUSPICIOUS' }
-    : { bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30', text: 'text-[#16A34A]', label: 'CLEAN' };
-
-  const sevColor = (s: string) => s === 'critical' ? '#DC2626' : s === 'warning' ? '#F59E0B' : '#0B1E3F';
-  const fmtBytes = (n: number) => n < 1024 ? `${n} B` : n < 1_048_576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1_048_576).toFixed(1)} MB`;
-  const fmtDate = (s: string | null) => s ? new Date(s).toLocaleString() : '—';
-
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
       <div className="flex items-start gap-4 p-4 bg-[#16A34A]/10 border border-[#16A34A]/25 rounded-xl mb-6">
         <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
         <div className="text-sm text-[#0B1E3F]">
-          <div className="font-medium mb-0.5">PDF metadata forensics · 3 scans/month free, unlimited on paid</div>
-          <div className="text-[#0B1E3F]/70">Checks the PDF&apos;s hidden metadata for signs of tampering — modification timestamps, software used to edit, stripped metadata, and author-name mismatches. No OCR, no AI, no broker lookup — just forensics on the file itself.</div>
+          <div className="font-medium mb-0.5">PDF forensics · 3 scans/month free, unlimited on paid</div>
+          <div className="text-[#0B1E3F]/70">Opens up the file itself: every saved version inside it, what text or drawing changed between them, white-out boxes, typed-on-top text, hidden text, signatures, fonts, and the hidden metadata. We tell you what&apos;s suspicious and what&apos;s normal. No AI, no broker lookup.</div>
         </div>
       </div>
 
@@ -9967,87 +9961,240 @@ function PdfForensicsPanel() {
           {loading ? <div className="w-5 h-5 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <FileText className="w-7 h-7 text-[#0B1E3F]/50" />}
         </div>
         <div className="text-lg font-medium text-[#0B1E3F] mb-1">
-          {loading ? 'Analyzing PDF metadata…' : file ? file.name : 'Drop a PDF to check if it was tampered with'}
+          {loading ? 'Taking the PDF apart…' : file ? file.name : 'Drop a PDF to check if it was tampered with'}
         </div>
-        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 15 MB · metadata inspection only (no OCR / AI / FMCSA)</div>
+        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 15 MB · the file is checked, not stored</div>
         {!loading && <div className="mt-4 inline-block px-5 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Choose PDF</div>}
       </label>
 
       {error && <div className="mt-4 text-sm text-[#DC2626]">{error}</div>}
 
-      {result && (() => {
-        const tone = verdictTone(result.verdict);
-        return (
-          <div className="mt-8 space-y-6">
-            {/* Verdict banner */}
-            <div className={`p-5 rounded-2xl border ${tone.bg} ${tone.border}`}>
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                  <div className={`text-xs mono uppercase tracking-wider ${tone.text} mb-1`}>{tone.label}</div>
-                  <div className="text-2xl font-semibold text-[#0B1E3F]">{result.filename || 'Document'}</div>
-                  <div className="text-sm text-[#0B1E3F]/60 mt-1">Forensic score: <span className="font-semibold">{result.score}/100</span> · {result.flags.length} flag{result.flags.length === 1 ? '' : 's'}</div>
-                </div>
-                <div className={`w-20 h-20 rounded-2xl ${tone.bg} ${tone.border} border flex flex-col items-center justify-center flex-shrink-0`}>
-                  <div className={`text-3xl font-bold ${tone.text}`}>{result.score}</div>
-                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">/ 100</div>
-                </div>
-              </div>
+      {result && (
+        <div className="mt-8">
+          <ForensicsResultBody result={result} />
+          <div className="mt-6 pt-4 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60">
+            Tip: this checks the PDF file itself. To verify the BROKER on the rate con, switch to the <strong>Rate con analyzer</strong> tab.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Saved forensics scans (History / Alerts) carry the analyzer result; older
+// rows have no `kind`, so recognise them by the file metadata block.
+function isForensicsReport(r: any): boolean {
+  return r?.kind === 'forensics' || (r && typeof r.metadata?.pageCount === 'number' && Array.isArray(r.flags) && !r.mc && !r.dot);
+}
+
+function ForensicsReportView({ report, navigate }: any) {
+  return (
+    <div className="space-y-6 text-[#0B1E3F]">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">PDF forensics</div>
+          <h1 className="text-3xl md:text-4xl serif italic break-words">{report.filename || 'PDF document'}</h1>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => navigate('history')} className="px-5 py-2.5 border border-[#0B1E3F]/15 bg-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/5">Back to history</button>
+          <button onClick={() => navigate('verify', { tab: 'forensics' })} className="px-5 py-2.5 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90">Check another PDF</button>
+        </div>
+      </div>
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 md:p-8 card-shadow">
+        <ForensicsResultBody result={report} />
+      </div>
+    </div>
+  );
+}
+
+const FORENSIC_KIND: Record<string, { label: string; tone: 'bad' | 'warn' | 'ok' | 'neutral' }> = {
+  original: { label: 'Original', tone: 'neutral' },
+  content: { label: 'Text changed', tone: 'bad' },
+  graphics: { label: 'Drawing changed', tone: 'warn' },
+  markup: { label: 'Added on top', tone: 'warn' },
+  structure: { label: 'Tags only', tone: 'ok' },
+  form: { label: 'Form filled', tone: 'ok' },
+  signature: { label: 'Signed', tone: 'ok' },
+  metadata: { label: 'Re-saved', tone: 'ok' },
+  unknown: { label: 'Changed', tone: 'warn' },
+};
+const FORENSIC_TONE = {
+  bad: { dot: '#DC2626', chip: 'bg-[#DC2626]/10 text-[#DC2626]' },
+  warn: { dot: '#F59E0B', chip: 'bg-[#F59E0B]/15 text-[#B45309]' },
+  ok: { dot: '#16A34A', chip: 'bg-[#16A34A]/10 text-[#16A34A]' },
+  neutral: { dot: '#0B1E3F', chip: 'bg-[#0B1E3F]/8 text-[#0B1E3F]/70' },
+};
+
+function ForensicsResultBody({ result }: { result: any }) {
+  const r = result || {};
+  const flags: any[] = Array.isArray(r.flags) ? r.flags : [];
+  const normal: any[] = Array.isArray(r.normal) ? r.normal : [];
+  const revisions: any[] = Array.isArray(r.revisions) ? r.revisions : [];
+  const md = r.metadata || {};
+  const [showMeta, setShowMeta] = useState(false);
+
+  const tone = r.verdict === 'likely_tampered'
+    ? { bg: 'bg-[#DC2626]/10', border: 'border-[#DC2626]/30', text: 'text-[#DC2626]', label: 'Likely tampered', Icon: XCircle }
+    : r.verdict === 'suspicious'
+      ? { bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30', text: 'text-[#B45309]', label: 'Worth a closer look', Icon: AlertTriangle }
+      : { bg: 'bg-[#16A34A]/10', border: 'border-[#16A34A]/30', text: 'text-[#16A34A]', label: 'No signs of editing', Icon: CheckCircle2 };
+  const summary: string = r.summary || (r.verdict === 'likely_tampered'
+    ? 'Strong signs this PDF was changed after it was made.'
+    : r.verdict === 'suspicious' ? 'Some things worth a closer look, but no proof of editing.' : 'No signs of editing in what we checked.');
+  const sevStyle = (sev: string) => sev === 'critical'
+    ? { color: '#DC2626', label: 'Red flag' }
+    : sev === 'warning' ? { color: '#F59E0B', label: 'Check this' } : { color: '#64748B', label: 'Note' };
+  const fmtBytes = (n: number) => !n ? '—' : n < 1024 ? `${n} B` : n < 1_048_576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1_048_576).toFixed(1)} MB`;
+  const fmtDate = (v: string | null | undefined) => v ? new Date(v).toLocaleString() : '—';
+  const changedTextCount = revisions.reduce((n, v) => n + (v.textChanges?.length || 0), 0);
+
+  return (
+    <div className="space-y-7 text-[#0B1E3F]">
+      {/* Verdict */}
+      <div className={`p-5 rounded-2xl border ${tone.bg} ${tone.border}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className={`flex items-center gap-1.5 text-xs mono uppercase tracking-wider font-semibold ${tone.text} mb-1.5`}>
+              <tone.Icon className="w-4 h-4" /> {tone.label}
             </div>
-
-            {/* Flags */}
-            {result.flags.length > 0 && (
-              <div>
-                <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Red flags detected</div>
-                <div className="space-y-2">
-                  {result.flags.map((f: any, i: number) => (
-                    <div key={i} className="flex items-start gap-3 p-4 bg-[#0B1E3F]/[0.03] border border-[#0B1E3F]/10 rounded-xl">
-                      <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: sevColor(f.sev) }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm text-[#0B1E3F]">{f.title}</div>
-                        <div className="text-sm text-[#0B1E3F]/70 mt-0.5">{f.desc}</div>
-                      </div>
-                      <div className="text-xs mono text-[#0B1E3F]/50 flex-shrink-0">+{f.pts}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {result.flags.length === 0 && (
-              <div className="p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl text-sm text-[#0B1E3F]">
-                <div className="font-semibold text-[#16A34A] mb-1">No red flags detected</div>
-                The PDF metadata looks consistent with a document generated by legitimate software and not subsequently edited. This doesn&apos;t guarantee the CONTENT is honest — run a full rate con scan to verify the broker itself.
-              </div>
-            )}
-
-            {/* Raw metadata */}
-            <div>
-              <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">Document metadata</div>
-              <div className="grid md:grid-cols-2 gap-3">
-                {[
-                  { label: 'Creation date', val: fmtDate(result.metadata.creationDate) },
-                  { label: 'Modification date', val: fmtDate(result.metadata.modificationDate) },
-                  { label: 'Producer', val: result.metadata.producer || '—' },
-                  { label: 'Creator', val: result.metadata.creator || '—' },
-                  { label: 'Author', val: result.metadata.author || '—' },
-                  { label: 'Title', val: result.metadata.title || '—' },
-                  { label: 'PDF version', val: result.metadata.pdfVersion || '—' },
-                  { label: 'Pages', val: String(result.metadata.pageCount) },
-                  { label: 'File size', val: fmtBytes(result.metadata.fileSizeBytes) },
-                ].map((i, idx) => (
-                  <div key={idx} className="p-3 bg-[#0B1E3F]/5 rounded-lg">
-                    <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{i.label}</div>
-                    <div className="text-sm text-[#0B1E3F] mt-0.5 break-words">{i.val}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-[#0B1E3F]/10 text-xs text-[#0B1E3F]/60">
-              Tip: this only inspects the PDF file itself. To verify the BROKER on the rate con, switch to the <strong>Rate con analyzer</strong> tab.
+            <div className="text-lg md:text-xl font-semibold leading-snug">{summary}</div>
+            <div className="text-sm text-[#0B1E3F]/60 mt-1.5">
+              {flags.filter((f) => f.sev !== 'info').length} finding{flags.filter((f) => f.sev !== 'info').length === 1 ? '' : 's'} · {normal.length} thing{normal.length === 1 ? '' : 's'} checked out normal
+              {revisions.length > 1 && ` · saved ${revisions.length} times`}
             </div>
           </div>
-        );
-      })()}
+          <div className={`w-20 h-20 rounded-2xl bg-white/70 ${tone.border} border flex flex-col items-center justify-center flex-shrink-0`}>
+            <div className={`text-3xl font-bold ${tone.text}`}>{r.score ?? 0}</div>
+            <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">/ 100</div>
+          </div>
+        </div>
+        <div className="mt-3 text-xs text-[#0B1E3F]/55">Tamper score: 0–19 clean · 20–49 worth a look · 50+ likely edited. Higher means more signs of editing.</div>
+      </div>
+
+      {/* Findings */}
+      {flags.length > 0 && (
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">What we found</div>
+          <div className="space-y-2">
+            {flags.map((f: any, i: number) => {
+              const st = sevStyle(f.sev);
+              return (
+                <div key={i} className="flex items-start gap-3 p-4 bg-white border border-[#0B1E3F]/10 rounded-xl" style={{ borderLeft: `3px solid ${st.color}` }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: st.color }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm">{f.title}</span>
+                      <span className="text-[10px] mono uppercase tracking-wider font-semibold" style={{ color: st.color }}>{st.label}</span>
+                    </div>
+                    <div className="text-sm text-[#0B1E3F]/70 mt-0.5">{f.desc}</div>
+                  </div>
+                  <div className="text-xs mono text-[#0B1E3F]/45 flex-shrink-0">+{f.pts}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Saved versions */}
+      {revisions.length > 1 && (
+        <div>
+          <div className="flex items-baseline justify-between gap-3 mb-3">
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">Every saved version inside this file</div>
+            {changedTextCount > 0 && <div className="text-xs text-[#DC2626] font-medium">{changedTextCount} text change{changedTextCount === 1 ? '' : 's'}</div>}
+          </div>
+          <div className="text-xs text-[#0B1E3F]/55 mb-3">PDFs keep earlier versions when they&apos;re saved again. We rebuilt each one and compared it with the one before.</div>
+          <ol className="relative border-l-2 border-[#0B1E3F]/10 ml-2 space-y-4">
+            {revisions.map((v: any) => {
+              const k = FORENSIC_KIND[v.kind] || FORENSIC_KIND.unknown;
+              const t = FORENSIC_TONE[k.tone];
+              return (
+                <li key={v.index} className="pl-5 relative">
+                  <span className="absolute -left-[7px] top-1.5 w-3 h-3 rounded-full ring-4 ring-white" style={{ background: t.dot }} />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold">Version {v.index}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] mono uppercase tracking-wider font-bold ${t.chip}`}>{k.label}</span>
+                    {(v.modified || v.producer) && (
+                      <span className="text-xs text-[#0B1E3F]/50">{[v.modified && fmtDate(v.modified), v.producer].filter(Boolean).join(' · ')}</span>
+                    )}
+                  </div>
+                  <div className="text-sm text-[#0B1E3F]/75 mt-1">{v.summary}</div>
+                  {Array.isArray(v.textChanges) && v.textChanges.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {v.textChanges.slice(0, 6).map((c: any, i: number) => (
+                        <div key={i} className="rounded-xl border border-[#0B1E3F]/10 overflow-hidden text-sm">
+                          <div className="px-3 py-1 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50 bg-[#0B1E3F]/[0.03]">Page {c.page}</div>
+                          <div className="grid sm:grid-cols-2">
+                            <div className="px-3 py-2 bg-[#DC2626]/[0.05] sm:border-r border-[#0B1E3F]/10">
+                              <div className="text-[10px] mono uppercase tracking-wider text-[#DC2626] mb-0.5">Before</div>
+                              <div className="break-words line-through decoration-[#DC2626]/40">{c.before || <span className="text-[#0B1E3F]/40 no-underline">(nothing)</span>}</div>
+                            </div>
+                            <div className="px-3 py-2 bg-[#16A34A]/[0.05]">
+                              <div className="text-[10px] mono uppercase tracking-wider text-[#16A34A] mb-0.5">After</div>
+                              <div className="break-words font-medium">{c.after || <span className="text-[#0B1E3F]/40">(removed)</span>}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+
+      {/* Normal */}
+      {normal.length > 0 && (
+        <div>
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">What&apos;s normal here</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {normal.map((n: any, i: number) => (
+              <div key={i} className="flex items-start gap-2.5 p-3 rounded-xl bg-[#16A34A]/[0.06] border border-[#16A34A]/20">
+                <CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">{n.title}</div>
+                  <div className="text-xs text-[#0B1E3F]/65 mt-0.5">{n.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {flags.length === 0 && normal.length === 0 && (
+        <div className="p-5 bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl text-sm">
+          <div className="font-semibold text-[#16A34A] mb-1">No red flags detected</div>
+          Nothing in the file suggests it was edited after it was made. This doesn&apos;t prove the content is honest. Verify the broker too.
+        </div>
+      )}
+
+      {/* Metadata */}
+      <div>
+        <button onClick={() => setShowMeta((v) => !v)} className="flex items-center gap-1.5 text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 hover:text-[#0B1E3F]">
+          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showMeta ? 'rotate-90' : ''}`} /> File details
+        </button>
+        {showMeta && (
+          <div className="grid md:grid-cols-2 gap-3 mt-3">
+            {[
+              { label: 'Created', val: fmtDate(md.creationDate) },
+              { label: 'Last saved', val: fmtDate(md.modificationDate) },
+              { label: 'Producer', val: md.producer || '—' },
+              { label: 'Creator', val: md.creator || '—' },
+              { label: 'Author', val: md.author || '—' },
+              { label: 'Title', val: md.title || '—' },
+              { label: 'PDF version', val: md.pdfVersion || '—' },
+              { label: 'Pages', val: md.pageCount != null ? String(md.pageCount) : '—' },
+              { label: 'File size', val: fmtBytes(md.fileSizeBytes) },
+            ].map((i, idx) => (
+              <div key={idx} className="p-3 bg-[#0B1E3F]/5 rounded-lg">
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{i.label}</div>
+                <div className="text-sm mt-0.5 break-words">{i.val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -10065,6 +10212,7 @@ function entityBadge(r: any): { label: string; bg: string; color: string; icon: 
 // own view so the carrier report never receives a COI payload.
 function Report({ report, navigate }: any) {
   if (report?.kind === 'coi') return <CoiReportView report={report} navigate={navigate} />;
+  if (isForensicsReport(report)) return <ForensicsReportView report={report} navigate={navigate} />;
   return <CarrierReport report={report} navigate={navigate} />;
 }
 

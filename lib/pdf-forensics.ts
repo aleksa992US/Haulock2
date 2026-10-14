@@ -35,7 +35,11 @@ export type RevisionInfo = {
   annotationsAdded: string[];  // annotation subtypes added (FreeText, Stamp, …)
   formFieldsChanged: number;
   signed: boolean;             // this version added a digital signature
-  kind: 'original' | 'content' | 'markup' | 'form' | 'signature' | 'metadata' | 'unknown';
+  // What the change on each changed page actually was:
+  textChanges: { page: number; before: string; after: string }[]; // readable text that changed
+  pagesGraphicsOnly: number[]; // drawing changed, text identical
+  pagesTagsOnly: number[];     // only accessibility tags / structure markers
+  kind: 'original' | 'content' | 'graphics' | 'structure' | 'markup' | 'form' | 'signature' | 'metadata' | 'unknown';
   summary: string;
 };
 
@@ -234,6 +238,10 @@ function parseXmp(x: string): Xmp {
 type PageScan = {
   streams: string[];           // decoded content streams, in drawing order
   hash: string;
+  textSig: string;             // every text string drawn, raw, in order
+  textBag: string;             // the same strings ignoring order (reordering ≠ editing)
+  text: string;                // the readable part of it, for showing what changed
+  drawSig: string;             // drawing with tags/structure markers and spacing removed
   annots: string[];            // annotation subtypes
   freeTextContents: string[];
   hasImage: boolean;
@@ -296,7 +304,98 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
   if (!hasImage && streams.some((s) => /\bBI\b[\s\S]*?\bID\b/.test(s))) hasImage = true; // inline image
   let width = 612, height = 792;
   try { const sz = page.getSize(); width = sz.width; height = sz.height; } catch { /* default letter */ }
-  return { streams, hash: sha(streams.join('\n')), annots, freeTextContents, hasImage, fonts, width, height };
+  const joined = streams.join('\n');
+  const runs = textRuns(joined);
+  return {
+    streams, hash: sha(joined),
+    textSig: sha(runs.map((r) => r.raw).join('\u0001')),
+    textBag: sha(runs.map((r) => r.raw).sort().join('\u0001')),
+    text: runs.map((r) => r.text).join(''),
+    // What gets painted (shapes, fills, images) as an unordered set. Tagging
+    // tools reorder commands and re-write colour/positioning state without
+    // changing what's drawn; a new box, line or image still shows.
+    drawSig: sha(drawStatements(stripStructure(joined)).filter(isPaintStatement).sort().join('\n')),
+    annots, freeTextContents, hasImage, fonts, width, height,
+  };
+}
+
+// Text strings drawn inside BT…ET blocks. `raw` is exact (any change shows);
+// `text` is the readable form when the font encoding is plain (literal
+// strings or single-byte hex) — CID fonts stay unreadable but still compare.
+function textRuns(content: string): { raw: string; text: string }[] {
+  const out: { raw: string; text: string }[] = [];
+  for (const block of Array.from(content.matchAll(/\bBT\b([\s\S]*?)\bET\b/g))) {
+    for (const m of Array.from(block[1].matchAll(/\((?:\\[\s\S]|[^\\)])*\)|(?<!<)<([0-9A-Fa-f\s]+)>(?!>)/g))) {
+      if (m[0].startsWith('(')) {
+        const body = m[0].slice(1, -1).replace(/\\([nrtbf()\\]|[0-7]{1,3})/g, (_x, e) =>
+          /^[0-7]+$/.test(e) ? String.fromCharCode(parseInt(e, 8)) : ({ n: '\n', r: '', t: ' ', b: '', f: '' } as Record<string, string>)[e] ?? e);
+        out.push({ raw: m[0], text: /^[\x20-\x7E\u00A0-\u00FF\n]*$/.test(body) ? body : '' });
+      } else {
+        const hex = (m[1] || '').replace(/\s+/g, '');
+        let decoded = '';
+        if (hex.length % 2 === 0) {
+          for (let i = 0; i < hex.length; i += 2) decoded += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+        }
+        out.push({ raw: `<${hex}>`, text: /^[\x20-\x7E]*$/.test(decoded) ? decoded : '' });
+      }
+    }
+  }
+  return out;
+}
+
+// Remove tagged-PDF / structure markers (BDC…EMC, BMC, MP, DP) and spacing,
+// so adding accessibility tags isn't mistaken for changing the page.
+function stripStructure(content: string): string {
+  return content
+    .replace(/\/[^\s/<>\[\]()]+\s*(?:<<(?:[^<>]|<<[^<>]*>>)*>>|\/[^\s/<>\[\]()]+)?\s*(?:BDC|BMC|MP|DP)\b/g, ' ')
+    .replace(/\bEMC\b/g, ' ')
+    .replace(/%[^\n\r]*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Split a content stream into drawing statements ("operands operator").
+function drawStatements(content: string): string[] {
+  const out: string[] = [];
+  let cur: string[] = [];
+  let depth = 0;
+  const re = /\((?:\\[\s\S]|[^\\)])*\)|<<|>>|<[0-9A-Fa-f\s]*>|\[|\]|\/[^\s/<>\[\]()%]+|[-+]?(?:\d+\.?\d*|\.\d+)|[A-Za-z'"][A-Za-z0-9*'"]*/g;
+  for (const m of Array.from(content.matchAll(re))) {
+    const t = m[0];
+    if (t === '[' || t === '<<') { depth += 1; cur.push(t); continue; }
+    if (t === ']' || t === '>>') { depth = Math.max(0, depth - 1); cur.push(t); continue; }
+    if (depth === 0 && /^[A-Za-z'"]/.test(t) && !/^(true|false|null)$/.test(t)) {
+      cur.push(t);
+      out.push(cur.join(' '));
+      cur = [];
+      continue;
+    }
+    cur.push(t);
+  }
+  return out;
+}
+
+// Path construction, painting, images and shadings. Graphics state (colour,
+// line width, q/Q, cm) and text positioning are left out: Acrobat re-emits
+// those freely when it re-saves or tags a page.
+const PAINT_OPS = new Set(['m', 'l', 'c', 'v', 'y', 'h', 're', 'f', 'F', 'f*', 'S', 's', 'B', 'B*', 'b', 'b*', 'Do', 'sh']);
+function isPaintStatement(statement: string): boolean {
+  return PAINT_OPS.has(statement.slice(statement.lastIndexOf(' ') + 1));
+}
+
+// The part of the readable text that differs: common start and end trimmed.
+function textDelta(a: string, b: string): { before: string; after: string } | null {
+  if (!a && !b) return null;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  let j = 0;
+  while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  const clip = (x: string) => x.replace(/\s+/g, ' ').trim().slice(0, 80);
+  // Widen to whole words for context.
+  let s = i; while (s > 0 && /\S/.test(a[s - 1] || '') && i - s < 20) s--;
+  const before = clip(a.slice(s, a.length - j));
+  const after = clip(b.slice(s, b.length - j));
+  return before || after ? { before, after } : null;
 }
 
 const TEXT_OP = /\b(Tj|TJ|'|")\s/;
@@ -361,8 +460,23 @@ function printDoc(doc: PDFDocument): DocPrint {
 
 function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: number): RevisionInfo {
   const pagesChanged: number[] = [];
+  const pagesGraphicsOnly: number[] = [];
+  const pagesTagsOnly: number[] = [];
+  const textChanges: RevisionInfo['textChanges'] = [];
   const shared = Math.min(prev.pages.length, next.pages.length);
-  for (let i = 0; i < shared; i++) if (prev.pages[i].hash !== next.pages[i].hash) pagesChanged.push(i + 1);
+  for (let i = 0; i < shared; i++) {
+    const a = prev.pages[i], b = next.pages[i];
+    if (a.hash === b.hash) continue;
+    if (a.textSig !== b.textSig && a.textBag !== b.textBag) {
+      pagesChanged.push(i + 1);
+      const d = textDelta(a.text, b.text);
+      if (d) textChanges.push({ page: i + 1, ...d });
+    } else if (a.drawSig !== b.drawSig) {
+      pagesGraphicsOnly.push(i + 1);
+    } else {
+      pagesTagsOnly.push(i + 1);
+    }
+  }
   const pagesAdded = Math.max(0, next.pages.length - prev.pages.length);
   const count = (pages: PageScan[]) => {
     const m = new Map<string, number>();
@@ -382,7 +496,13 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
   const by = next.producer ? ` with ${next.producer}` : '';
   if (pagesChanged.length) {
     kind = 'content';
-    summary = `Changed the content of ${pageList(pagesChanged)}${by}.`;
+    const shown = textChanges.find((t) => t.before || t.after);
+    summary = shown
+      ? `Changed the text on ${pageList(pagesChanged)}${by}: “${shown.before || '(nothing)'}” became “${shown.after || '(removed)'}”.`
+      : `Changed the text on ${pageList(pagesChanged)}${by}.`;
+  } else if (pagesGraphicsOnly.length) {
+    kind = 'graphics';
+    summary = `Changed the drawing on ${pageList(pagesGraphicsOnly)}${by}; the text is the same.`;
   } else if (markup.length) {
     kind = 'markup';
     summary = `Added ${markup.includes('FreeText') ? 'a typed text box on top of the page' : `markup (${Array.from(new Set(markup)).join(', ')})`}${by}.`;
@@ -395,11 +515,14 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
   } else if (pagesAdded) {
     kind = 'content';
     summary = `Added ${pagesAdded} page${pagesAdded === 1 ? '' : 's'}${by}.`;
+  } else if (pagesTagsOnly.length) {
+    kind = 'structure';
+    summary = `Added accessibility tags or structure to ${pageList(pagesTagsOnly)}; the visible text and drawing didn’t change.`;
   } else {
     kind = 'metadata';
     summary = 'Re-saved without changing the pages (metadata only).';
   }
-  return { index, producer: next.producer, modified: next.modified, pagesChanged, pagesAdded, annotationsAdded, formFieldsChanged, signed: signedHere, kind, summary };
+  return { index, producer: next.producer, modified: next.modified, pagesChanged, pagesAdded, annotationsAdded, formFieldsChanged, signed: signedHere, textChanges, pagesGraphicsOnly, pagesTagsOnly, kind, summary };
 }
 
 // ---------- main ----------
@@ -451,32 +574,47 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
     const ends = eofs.slice(baseEofs - 1).slice(-MAX_REVISIONS);
     const prints: (DocPrint | null)[] = [];
     for (let i = 0; i < ends.length; i++) {
-      const d = i === ends.length - 1 ? doc : await loadDoc(buffer.subarray(0, ends[i]));
-      prints.push(d ? (i === ends.length - 1 ? finalPrint : printDoc(d)) : null);
+      if (i === ends.length - 1) { prints.push(finalPrint); continue; }
+      const d = await loadDoc(buffer.subarray(0, ends[i]));
+      let pr: DocPrint | null = null;
+      try { pr = d ? printDoc(d) : null; } catch { pr = null; } // e.g. no catalog yet
+      prints.push(pr);
     }
     const sigEndsByRev = (end: number, prevEnd: number) => raw.signatures.some((sg) => sg.coveredEnd > prevEnd && sg.coveredEnd <= end + 2);
     prints.forEach((p, i) => {
       if (i === 0) {
-        revisions.push({ index: 1, producer: p?.producer ?? null, modified: p?.modified ?? null, pagesChanged: [], pagesAdded: 0, annotationsAdded: [], formFieldsChanged: 0, signed: false, kind: 'original', summary: `Original document${p?.producer ? `, made with ${p.producer}` : ''}.` });
+        revisions.push({ index: 1, producer: p?.producer ?? null, modified: p?.modified ?? null, pagesChanged: [], pagesAdded: 0, annotationsAdded: [], formFieldsChanged: 0, signed: false, textChanges: [], pagesGraphicsOnly: [], pagesTagsOnly: [], kind: 'original', summary: `Original document${p?.producer ? `, made with ${p.producer}` : ''}.` });
         return;
       }
       const prev = prints[i - 1];
       if (!p || !prev) {
-        revisions.push({ index: i + 1, producer: p?.producer ?? null, modified: p?.modified ?? null, pagesChanged: [], pagesAdded: 0, annotationsAdded: [], formFieldsChanged: 0, signed: false, kind: 'unknown', summary: 'Saved again; this version couldn’t be rebuilt to compare.' });
+        revisions.push({ index: i + 1, producer: p?.producer ?? null, modified: p?.modified ?? null, pagesChanged: [], pagesAdded: 0, annotationsAdded: [], formFieldsChanged: 0, signed: false, textChanges: [], pagesGraphicsOnly: [], pagesTagsOnly: [], kind: 'unknown', summary: 'Saved again; this version couldn’t be rebuilt to compare.' });
         return;
       }
       revisions.push(diffPrints(prev, p, sigEndsByRev(ends[i], ends[i - 1]), i + 1));
     });
 
     const content = revisions.filter((r) => r.kind === 'content');
+    const graphics = revisions.filter((r) => r.kind === 'graphics');
     const markup = revisions.filter((r) => r.kind === 'markup');
-    const benign = revisions.filter((r) => r.kind === 'form' || r.kind === 'signature' || r.kind === 'metadata');
+    const benign = revisions.filter((r) => r.kind === 'form' || r.kind === 'signature' || r.kind === 'metadata' || r.kind === 'structure');
     for (const r of content) {
+      const shown = r.textChanges.find((t) => t.before || t.after);
       flag({
         sev: 'critical', code: 'VERSION_CONTENT_CHANGED',
-        title: `Edited after it was created: ${r.pagesChanged.length ? pageList(r.pagesChanged) : 'pages'} changed`,
-        desc: `The file still contains the earlier version. Version ${r.index}${r.modified ? ` (saved ${fmtDate(r.modified)})` : ''} ${r.summary.charAt(0).toLowerCase() + r.summary.slice(1)} Compare the numbers with what the sender confirmed.`,
+        title: shown
+          ? `Text changed after it was created: “${shown.before || '(nothing)'}” → “${shown.after || '(removed)'}”`
+          : `Text changed after it was created (${pageList(r.pagesChanged)})`,
+        desc: `The file still contains the earlier version. Version ${r.index}${r.modified ? ` (saved ${fmtDate(r.modified)})` : ''} ${r.summary.charAt(0).toLowerCase() + r.summary.slice(1)} Compare it with what the sender confirmed.`,
         pts: 45,
+      });
+    }
+    for (const r of graphics) {
+      flag({
+        sev: 'warning', code: 'VERSION_GRAPHICS_CHANGED',
+        title: `Drawing changed in a later save (${pageList(r.pagesGraphicsOnly)})`,
+        desc: `Version ${r.index} changed lines, shapes or images, but none of the text. Often harmless (a logo or stamp), but a box drawn over a value looks like this too.`,
+        pts: 15,
       });
     }
     for (const r of markup) {
@@ -488,9 +626,9 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
         pts: typed ? 25 : 10,
       });
     }
-    if (!content.length && !markup.length && benign.length) {
-      ok('LATER_SAVES_BENIGN', `Saved ${benign.length + 1} times — only ${Array.from(new Set(benign.map((r) => r.kind === 'form' ? 'form filling' : r.kind === 'signature' ? 'signing' : 'metadata updates'))).join(' and ')}`,
-        'The later saves didn’t change any page content. Filling in form fields, signing, or re-saving is normal.');
+    if (!content.length && !graphics.length && !markup.length && benign.length) {
+      ok('LATER_SAVES_BENIGN', `Saved ${benign.length + 1} times — only ${Array.from(new Set(benign.map((r) => r.kind === 'form' ? 'form filling' : r.kind === 'signature' ? 'signing' : r.kind === 'structure' ? 'accessibility tags' : 'metadata updates'))).join(' and ')}`,
+        'The later saves didn’t change any visible text or drawing. Filling in form fields, signing, adding accessibility tags or re-saving is normal.');
     }
   } else if (laterSaves > 0 && encryptedContent) {
     flag({ sev: 'warning', code: 'VERSIONS_ENCRYPTED', title: `Saved ${laterSaves + 1} times (encrypted, couldn’t compare)`, desc: 'The file contains later saves, but it’s encrypted so we couldn’t see what changed.', pts: 10 });
@@ -542,16 +680,16 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   });
   // Editors that "edit" text usually append a new drawing layer: white box over
   // the old value, new text on top. In an added layer or a later save it's strong.
-  const coverInChangedVersion = revisions.some((r) => r.kind === 'content' && r.pagesChanged.some((pg) => coverPages.includes(pg)));
+  const coverInChangedVersion = revisions.some((r) => (r.kind === 'content' || r.kind === 'graphics') && [...r.pagesChanged, ...r.pagesGraphicsOnly].some((pg) => coverPages.includes(pg)));
   if (coverHits) {
     const strong = appendedCover || coverInChangedVersion;
     flag({
-      sev: strong ? 'critical' : 'warning', code: 'COVER_BOX',
+      sev: strong ? 'critical' : 'info', code: 'COVER_BOX',
       title: `White box drawn over text, with new text on top (${pageList(coverPages)})`,
       desc: strong
         ? 'A white box was drawn over existing text and new text was written on it, in a layer added after the page was made. This is how values get covered and retyped.'
-        : 'A white box sits between pieces of text. Some generators draw table cells this way, so on its own it’s only worth a look.',
-      pts: strong ? 40 : 10,
+        : 'A white box sits between pieces of text. Many generators draw table cells this way, so on its own it’s just a note.',
+      pts: strong ? 40 : 4,
     });
   }
 
@@ -659,7 +797,7 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
     }
   }
   if (!creationDate && !modificationDate && !producer && !creator && !author && !xmp) {
-    flag({ sev: 'warning', code: 'METADATA_STRIPPED', title: 'All metadata has been removed', desc: 'Business software normally records when and how a PDF was made. Stripping it hides the tool that last touched the file.', pts: 20 });
+    flag({ sev: 'warning', code: 'METADATA_STRIPPED', title: 'No metadata at all', desc: 'Most business software records when and how a PDF was made. Some simple generators don’t, but stripping it is also how an editing tool gets hidden. On its own it’s only worth a look.', pts: 12 });
   }
 
   // ---- 12. Fonts ----
