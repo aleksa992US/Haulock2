@@ -8032,6 +8032,118 @@ function CompanyChoices({ set, onPick, compact = false }: { set: CompanyChoiceSe
   );
 }
 
+// ─── Type-ahead company suggestions ─────────────────────────────────────
+// While the user types an MC, DOT or name, show matching companies from
+// FMCSA's public registry (/api/search/suggest — free, no lookup credit).
+// Picking one runs the full check for exactly that company.
+
+type CompanySuggestion = {
+  name: string; dba?: string; mc?: string; dot?: string; city?: string; state?: string;
+  role: 'carrier' | 'broker' | 'both' | 'none' | 'dot-only'; active: boolean; powerUnits?: number;
+  query: string; matchedOn: 'mc' | 'dot' | 'name' | 'dba';
+};
+
+function useCompanySuggestions(query: string, kind: 'mc' | 'dot' | 'name' | 'auto' | null) {
+  const [items, setItems] = useState<CompanySuggestion[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    const q = query.trim();
+    const digits = q.replace(/\D/g, '');
+    const isNumberish = /^(mc|dot|usdot)?[\s#-]*\d[\d\s-]*$/i.test(q);
+    // Numbers need 3+ digits (and a registry choice on the Verify page);
+    // names need 3+ characters.
+    const ready = kind !== null && (isNumberish ? digits.length >= 3 : q.length >= 3);
+    if (!ready) { setItems([]); setLoading(false); return; }
+    const controller = new AbortController();
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const effKind = isNumberish ? kind : 'name';
+        const res = await fetch(`/api/search/suggest?q=${encodeURIComponent(q)}&kind=${effKind}`, { signal: controller.signal });
+        const data = await res.json().catch(() => ({}));
+        setItems(Array.isArray(data?.suggestions) ? data.suggestions : []);
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') setItems([]);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 250);
+    return () => { clearTimeout(t); controller.abort(); };
+  }, [query, kind]);
+  return { items, loading };
+}
+
+const SUGGEST_ROLE: Record<CompanySuggestion['role'], { label: string; cls: string }> = {
+  carrier: { label: 'Carrier', cls: 'bg-[#0B1E3F] text-white' },
+  broker: { label: 'Broker', cls: 'bg-[#FF6B35] text-white' },
+  both: { label: 'Carrier + Broker', cls: 'bg-[#0B1E3F] text-white' },
+  none: { label: 'No active authority', cls: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/60' },
+  'dot-only': { label: 'USDOT only', cls: 'bg-[#0B1E3F]/10 text-[#0B1E3F]/65' },
+};
+
+function SuggestionList({ items, loading, activeIndex, onPick, onHover, compact = false }: {
+  items: CompanySuggestion[]; loading: boolean; activeIndex: number;
+  onPick: (s: CompanySuggestion) => void; onHover: (i: number) => void; compact?: boolean;
+}) {
+  if (!loading && items.length === 0) return null;
+  return (
+    <div role="listbox" className={`absolute left-0 right-0 top-full mt-1 bg-white border border-[#0B1E3F]/15 rounded-xl shadow-lg z-40 overflow-hidden ${compact ? 'max-h-[70vh]' : 'max-h-[420px]'} overflow-y-auto`}>
+      {items.length === 0 && loading && <div className="px-4 py-3 text-sm text-[#0B1E3F]/55">Searching FMCSA…</div>}
+      {items.map((s, i) => {
+        const role = SUGGEST_ROLE[s.role];
+        const meta = [
+          s.mc ? `MC ${s.mc}` : null,
+          s.dot ? `DOT ${s.dot}` : null,
+          s.city && s.state ? `${s.city}, ${s.state}` : s.state,
+          s.powerUnits ? `${s.powerUnits} truck${s.powerUnits === 1 ? '' : 's'}` : null,
+        ].filter(Boolean).join(' · ');
+        return (
+          <button
+            key={s.query}
+            type="button"
+            role="option"
+            aria-selected={i === activeIndex}
+            // onMouseDown so the pick lands before the input's blur closes the list.
+            onMouseDown={(e) => { e.preventDefault(); onPick(s); }}
+            onMouseEnter={() => onHover(i)}
+            className={`w-full text-left px-4 ${compact ? 'py-2' : 'py-2.5'} flex items-start gap-3 border-b border-[#0B1E3F]/5 last:border-0 ${i === activeIndex ? 'bg-[#0B1E3F]/5' : 'bg-white'}`}
+          >
+            <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${s.active ? 'bg-[#16A34A]' : 'bg-[#0B1E3F]/25'}`} title={s.active ? 'Active' : 'Inactive'} />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-semibold text-[#0B1E3F] truncate">
+                {s.name}
+                {s.dba && <span className={`font-normal ${s.matchedOn === 'dba' ? 'text-[#0B1E3F]/75' : 'text-[#0B1E3F]/50'}`}> · DBA {s.dba}</span>}
+              </span>
+              <span className="block text-xs mono text-[#0B1E3F]/55 truncate">{meta}</span>
+            </span>
+            <span className="flex flex-col items-end gap-1 flex-shrink-0">
+              <span className={`text-[10px] mono uppercase tracking-wider px-1.5 py-0.5 rounded font-semibold ${role.cls}`}>{role.label}</span>
+              {!s.active && <span className="text-[10px] text-[#0B1E3F]/45">Inactive</span>}
+            </span>
+          </button>
+        );
+      })}
+      {items.length > 0 && (
+        <div className="px-4 py-2 bg-[#F5F3EE]/70 text-[11px] text-[#0B1E3F]/50 flex items-center justify-between gap-2">
+          <span>From FMCSA&apos;s public registry{loading ? ' · updating…' : ''}</span>
+          <span>Picking one runs a full check</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Arrow keys / Enter / Escape over a suggestion list. Returns true when the
+// key was handled (so the caller skips its own Enter behaviour).
+function suggestionKeys(e: React.KeyboardEvent, open: boolean, count: number, index: number, setIndex: (i: number) => void, pick: (i: number) => void, close: () => void): boolean {
+  if (!open || count === 0) return false;
+  if (e.key === 'ArrowDown') { e.preventDefault(); setIndex(Math.min(count - 1, index + 1)); return true; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); setIndex(Math.max(-1, index - 1)); return true; }
+  if (e.key === 'Escape') { close(); return true; }
+  if (e.key === 'Enter' && index >= 0) { e.preventDefault(); pick(index); return true; }
+  return false;
+}
+
 function HeaderSearch({ navigate }: { navigate: any }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -8039,6 +8151,11 @@ function HeaderSearch({ navigate }: { navigate: any }) {
   // Number or name that matches more than one company.
   const [choices, setChoices] = useState<CompanyChoiceSet | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  // Type-ahead: bare numbers search MC and DOT at once (each suggestion
+  // names its registry); anything with letters is a name search.
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(-1);
+  const { items: suggestions, loading: suggestLoading } = useCompanySuggestions(suggestOpen && !choices ? input : '', 'auto');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -8054,7 +8171,7 @@ function HeaderSearch({ navigate }: { navigate: any }) {
 
   const run = async (q: string, searched?: string) => {
     if (!q) return;
-    setLoading(true); setError(null); setChoices(null);
+    setLoading(true); setError(null); setChoices(null); setSuggestOpen(false);
     try {
       const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}${searched ? `&searched=${encodeURIComponent(searched)}` : ''}`);
       const data = await res.json();
@@ -8099,7 +8216,18 @@ function HeaderSearch({ navigate }: { navigate: any }) {
         <input
           ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => { setInput(e.target.value); setSuggestOpen(true); setSuggestIndex(-1); setChoices(null); }}
+          onFocus={() => setSuggestOpen(true)}
+          onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
+          onKeyDown={(e) => {
+            suggestionKeys(e, suggestOpen, suggestions.length, suggestIndex, setSuggestIndex,
+              (i) => { const s = suggestions[i]; setInput(s.query); run(s.query); },
+              () => setSuggestOpen(false));
+          }}
+          role="combobox"
+          aria-expanded={suggestOpen && suggestions.length > 0}
+          aria-autocomplete="list"
+          autoComplete="off"
           placeholder="Quick lookup — MC, DOT, or name…"
           disabled={loading}
           className="flex-1 bg-transparent outline-none placeholder:text-[#0B1E3F]/40 text-[#0B1E3F]"
@@ -8114,6 +8242,16 @@ function HeaderSearch({ navigate }: { navigate: any }) {
         <div className="absolute left-0 right-0 top-full mt-1 px-3 py-2 bg-white border border-[#DC2626]/30 rounded-lg text-xs text-[#DC2626] shadow-md z-30">
           {error}
         </div>
+      )}
+      {suggestOpen && !choices && (
+        <SuggestionList
+          compact
+          items={suggestions}
+          loading={suggestLoading}
+          activeIndex={suggestIndex}
+          onHover={setSuggestIndex}
+          onPick={(s) => { setInput(s.query); run(s.query); }}
+        />
       )}
       {choices && (
         <div className="absolute left-0 right-0 top-full mt-1 p-2 bg-white border border-[#0B1E3F]/15 rounded-lg shadow-md z-30 max-h-[70vh] overflow-y-auto">
@@ -8679,6 +8817,12 @@ function VerifyTool({ navigate }: any) {
   const [errorSuggestions, setErrorSuggestions] = useState<string[] | null>(null);
   // Name or number that matches more than one company — the user picks.
   const [choices, setChoices] = useState<CompanyChoiceSet | null>(null);
+  // Type-ahead: numbers search the registry picked with the MC/DOT toggle
+  // (none until one is picked); anything with letters is a name search.
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(-1);
+  const suggestKind: 'mc' | 'dot' | 'name' | null = /[a-z]/i.test(input.replace(/^\s*(mc|usdot|dot)\b/i, '')) ? 'name' : kind;
+  const { items: suggestions, loading: suggestLoading } = useCompanySuggestions(suggestOpen ? input : '', suggestKind);
   // When the API resolves we hold the result for a brief reveal moment so
   // the scanner can paint red on whichever sources caught something spooky
   // before we navigate to the full report.
@@ -8772,7 +8916,7 @@ function VerifyTool({ navigate }: any) {
       return;
     }
     const q = applyKind(raw);
-    setLoading(true); setError(null); setErrorSuggestions(null); setChoices(null);
+    setLoading(true); setError(null); setErrorSuggestions(null); setChoices(null); setSuggestOpen(false);
     try {
       // Pass the email field through to the verify route so it can run
       // lookalike-domain detection against the company's confirmed website
@@ -8915,7 +9059,8 @@ function VerifyTool({ navigate }: any) {
         <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 md:p-12 card-shadow text-[#0B1E3F]">
           <label className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 block mb-3">Broker or carrier — MC number, DOT number, or company name</label>
           <div className="flex flex-col md:flex-row gap-3">
-            <div className={`flex-1 flex items-stretch bg-[#F5F3EE] border rounded-xl focus-within:border-[#0B1E3F] transition overflow-hidden ${kind ? 'border-[#0B1E3F]/15' : 'border-[#FF6B35]/40'}`}>
+            <div className="flex-1 relative">
+            <div className={`h-full flex items-stretch bg-[#F5F3EE] border rounded-xl focus-within:border-[#0B1E3F] transition overflow-hidden ${kind ? 'border-[#0B1E3F]/15' : 'border-[#FF6B35]/40'}`}>
               <div
                 className="flex items-center gap-1.5 pl-2 pr-2 py-2 border-r border-[#0B1E3F]/10 bg-white"
                 title="MC and DOT are separate FMCSA registries — the same number can belong to two different carriers. Pick which one you're searching."
@@ -8944,8 +9089,17 @@ function VerifyTool({ navigate }: any) {
               </div>
               <input
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => { setInput(e.target.value); setSuggestOpen(true); setSuggestIndex(-1); }}
+                onFocus={() => setSuggestOpen(true)}
+                onBlur={() => setTimeout(() => setSuggestOpen(false), 120)}
+                role="combobox"
+                aria-expanded={suggestOpen && suggestions.length > 0}
+                aria-autocomplete="list"
+                autoComplete="off"
                 onKeyDown={(e) => {
+                  if (suggestionKeys(e, suggestOpen, suggestions.length, suggestIndex, setSuggestIndex,
+                    (i) => { const s = suggestions[i]; setInput(s.query); runLookup(s.query); },
+                    () => setSuggestOpen(false))) return;
                   if (e.key === 'Enter') { runLookup(); return; }
                   // Block digit entry until the user has picked MC or DOT —
                   // bare numbers are exactly the case where the registries
@@ -8964,8 +9118,18 @@ function VerifyTool({ navigate }: any) {
                   }
                 }}
                 placeholder={kind === 'mc' ? 'Type the MC number, e.g. 1162901 — no prefix needed' : kind === 'dot' ? 'Type the DOT number, e.g. 3512175 — no prefix needed' : 'Select MC or DOT on the left first, then type the number'}
-                className="flex-1 px-5 py-5 md:py-4 bg-transparent text-xl md:text-lg focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
+                className="flex-1 min-w-0 px-5 py-5 md:py-4 bg-transparent text-xl md:text-lg focus:outline-none text-[#0B1E3F] placeholder:text-[#0B1E3F]/30"
               />
+            </div>
+            {suggestOpen && (
+              <SuggestionList
+                items={suggestions}
+                loading={suggestLoading}
+                activeIndex={suggestIndex}
+                onHover={setSuggestIndex}
+                onPick={(s) => { setInput(s.query); runLookup(s.query); }}
+              />
+            )}
             </div>
             <button onClick={() => runLookup()} disabled={loading} className="w-full md:w-auto justify-center px-8 py-4 bg-[#0B1E3F] text-white rounded-xl font-medium hover:bg-[#0B1E3F]/90 transition flex items-center gap-2 disabled:opacity-60">
               Verify <ArrowRight className="w-4 h-4" />
