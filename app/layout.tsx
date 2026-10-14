@@ -172,7 +172,7 @@ const jsonLd = {
         'L&I authority status',
         'MCS-150 filings: company officer names, phone, email, and last update',
         'Insurance filings',
-        'Crash and inspection history',
+        'Every roadside inspection and crash from the last 24 months, with violations and out-of-service results',
         'FMCSA authority, insurance, and identity-change history',
         'Company website detection',
         'Domain WHOIS and age check',
@@ -184,7 +184,7 @@ const jsonLd = {
         'Rate confirmation PDF analysis',
         'PDF tamper detection: saved versions compared page by page, white-out boxes, typed-on-top and hidden text',
         'Web reputation scan across 50+ trusted news outlets',
-        'Daily FMCSA monitoring of your own company record with email alerts',
+        'Daily FMCSA monitoring of your own company record with email alerts, including new inspections and crashes',
       ],
     },
     {

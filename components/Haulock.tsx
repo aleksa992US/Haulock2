@@ -608,7 +608,7 @@ function Landing({ navigate, user }: any) {
             <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Type an MC, DOT, or company name and pick the right company as you type. Carrier and broker authority shown separately, plus authority age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="Live" statLabel="from FMCSA" />
             <FeatureCard icon={UserCheck} iconBg="#FF6B35" title="Officer names on file" desc="See the company officers on the FMCSA filing (MCS-150), plus the phone and email on it and when it was last updated. Ask for the owner by name, on the number FMCSA has — not the one on the rate con." stat="MCS-150" statLabel="FMCSA company census" />
             <FeatureCard icon={Globe} iconBg="#16A34A" title="Website & domain check" desc="We find the counterparty's real website and check it, and their email domain, against the FMCSA record. Plus WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
-            <FeatureCard icon={Clock} iconBg="#0B1E3F" title="FMCSA history" desc="Authority and insurance history, plus name, address, and phone changes on the FMCSA record over time. A phone number that changed last week is worth asking about." stat="Timeline" statLabel="authority & identity changes" />
+            <FeatureCard icon={Clock} iconBg="#0B1E3F" title="Inspections, crashes & history" desc="Every roadside inspection and crash from the last 24 months: when, where, each violation, and whether a driver or truck was put out of service. Plus authority, insurance, name, address, and phone changes over time." stat="24 mo" statLabel="every inspection & crash" />
             <FeatureCard icon={MapPin} iconBg="#FF6B35" title="Google Business address" desc="Cross-checks the FMCSA-registered address against Google Places. Flags UPS Store mailboxes, residential homes, and addresses shared by unrelated businesses." stat="Places" statLabel="real-world match" />
             <FeatureCard icon={Users} iconBg="#16A34A" title="Social media footprint" desc="Scans Facebook, LinkedIn, Twitter/X, Instagram, YouTube, and TikTok for the company's presence. Real companies leave a trail. Ghost identities don't." stat="6" statLabel="platforms matched" />
             <FeatureCard icon={Eye} iconBg="#0B1E3F" title="Web reputation scan" desc="Searches FreightWaves, Land Line, TruckersReport, BBB, Reddit, and government enforcement sites for fraud, scam, or lawsuit mentions tied to the carrier or broker." stat="50+" statLabel="trusted sources" />
@@ -673,7 +673,7 @@ function Landing({ navigate, user }: any) {
                 <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0 mt-2" /><span>&ldquo;Clean. Form fields were filled in and it was signed — that&apos;s normal. Nothing else changed.&rdquo;</span></li>
               </ul>
               <p className="text-[#0B1E3F]/60 text-sm mb-8 leading-relaxed">
-                Changed spots are highlighted on a preview of your PDF. No AI and no broker lookup needed — the file itself is checked, and it isn&apos;t stored.
+                Changed spots are highlighted on a preview of your PDF. No AI and no broker lookup needed — the file itself is checked, and it&apos;s never stored on our servers.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
@@ -872,6 +872,8 @@ function Landing({ navigate, user }: any) {
       {/* Your own company: check counts + daily FMCSA monitoring (paid).
           The example chart is fixed demo data — marketing surfaces never show
           real searches. */}
+      <InspectionShowcase navigate={navigate} />
+
       <section id="your-company" className="py-24 px-6 bg-white border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
         <div className="max-w-7xl mx-auto">
           <div className="mb-12 max-w-3xl">
@@ -902,13 +904,18 @@ function Landing({ navigate, user }: any) {
             <div className="p-8 rounded-3xl border border-[#0B1E3F]/10 bg-[#F5F3EE]">
               <div className="w-11 h-11 rounded-xl bg-[#FF6B35] flex items-center justify-center mb-5"><Bell className="w-5 h-5 text-white" /></div>
               <h3 className="text-2xl font-semibold mb-3">Live FMCSA monitoring of your company</h3>
-              <p className="text-[#0B1E3F]/70 leading-relaxed">We check your FMCSA record every day: insurance, authority, address, phone, email of record and company officers. If anything changes, you get an email right away.</p>
+              <p className="text-[#0B1E3F]/70 leading-relaxed">We check your FMCSA record every day: insurance, authority, address, phone, email of record and company officers, plus every new roadside inspection and crash filed on your DOT. If anything changes, you get an email right away.</p>
               <div className="mt-6 p-4 bg-white rounded-2xl border border-[#0B1E3F]/10 text-sm">
                 <div className="text-[10px] mono uppercase tracking-wider text-[#DC2626] mb-2">Example alert · Your FMCSA record changed</div>
                 <div className="flex justify-between gap-3 py-1.5 border-b border-[#0B1E3F]/5"><span className="text-[#0B1E3F]/60">Email on FMCSA filing</span><span><span className="text-[#0B1E3F]/45 line-through">dispatch@yourco.com</span> → <strong className="text-[#DC2626]">ops@yourco-freight.net</strong></span></div>
                 <div className="flex justify-between gap-3 py-1.5"><span className="text-[#0B1E3F]/60">Liability insurance</span><span><span className="text-[#0B1E3F]/45 line-through">$1,000,000</span> → <strong className="text-[#DC2626]">$0</strong></span></div>
               </div>
-              <p className="mt-4 text-xs text-[#0B1E3F]/55">The fastest way to catch a hijacked identity or a lapsed policy before a customer does.</p>
+              <div className="mt-3 p-4 bg-white rounded-2xl border border-[#0B1E3F]/10 text-sm">
+                <div className="text-[10px] mono uppercase tracking-wider text-[#DC2626] mb-2">Example alert · New roadside inspection</div>
+                <div className="flex items-center justify-between gap-3 flex-wrap"><span><strong>Oct 2</strong> <span className="text-[#0B1E3F]/60">· Joplin, MO · Level II walk-around</span></span><span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#DC2626]/10 text-[#DC2626]">Out of service · vehicle</span></div>
+                <div className="text-xs text-[#0B1E3F]/60 mt-1.5">Brake out of adjustment · out of service</div>
+              </div>
+              <p className="mt-4 text-xs text-[#0B1E3F]/55">The fastest way to catch a hijacked identity, a lapsed policy or an out-of-service inspection before a customer or your insurer does.</p>
             </div>
           </div>
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -1044,14 +1051,15 @@ function Landing({ navigate, user }: any) {
               { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools vet in one direction: brokers checking carriers. Haulock works both ways. Carriers verify brokers, brokers verify carriers, and either side can verify shippers. We also catch things those tools do not, like lookalike domains, chameleon-network shared phone numbers, AI-driven rate confirmation analysis, and identity-history snapshots that show when a carrier quietly changed their address or phone.' },
               { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scanned in under a minute.' },
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
-              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER and Company Census (authority, address, MCS-150 officers and contact details), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes), MC name lookup, authority, insurance, and identity-change history (name, address, phone), our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
+              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER and Company Census (authority, address, MCS-150 officers and contact details), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes) plus every roadside inspection and crash from FMCSA’s inspection and crash files, MC name lookup, authority, insurance, and identity-change history (name, address, phone), our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
               { q: 'Can I see who owns a carrier or broker?', a: 'Yes. Reports show the company officers listed on the FMCSA filing (the MCS-150, from FMCSA’s public Company Census), plus the phone and email on that filing and the date it was last updated. Before you book, call the number FMCSA has, not the one on the rate con, and ask for the owner by name. The names are only as current as the company’s last MCS-150 update, which we show next to them. If FMCSA has no names on file, the report says so.' },
+              { q: 'Can I see a carrier’s roadside inspections and crashes?', a: 'Yes. Every carrier report lists the roadside inspections and crashes from the last 24 months, from FMCSA’s public inspection and crash files, which are refreshed daily: the date, where it happened, the inspection level, each violation, and whether a driver or truck was put out of service. A month-by-month chart shows whether things are getting better or worse. Inspections reach FMCSA a few days after they happen, and crash records don’t say who was at fault. On paid plans, we also email you each new inspection and crash filed on your own DOT.' },
               { q: 'Does it work for freight brokers?', a: `Yes. Haulock is bidirectional. Brokers use it to verify carriers before dispatching a load, to vet other brokers before co-brokering, and to spot identity-theft patterns where someone is impersonating a real motor carrier. Every check runs in both directions.${COI_CHECK_ON ? ' On paid plans, brokers can also check a carrier’s certificate of insurance against its FMCSA filings.' : ''}` },
               { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, the officer names on the FMCSA filing, and any web-reputation hits from trusted sources. Second, the PDF tamper check: drop the rate confirmation and we open the file, rebuild every saved version, and show exactly what text changed after it was made. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'How does the PDF tamper check work?', a: 'We open the PDF itself, not just its metadata. When a PDF is edited and saved, the earlier version often stays inside the file, so we rebuild every saved version and compare them page by page, showing the exact text that changed (before → after). We also look for white-out boxes drawn over text with new text on top, text boxes typed on top of the page, invisible text, changes made after a digital signature, Acrobat “Edit Text” markers, the same font embedded twice, online editors like iLovePDF, Sejda, or Smallpdf, impossible dates, stripped metadata, and JavaScript. Changed spots are highlighted on a preview of your PDF. We also tell you what’s normal, like filled-in form fields, signatures, the text layer on a scan, or a re-save that changed nothing, so an honest document isn’t flagged. No AI and no broker lookup: the file itself is checked, and it isn’t stored. Free plan: 3 scans a month. Paid plans: unlimited.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
-              { q: 'Can I see who is checking my company?', a: 'On paid plans you can see how often your company is checked on Haulock: checks per week, and how many different accounts looked you up. We never show who searched, and nobody can see lookups made on FMCSA\u2019s own site, because FMCSA doesn\u2019t publish them. You also get a notice in the app when your company is checked. To protect other users, these counts unlock only after you verify the company is yours: either your login email is on the same company domain as the email on your FMCSA filing, or you enter a code we email to that address. Paid plans also monitor your own FMCSA record every day and email you if anything changes.' },
+              { q: 'Can I see who is checking my company?', a: 'On paid plans you can see how often your company is checked on Haulock: checks per week, and how many different accounts looked you up. We never show who searched, and nobody can see lookups made on FMCSA\u2019s own site, because FMCSA doesn\u2019t publish them. You also get a notice in the app when your company is checked. To protect other users, these counts unlock only after you verify the company is yours: either your login email is on the same company domain as the email on your FMCSA filing, or you enter a code we email to that address. Paid plans also monitor your own FMCSA record every day and email you if anything changes, including each new roadside inspection or crash filed on your DOT.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
               { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
@@ -10255,6 +10263,7 @@ function PdfForensicsPanel() {
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `Analysis failed (${r.status})`);
       setResult(j);
+      if (j?.fileSha256) saveLocalPdf(j.fileSha256, f);
       track('pdf_forensics_scanned', {
         verdict: j?.verdict || 'unknown',
         score: typeof j?.score === 'number' ? j.score : 0,
@@ -10290,7 +10299,7 @@ function PdfForensicsPanel() {
         <div className="text-lg font-medium text-[#0B1E3F] mb-1">
           {loading ? 'Taking the PDF apart…' : file ? file.name : 'Drop a PDF to check if it was tampered with'}
         </div>
-        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 15 MB · the file is checked, not stored</div>
+        <div className="text-xs text-[#0B1E3F]/55">PDF only · max 15 MB · checked, never stored on our servers</div>
         {!loading && <div className="mt-4 inline-block px-5 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 transition">Choose PDF</div>}
       </label>
 
@@ -10352,6 +10361,69 @@ const FORENSIC_TONE = {
   neutral: { dot: '#0B1E3F', chip: 'bg-[#0B1E3F]/8 text-[#0B1E3F]/70' },
 };
 
+// The browser that ran a PDF check keeps its own copy (IndexedDB) so History
+// and Alerts can show the highlights again. Files never go to our servers.
+const LOCAL_PDF_DB = 'haulock-pdf-checks';
+const LOCAL_PDF_MAX = 30;
+function openPdfDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(LOCAL_PDF_DB, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore('files'); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+async function saveLocalPdf(hash: string, file: File): Promise<void> {
+  const db = await openPdfDb();
+  if (!db || !hash) return;
+  try {
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction('files', 'readwrite');
+      tx.objectStore('files').put({ name: file.name, type: file.type || 'application/pdf', blob: file, at: Date.now() }, hash);
+      tx.oncomplete = () => resolve(); tx.onerror = () => resolve(); tx.onabort = () => resolve();
+    });
+    // Keep the newest LOCAL_PDF_MAX files.
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction('files', 'readwrite');
+      const store = tx.objectStore('files');
+      const all: { key: IDBValidKey; at: number }[] = [];
+      const cur = store.openCursor();
+      cur.onsuccess = () => {
+        const c = cur.result;
+        if (c) { all.push({ key: c.key, at: (c.value as any)?.at || 0 }); c.continue(); return; }
+        all.sort((x, y) => y.at - x.at).slice(LOCAL_PDF_MAX).forEach((x) => store.delete(x.key));
+      };
+      tx.oncomplete = () => resolve(); tx.onerror = () => resolve(); tx.onabort = () => resolve();
+    });
+  } catch { /* storage full or blocked: preview just asks for the file */ }
+}
+async function loadLocalPdf(hash: string): Promise<File | null> {
+  const db = await openPdfDb();
+  if (!db || !hash) return null;
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction('files', 'readonly').objectStore('files').get(hash);
+      req.onsuccess = () => {
+        const r = req.result as any;
+        resolve(r?.blob ? new File([r.blob], r.name || 'document.pdf', { type: r.type || 'application/pdf' }) : null);
+      };
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+async function forgetLocalPdfs(hashes: (string | null | undefined)[] | 'all'): Promise<void> {
+  const db = await openPdfDb();
+  if (!db) return;
+  try {
+    const tx = db.transaction('files', 'readwrite');
+    const store = tx.objectStore('files');
+    if (hashes === 'all') store.clear();
+    else hashes.filter(Boolean).forEach((h) => store.delete(h as string));
+  } catch { /* nothing stored */ }
+}
+
 // pdf.js is self-hosted in /public/pdfjs (the CSP only allows same-origin
 // scripts) and loaded only when a preview is shown.
 let pdfJsPromise: Promise<any> | null = null;
@@ -10385,8 +10457,20 @@ function ForensicsPreview({ file, regions, fileSha256 }: { file: File | null; re
   // History rows don't keep the PDF: the user can open the same file here
   // (read in the browser only) to see the highlights again.
   const [localFile, setLocalFile] = useState<File | null>(null);
+  const [fromBrowser, setFromBrowser] = useState(false);
+  const [lookedUp, setLookedUp] = useState(Boolean(file) || !fileSha256);
   const [mismatch, setMismatch] = useState(false);
   const shown = file || localFile;
+  useEffect(() => {
+    if (file || !fileSha256) return;
+    let cancelled = false;
+    loadLocalPdf(fileSha256).then((f) => {
+      if (cancelled) return;
+      if (f) { setLocalFile(f); setFromBrowser(true); }
+      setLookedUp(true);
+    });
+    return () => { cancelled = true; };
+  }, [file, fileSha256]);
   const [doc, setDoc] = useState<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [active, setActive] = useState<number | null>(null);
@@ -10413,7 +10497,9 @@ function ForensicsPreview({ file, regions, fileSha256 }: { file: File | null; re
     if (fileSha256) {
       const h = await sha256Hex(f);
       if (h && h !== fileSha256) setMismatch(true);
+      else if (h) saveLocalPdf(fileSha256, f); // next time it opens by itself
     }
+    setFromBrowser(false);
     setLocalFile(f);
   };
 
@@ -10433,6 +10519,14 @@ function ForensicsPreview({ file, regions, fileSha256 }: { file: File | null; re
     setTimeout(() => document.getElementById(`fx-box-${i}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
   };
 
+  if (!shown && !lookedUp) {
+    return (
+      <div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55 mb-3">See it on the page</div>
+        <div className="py-8 flex items-center justify-center gap-3 text-sm text-[#0B1E3F]/55 bg-[#0B1E3F]/[0.04] rounded-2xl"><div className="w-4 h-4 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> Opening your PDF…</div>
+      </div>
+    );
+  }
   if (!shown) {
     return (
       <div>
@@ -10441,7 +10535,7 @@ function ForensicsPreview({ file, regions, fileSha256 }: { file: File | null; re
           <input type="file" accept="application/pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) openLocal(f); }} />
           <Eye className="w-6 h-6 mx-auto mb-2 text-[#0B1E3F]/40" />
           <div className="text-sm font-medium">We marked {regions.length} spot{regions.length === 1 ? '' : 's'} on this PDF</div>
-          <div className="text-xs text-[#0B1E3F]/55 mt-1">We don&apos;t keep your files. Open the same PDF to see the highlights. It stays on your device and doesn&apos;t use a scan.</div>
+          <div className="text-xs text-[#0B1E3F]/55 mt-1">This browser doesn&apos;t have a copy of it, and we never keep files on our servers. Open the same PDF to see the highlights. It stays on your device and doesn&apos;t use a scan.</div>
         </label>
       </div>
     );
@@ -10465,6 +10559,7 @@ function ForensicsPreview({ file, regions, fileSha256 }: { file: File | null; re
       {mismatch && (
         <div className="mb-3 p-3 rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-xs">That isn&apos;t the same file that was scanned (its fingerprint is different), so we&apos;re showing it without highlights.</div>
       )}
+      {fromBrowser && <div className="mb-2 text-[11px] text-[#0B1E3F]/50">Opened from the copy this browser kept when you scanned it. It&apos;s not stored on our servers.</div>}
       <div className={`grid gap-4 ${boxes.length ? 'lg:grid-cols-[minmax(0,1fr)_280px]' : ''}`}>
         <div className="bg-[#0B1E3F]/[0.04] rounded-2xl p-3 md:p-4 space-y-4 max-h-[820px] overflow-y-auto">
           {loadError && <div className="text-sm text-[#0B1E3F]/60 p-6 text-center">{loadError}</div>}
@@ -11823,6 +11918,149 @@ function CarrierReport({ report, navigate }: any) {
 // inspection breakdown, and crash detail we pulled from FMCSA SMS. The
 // data is FMCSA's own; we cite the source clearly and link the canonical
 // SMS Overview page so the user can verify directly.
+// Homepage example of the report's inspections & crashes panel. All data
+// here is made up (marketing never shows a real company's record).
+const SHOWCASE_MONTHS = {
+  clean: [2, 3, 1, 2, 4, 2, 3, 2, 1, 3, 2, 4, 3, 2, 2, 3, 1, 2, 3, 2, 4, 2, 3, 1],
+  viol: [1, 0, 2, 1, 1, 2, 0, 1, 2, 1, 1, 0, 2, 1, 1, 0, 2, 1, 1, 2, 1, 1, 0, 1],
+  oos: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+  crashes: [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+};
+
+function InspectionShowcase({ navigate }: { navigate: any }) {
+  const m = SHOWCASE_MONTHS;
+  const max = Math.max(...m.clean.map((c, i) => c + m.viol[i] + m.oos[i]));
+  const [open, setOpen] = useState(true);
+  const rows = [
+    { date: 'Oct 9', place: 'Ehrenberg, AZ', level: 'Level III · driver only', result: 'Clean', cls: 'bg-[#16A34A]/10 text-[#16A34A]' },
+    { date: 'Oct 6', place: 'Gary, IN', level: 'Level II · walk-around', result: '2 violations', cls: 'bg-[#F59E0B]/15 text-[#B45309]' },
+    { date: 'Oct 2', place: 'Joplin, MO', level: 'Level II · walk-around', result: 'Out of service · vehicle', cls: 'bg-[#DC2626]/10 text-[#DC2626]', details: [
+      { desc: 'Brake out of adjustment', oos: true, unit: 'vehicle' },
+      { desc: 'Inoperable required lamp', oos: false, unit: 'vehicle' },
+    ] },
+    { date: 'Sep 24', place: 'Laramie, WY', level: 'Level I · full inspection', result: 'Clean', cls: 'bg-[#16A34A]/10 text-[#16A34A]' },
+  ];
+  return (
+    <section id="inspections" className="py-24 px-6 bg-[#F5F3EE] border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
+      <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— Inspections &amp; crashes</div>
+          <h2 className="text-4xl md:text-5xl leading-[1.05] mb-6">Every roadside inspection. <span className="serif italic">Every crash.</span></h2>
+          <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
+            Totals only tell you so much. Every Haulock carrier report lists each roadside inspection and crash from the last 24 months, straight from FMCSA&apos;s daily files: when, where, what the officer found, and whether a truck or driver was put out of service.
+          </p>
+          <ul className="space-y-3 mb-6 text-[#0B1E3F]/80">
+            <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>See whether out-of-service results are getting better or worse, month by month.</span></li>
+            <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] flex-shrink-0 mt-2" /><span>Open any inspection to see each violation: brakes, lights, tires, hours of service, speeding.</span></li>
+            <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#0B1E3F] flex-shrink-0 mt-2" /><span>Crashes by date and place, with injuries, fatalities and tow-aways.</span></li>
+            <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0 mt-2" /><span>Your own company: an email for each new inspection and crash filed on your DOT (paid plans).</span></li>
+          </ul>
+          <p className="text-[#0B1E3F]/55 text-sm mb-8 leading-relaxed">Inspections reach FMCSA a few days after they happen. Crash records don&apos;t say who was at fault.</p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
+              Sign up free &amp; check a carrier <ArrowRight className="w-4 h-4" />
+            </button>
+            <div className="text-xs text-[#0B1E3F]/55 self-center">Included in every carrier report, free plan too</div>
+          </div>
+        </div>
+
+        {/* Example panel (made-up data) */}
+        <div className="bg-white rounded-3xl p-6 md:p-7 card-shadow-lg border border-[#0B1E3F]/10">
+          <div className="flex items-start justify-between gap-3 pb-4 mb-4 border-b border-[#0B1E3F]/10">
+            <div>
+              <div className="font-semibold">Example Trucking LLC</div>
+              <div className="text-[11px] mono text-[#0B1E3F]/50">Roadside inspections &amp; crashes · last 24 months</div>
+            </div>
+            <span className="px-2 py-0.5 rounded-full bg-[#0B1E3F]/5 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/60 whitespace-nowrap">Example data</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: 'Inspections', value: '90', sub: '3 in last 30 days', cls: 'bg-[#0B1E3F]/[0.04]', tone: '' },
+              { label: 'Clean', value: '63%', sub: '57 no violations', cls: 'bg-[#16A34A]/[0.07]', tone: 'text-[#16A34A]' },
+              { label: 'Out of service', value: '8', sub: '6 vehicle · 2 driver', cls: 'bg-[#DC2626]/[0.07]', tone: 'text-[#DC2626]' },
+              { label: 'Crashes', value: '3', sub: '1 with injuries', cls: 'bg-[#0B1E3F]/[0.04]', tone: '' },
+            ].map((x) => (
+              <div key={x.label} className={`p-3 rounded-xl ${x.cls}`}>
+                <div className="text-[9px] mono uppercase tracking-wider text-[#0B1E3F]/55">{x.label}</div>
+                <div className={`text-xl font-semibold mt-0.5 ${x.tone}`}>{x.value}</div>
+                <div className="text-[10px] text-[#0B1E3F]/55">{x.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5" aria-hidden="true">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[11px] text-[#0B1E3F]/60">Inspections per month</div>
+              <div className="flex items-center gap-2.5 text-[10px] text-[#0B1E3F]/55">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#16A34A]" />Clean</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#F59E0B]" />Violations</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-[#DC2626]" />OOS</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#0B1E3F]" />Crash</span>
+              </div>
+            </div>
+            <div className="flex items-end h-20" style={{ gap: 2 }}>
+              {m.clean.map((c, i) => {
+                const total = c + m.viol[i] + m.oos[i];
+                return (
+                  <div key={i} className="flex-1 h-full flex flex-col justify-end">
+                    <div className="w-full flex flex-col overflow-hidden rounded-t-[3px]" style={{ height: `${(total / max) * 100}%`, gap: 1 }}>
+                      {m.oos[i] > 0 && <div className="w-full bg-[#DC2626]" style={{ flexGrow: m.oos[i] }} />}
+                      {m.viol[i] > 0 && <div className="w-full bg-[#F59E0B]" style={{ flexGrow: m.viol[i] }} />}
+                      {c > 0 && <div className="w-full bg-[#16A34A]" style={{ flexGrow: c }} />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex mt-1" style={{ gap: 2 }}>
+              {m.crashes.map((n, i) => (
+                <div key={i} className="flex-1 flex justify-center">{n > 0 && <span className="w-3 h-3 rounded-full bg-[#0B1E3F] text-white text-[8px] font-bold flex items-center justify-center">{n}</span>}</div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-5 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1.5">Latest inspections</div>
+          <div className="divide-y divide-[#0B1E3F]/5 border border-[#0B1E3F]/10 rounded-xl overflow-hidden text-sm">
+            {rows.map((r) => (
+              <div key={r.date + r.place}>
+                <button onClick={() => r.details && setOpen((v) => !v)} className={`w-full flex items-center gap-3 px-3 py-2 text-left ${r.details ? 'hover:bg-[#0B1E3F]/[0.03]' : 'cursor-default'}`}>
+                  <div className="w-12 flex-shrink-0 font-medium">{r.date}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate">{r.place}</div>
+                    <div className="text-[10px] text-[#0B1E3F]/50 truncate">{r.level}</div>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${r.cls}`}>{r.result}</span>
+                  {r.details ? <ChevronRight className={`w-3.5 h-3.5 text-[#0B1E3F]/35 transition-transform ${open ? 'rotate-90' : ''}`} /> : <span className="w-3.5" />}
+                </button>
+                {r.details && open && (
+                  <div className="px-3 pb-2.5 pl-[4.25rem] space-y-1">
+                    {r.details.map((v) => (
+                      <div key={v.desc} className="text-[11px] text-[#0B1E3F]/75 flex items-start gap-2">
+                        <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${v.oos ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'}`} />
+                        <span>{v.desc}{v.oos && <strong className="text-[#DC2626]"> · out of service</strong>}<span className="text-[#0B1E3F]/40"> · {v.unit}</span></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 mb-1.5">Crashes</div>
+          <div className="flex items-center gap-3 px-3 py-2 border border-[#0B1E3F]/10 rounded-xl text-sm">
+            <div className="w-12 flex-shrink-0 font-medium">Jul 18</div>
+            <div className="flex-1 min-w-0 truncate">Amarillo, TX</div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#F59E0B]/15 text-[#B45309]">1 injury</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#0B1E3F]/5 text-[#0B1E3F]/70">Tow-away</span>
+          </div>
+          <div className="mt-3 text-[10px] text-[#0B1E3F]/45">Made-up example. Real reports use FMCSA&apos;s inspection and crash files.</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 const fmtEventDate = (d: string, withYear = true) => d ? new Date(`${d}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' }) : '—';
 const eventPlace = (loc: string, state: string) => [loc && loc.toUpperCase() !== state ? loc : '', state].filter(Boolean).join(', ') || 'Location not reported';
 
@@ -13391,6 +13629,7 @@ function SearchHistory({ navigate }: any) {
       const r = await fetch(`/api/lookups?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
       const j = await r.json().catch(() => null);
       if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+      forgetLocalPdfs([(items || []).find((x: any) => x.id === id)?.data?.fileSha256]);
       invalidateCache('lookups:200', 'alerts');
       res.refetch();
     } catch (err: any) {
@@ -13440,6 +13679,7 @@ function SearchHistory({ navigate }: any) {
           const r = await fetch(`/api/lookups?ids=${encodeURIComponent(ids.join(','))}`, { method: 'DELETE' });
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+          forgetLocalPdfs(group.rows.map((x: any) => x.data?.fileSha256));
           invalidateCache('lookups:200', 'alerts');
           res.refetch();
         } catch (err: any) {
@@ -13467,6 +13707,7 @@ function SearchHistory({ navigate }: any) {
           const r = await fetch('/api/lookups?all=1', { method: 'DELETE' });
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
+          forgetLocalPdfs('all');
           invalidateCache('lookups:200', 'usage', 'alerts');
           res.refetch();
         } catch (err: any) {
