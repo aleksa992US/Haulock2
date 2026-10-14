@@ -9,7 +9,7 @@ import {
   Clock, MapPin, Phone, Mail, Building2, Download, Share2, Plus, BarChart3, Menu,
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
   Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
-  Truck, UserCheck, LifeBuoy, MessageSquare,
+  Truck, UserCheck, LifeBuoy, MessageSquare, Fuel, Navigation, Route as RouteIcon,
   X,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
@@ -21,7 +21,7 @@ import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 import { recommendationFor, carrierAuthorityLabel } from '@/lib/recommendation';
 
-const APP_ROUTES = ['dashboard', 'verify', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'sales', 'support', 'earnings'];
+const APP_ROUTES = ['dashboard', 'verify', 'planner', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'sales', 'support', 'earnings'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
 const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about', 'affiliate'];
 const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
@@ -291,6 +291,11 @@ export default function Haulock() {
     if (to === 'verify' && data?.tab && typeof window !== 'undefined') {
       try { sessionStorage.setItem('haulock:verifyTab', data.tab); } catch {}
     }
+    // Load planner prefill (e.g. "Plan this load" on a rate con report).
+    if (to === 'planner' && data && typeof window !== 'undefined') {
+      try { sessionStorage.setItem('haulock:plannerPrefill', JSON.stringify(data)); } catch {}
+      window.dispatchEvent(new CustomEvent('haulock:planner-prefill'));
+    }
     if (to === 'landing' && data?.scrollTo && typeof window !== 'undefined') {
       try { sessionStorage.setItem('haulock:landingScrollTo', data.scrollTo); } catch {}
     }
@@ -322,6 +327,7 @@ export default function Haulock() {
         <AppShell user={user} route={route} navigate={navigate} logout={logout}>
           <PageSlot routeId="dashboard" current={route}><Dashboard navigate={navigate} user={user} /></PageSlot>
           <PageSlot routeId="verify" current={route}><VerifyTool navigate={navigate} /></PageSlot>
+          <PageSlot routeId="planner" current={route}><LoadPlanner navigate={navigate} /></PageSlot>
           <PageSlot routeId="report" current={route}><Report report={currentReport} navigate={navigate} /></PageSlot>
           <PageSlot routeId="watchlist" current={route}><Watchlist navigate={navigate} /></PageSlot>
           <PageSlot routeId="support" current={route}><SupportPage user={user} /></PageSlot>
@@ -8795,6 +8801,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   const navItems: any[] = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'verify', label: 'Verify broker / carrier', icon: Search },
+    { id: 'planner', label: 'Load planner', icon: RouteIcon },
     { id: 'history', label: 'History', icon: Clock },
     { id: 'watchlist', label: 'Watchlist', icon: Eye },
     { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount > 0 ? alertCount : null },
@@ -9066,6 +9073,388 @@ function OwnSafetySummary({ dot, monitoringOn, compact = false }: { dot: string;
       {!compact && (
         <div className="text-[11px] text-[#0B1E3F]/45">
           {monitoringOn ? 'We email you each new inspection and crash filed on your DOT.' : 'Turn on monitoring to get an email for each new inspection and crash.'} Full history is on your report.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Load planner ----------
+// Empty (deadhead) miles from the driver's location, loaded miles, drive
+// time, and fuel at this week's EIA diesel price, with what's left after
+// costs. Inputs can come from a scanned rate con.
+
+const PLANNER_SETTINGS_KEY = 'haulock:plannerSettings';
+type PlannerSettings = { mpg: string; driverPay: string; otherCpm: string };
+
+function loadPlannerSettings(): PlannerSettings {
+  const d = { mpg: '6.5', driverPay: '', otherCpm: '' };
+  try { return { ...d, ...(JSON.parse(localStorage.getItem(PLANNER_SETTINGS_KEY) || '{}') || {}) }; } catch { return d; }
+}
+
+const money = (n: number, cents = false) => (isFinite(n) ? n : 0).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
+const numIn = (v: string) => { const n = Number(String(v).replace(/[$,\s]/g, '')); return isFinite(n) && n > 0 ? n : 0; };
+
+function LoadPlanner({ navigate }: { navigate: any }) {
+  const lookupsRes = useCachedFetch<{ lookups: any[] }>('lookups:200', '/api/lookups?limit=200');
+  const [origin, setOrigin] = useState('');
+  const [originCoords, setOriginCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [pickup, setPickup] = useState('');
+  const [delivery, setDelivery] = useState('');
+  const [rate, setRate] = useState('');
+  const [extra, setExtra] = useState('');
+  const [fuelOverride, setFuelOverride] = useState('');
+  const [settings, setSettings] = useState<PlannerSettings>({ mpg: '6.5', driverPay: '', otherCpm: '' });
+  const [showCosts, setShowCosts] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<any>(null);
+
+  useEffect(() => { setSettings(loadPlannerSettings()); }, []);
+  const saveSetting = (k: keyof PlannerSettings, v: string) => {
+    setSettings((cur) => {
+      const next = { ...cur, [k]: v };
+      try { localStorage.setItem(PLANNER_SETTINGS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  // Prefill from "Plan this load" (rate con report) or a navigate() call.
+  useEffect(() => {
+    const apply = () => {
+      let d: any = null;
+      try { d = JSON.parse(sessionStorage.getItem('haulock:plannerPrefill') || 'null'); sessionStorage.removeItem('haulock:plannerPrefill'); } catch {}
+      if (!d) return;
+      if (d.pickup) setPickup(String(d.pickup));
+      if (d.delivery) setDelivery(String(d.delivery));
+      if (d.rate) setRate(String(d.rate));
+      setPlan(null);
+    };
+    apply();
+    window.addEventListener('haulock:planner-prefill', apply);
+    return () => window.removeEventListener('haulock:planner-prefill', apply);
+  }, []);
+
+  const rateCons = (lookupsRes.data?.lookups || [])
+    .filter((l: any) => l.source === 'ratecon' && (l.data?.rateCon?.origin || l.data?.rateCon?.destination))
+    .slice(0, 15);
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) { setError('This browser can’t share its location. Type a city, ZIP or address instead.'); return; }
+    setLocating(true); setError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setOriginCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setOrigin('My current location'); setLocating(false); },
+      () => { setLocating(false); setError('Location wasn’t shared. Type the driver’s city, ZIP or address instead.'); },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
+  };
+
+  const calculate = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch('/api/planner/route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          origin: originCoords && origin === 'My current location' ? { ...originCoords, label: 'Driver’s current location' } : origin,
+          pickup, delivery,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Couldn’t plan the route (${r.status})`);
+      setPlan(j);
+      track('load_planned', { routing: j.routing, hasOrigin: Boolean(j.hasOrigin) });
+    } catch (err: any) {
+      setError(err?.message || 'Couldn’t plan the route');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Numbers (recomputed instantly when rate or costs change).
+  const legs: any[] = plan?.legs || [];
+  const deadMiles = plan?.hasOrigin ? legs[0]?.miles || 0 : 0;
+  const loadedMiles = legs.length ? legs[legs.length - 1].miles : 0;
+  const totalMiles = deadMiles + loadedMiles;
+  const driveHours = legs.reduce((s2, l) => s2 + (l.hours || 0), 0);
+  const breaks = Math.max(0, Math.ceil(driveHours / 11) - 1); // 10-hour off-duty after each 11 hours driving
+  const elapsedHours = driveHours + breaks * 10;
+  const fuelPrice = numIn(fuelOverride) || plan?.diesel?.price || 0;
+  const mpg = numIn(settings.mpg) || 6.5;
+  const gallons = totalMiles / mpg;
+  const fuelCost = gallons * fuelPrice;
+  const revenue = numIn(rate) + numIn(extra);
+  const driverCost = numIn(settings.driverPay) * totalMiles;
+  const otherCost = numIn(settings.otherCpm) * totalMiles;
+  const net = revenue - fuelCost - driverCost - otherCost;
+  const costPerMile = totalMiles ? (fuelCost + driverCost + otherCost) / totalMiles : 0;
+  const deadPct = totalMiles ? Math.round((deadMiles / totalMiles) * 100) : 0;
+  const fmtHours = (h: number) => { const H = Math.floor(h), M = Math.round((h - H) * 60); return M === 60 ? `${H + 1}h` : `${H}h ${M}m`; };
+
+  const input = 'w-full px-3.5 py-2.5 bg-white border border-[#0B1E3F]/15 rounded-xl text-sm focus:outline-none focus:border-[#0B1E3F] placeholder:text-[#0B1E3F]/35';
+  const label = 'block text-[11px] mono uppercase tracking-wider text-[#0B1E3F]/60 mb-1.5';
+
+  return (
+    <div className="space-y-6 text-[#0B1E3F]">
+      <div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Load planner</div>
+        <h1 className="text-4xl serif italic">Is this load worth it?</h1>
+        <p className="text-[#0B1E3F]/60 mt-2 text-sm max-w-2xl">Empty miles from your truck, loaded miles, drive time with required breaks, and fuel at this week&apos;s diesel price. Type it in or pull it from a rate con.</p>
+      </div>
+
+      <div className="grid lg:grid-cols-[380px_minmax(0,1fr)] gap-6 items-start">
+        {/* Inputs */}
+        <form onSubmit={calculate} className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow space-y-4">
+          {rateCons.length > 0 && (
+            <div>
+              <label className={label}>Fill from a scanned rate con</label>
+              <select
+                className={input}
+                value=""
+                onChange={(e) => {
+                  const l = rateCons.find((x: any) => x.id === e.target.value);
+                  const rc = l?.data?.rateCon;
+                  if (!rc) return;
+                  setPickup(rc.origin || ''); setDelivery(rc.destination || '');
+                  if (rc.rate_amount) setRate(String(rc.rate_amount));
+                  setPlan(null);
+                }}
+              >
+                <option value="">Choose a rate con…</option>
+                {rateCons.map((l: any) => (
+                  <option key={l.id} value={l.id}>{[l.data.rateCon.origin, l.data.rateCon.destination].filter(Boolean).join(' → ')}{l.data.rateCon.rate_amount ? ` · ${money(l.data.rateCon.rate_amount)}` : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className={label}>Driver&apos;s location now</label>
+            <div className="flex gap-2">
+              <input className={input} value={origin} onChange={(e) => { setOrigin(e.target.value); setOriginCoords(null); }} placeholder="City, ZIP or address (optional)" />
+              <button type="button" onClick={useMyLocation} disabled={locating} title="Use this device’s location" className="px-3 border border-[#0B1E3F]/15 rounded-xl hover:bg-[#0B1E3F]/5 disabled:opacity-60 flex-shrink-0">
+                {locating ? <div className="w-4 h-4 border-2 border-[#0B1E3F]/20 border-t-[#FF6B35] rounded-full animate-spin" /> : <Navigation className="w-4 h-4" />}
+              </button>
+            </div>
+            <div className="text-[11px] text-[#0B1E3F]/45 mt-1">Used to count empty miles to the pickup.</div>
+          </div>
+          <div>
+            <label className={label}>Pickup</label>
+            <input className={input} value={pickup} onChange={(e) => setPickup(e.target.value)} placeholder="e.g. Joliet, IL or 60436" required />
+          </div>
+          <div>
+            <label className={label}>Delivery</label>
+            <input className={input} value={delivery} onChange={(e) => setDelivery(e.target.value)} placeholder="e.g. Dallas, TX 75201" required />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Rate</label>
+              <input className={input} value={rate} onChange={(e) => setRate(e.target.value)} placeholder="$2,400" inputMode="decimal" />
+            </div>
+            <div>
+              <label className={label}>Fuel surcharge / extras</label>
+              <input className={input} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="$0" inputMode="decimal" />
+            </div>
+          </div>
+
+          <button type="button" onClick={() => setShowCosts((v) => !v)} className="flex items-center gap-1.5 text-xs font-medium text-[#0B1E3F]/70 hover:text-[#0B1E3F]">
+            <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showCosts ? 'rotate-90' : ''}`} /> Your truck &amp; costs
+          </button>
+          {showCosts && (
+            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-[#0B1E3F]/[0.03]">
+              <div>
+                <label className={label}>Miles per gallon</label>
+                <input className={input} value={settings.mpg} onChange={(e) => saveSetting('mpg', e.target.value)} inputMode="decimal" />
+              </div>
+              <div>
+                <label className={label}>Diesel $/gal</label>
+                <input className={input} value={fuelOverride} onChange={(e) => setFuelOverride(e.target.value)} placeholder={plan?.diesel?.price ? `${plan.diesel.price.toFixed(3)} (EIA)` : 'This week’s average'} inputMode="decimal" />
+              </div>
+              <div>
+                <label className={label}>Driver pay $/mile</label>
+                <input className={input} value={settings.driverPay} onChange={(e) => saveSetting('driverPay', e.target.value)} placeholder="0.00" inputMode="decimal" />
+              </div>
+              <div>
+                <label className={label}>Other costs $/mile</label>
+                <input className={input} value={settings.otherCpm} onChange={(e) => saveSetting('otherCpm', e.target.value)} placeholder="e.g. 0.35" inputMode="decimal" />
+              </div>
+              <div className="col-span-2 text-[11px] text-[#0B1E3F]/50">Other costs: truck payment, insurance, maintenance, tires, tolls. Saved on this device.</div>
+            </div>
+          )}
+
+          {error && <div className="text-sm text-[#DC2626]">{error}</div>}
+          <button type="submit" disabled={busy} className="w-full py-3 bg-[#0B1E3F] text-white rounded-full text-sm font-medium hover:bg-[#0B1E3F]/90 disabled:opacity-60 flex items-center justify-center gap-2">
+            {busy ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Planning the route…</> : <><RouteIcon className="w-4 h-4" /> Plan this load</>}
+          </button>
+          {rateCons.length === 0 && (
+            <button type="button" onClick={() => navigate('verify', { tab: 'ratecon' })} className="w-full text-xs text-[#0B1E3F]/55 hover:text-[#0B1E3F] underline">Scan a rate con to fill this in</button>
+          )}
+        </form>
+
+        {/* Map + numbers */}
+        <div className="space-y-4 min-w-0">
+          <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+            <PlannerMap plan={plan} />
+          </div>
+
+          {plan ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="p-4 rounded-2xl bg-white border border-[#0B1E3F]/10 card-shadow">
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Empty miles</div>
+                  <div className="text-2xl font-semibold mt-1">{plan.hasOrigin ? Math.round(deadMiles).toLocaleString() : '—'}</div>
+                  <div className={`text-[11px] ${deadPct > 25 ? 'text-[#B45309] font-medium' : 'text-[#0B1E3F]/55'}`}>{plan.hasOrigin ? `${deadPct}% of the trip` : 'Add the driver’s location'}</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-white border border-[#0B1E3F]/10 card-shadow">
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Loaded miles</div>
+                  <div className="text-2xl font-semibold mt-1">{Math.round(loadedMiles).toLocaleString()}</div>
+                  <div className="text-[11px] text-[#0B1E3F]/55">{Math.round(totalMiles).toLocaleString()} total</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-white border border-[#0B1E3F]/10 card-shadow">
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Rate per mile</div>
+                  <div className="text-2xl font-semibold mt-1">{revenue && loadedMiles ? money(revenue / loadedMiles, true) : '—'}</div>
+                  <div className="text-[11px] text-[#0B1E3F]/55">{revenue && totalMiles ? `${money(revenue / totalMiles, true)} all-in with empty miles` : 'Enter the rate'}</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-white border border-[#0B1E3F]/10 card-shadow">
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Drive time</div>
+                  <div className="text-2xl font-semibold mt-1">{fmtHours(driveHours)}</div>
+                  <div className="text-[11px] text-[#0B1E3F]/55">{breaks ? `≈ ${fmtHours(elapsedHours)} with ${breaks} 10-hour break${breaks === 1 ? '' : 's'}` : 'Fits in one 11-hour shift'}</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-5 card-shadow">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                  <h2 className="text-lg font-semibold">What&apos;s left after costs</h2>
+                  {revenue > 0 && <span className={`px-3 py-1 rounded-full text-sm font-semibold ${net > 0 ? 'bg-[#16A34A]/10 text-[#16A34A]' : 'bg-[#DC2626]/10 text-[#DC2626]'}`}>{money(net)}{totalMiles ? ` · ${money(net / totalMiles, true)}/mi` : ''}</span>}
+                </div>
+                <div className="divide-y divide-[#0B1E3F]/5 text-sm">
+                  <div className="flex justify-between py-2"><span className="text-[#0B1E3F]/65">Rate{numIn(extra) ? ' + extras' : ''}</span><span className="font-medium">{revenue ? money(revenue) : '—'}</span></div>
+                  <div className="flex justify-between py-2 gap-3">
+                    <span className="text-[#0B1E3F]/65 flex items-center gap-1.5"><Fuel className="w-3.5 h-3.5" /> Fuel · {Math.round(gallons).toLocaleString()} gal at {fuelPrice ? money(fuelPrice, true) : '—'}/gal ({mpg} mpg)</span>
+                    <span className="font-medium text-[#DC2626]">−{money(fuelCost)}</span>
+                  </div>
+                  {driverCost > 0 && <div className="flex justify-between py-2"><span className="text-[#0B1E3F]/65">Driver pay · {money(numIn(settings.driverPay), true)}/mi</span><span className="font-medium text-[#DC2626]">−{money(driverCost)}</span></div>}
+                  {otherCost > 0 && <div className="flex justify-between py-2"><span className="text-[#0B1E3F]/65">Other costs · {money(numIn(settings.otherCpm), true)}/mi</span><span className="font-medium text-[#DC2626]">−{money(otherCost)}</span></div>}
+                  <div className="flex justify-between py-2"><span className="font-semibold">What&apos;s left</span><span className={`font-semibold ${net >= 0 ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{revenue ? money(net) : '—'}</span></div>
+                </div>
+                <div className="mt-3 text-xs text-[#0B1E3F]/60">
+                  Break-even: <strong className="text-[#0B1E3F]">{money(costPerMile, true)}/mi</strong> all-in{!driverCost && !otherCost ? ' (fuel only — add driver pay and other costs for the real number)' : ''}.
+                  {deadPct > 25 && <span className="text-[#B45309]"> Empty miles are {deadPct}% of this trip.</span>}
+                </div>
+                <div className="mt-3 pt-3 border-t border-[#0B1E3F]/10 text-[11px] text-[#0B1E3F]/50 space-y-0.5">
+                  <div>
+                    {plan.routing === 'truck' ? 'Truck route miles and times (OpenRouteService truck profile).' : 'Miles are estimated from the straight-line distance with a typical road factor, and drive time at 55 mph.'}
+                  </div>
+                  {plan.diesel && !numIn(fuelOverride) && (
+                    <div>Diesel: EIA weekly on-highway average for {plan.diesel.regions.join(' & ')}, week of {new Date(`${plan.diesel.week}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}. Your fuel card price may differ; change it under &ldquo;Your truck &amp; costs&rdquo;.</div>
+                  )}
+                  {!plan.diesel && <div>This week&apos;s diesel price didn&apos;t load. Enter yours under &ldquo;Your truck &amp; costs&rdquo;.</div>}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-sm text-[#0B1E3F]/60">
+              Enter a pickup and delivery (and where the truck is now) to see empty and loaded miles, drive time, fuel cost and what&apos;s left of the rate.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// MapLibre map with OpenFreeMap tiles (free, no key). The library loads only
+// when this page is opened; its stylesheet is served from /public.
+function PlannerMap({ plan }: { plan: any }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const mapRef = React.useRef<any>(null);
+  const markersRef = React.useRef<any[]>([]);
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!document.querySelector('link[data-maplibre]')) {
+      const l = document.createElement('link');
+      l.rel = 'stylesheet'; l.href = '/maplibre-gl-5.24.0.css'; l.setAttribute('data-maplibre', '1');
+      document.head.appendChild(l);
+    }
+    let cancelled = false;
+    let ro: ResizeObserver | null = null;
+    import('maplibre-gl').then((mod) => {
+      if (cancelled || !ref.current) return;
+      const maplibregl: any = (mod as any).default || mod;
+      const map = new maplibregl.Map({
+        container: ref.current,
+        style: 'https://tiles.openfreemap.org/styles/positron',
+        center: [-95.7, 37.1],
+        zoom: 3.3,
+        attributionControl: { compact: true },
+      });
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+      map.on('load', () => { if (!cancelled) setReady(true); });
+      map.on('error', () => {});
+      mapRef.current = { map, maplibregl };
+      // The page can be hidden and shown again; keep the canvas sized.
+      ro = new ResizeObserver(() => map.resize());
+      ro.observe(ref.current);
+    }).catch(() => setFailed(true));
+    return () => {
+      cancelled = true;
+      ro?.disconnect();
+      try { mapRef.current?.map?.remove(); } catch {}
+      mapRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!ready || !m) return;
+    const { map, maplibregl } = m;
+    markersRef.current.forEach((mk) => mk.remove());
+    markersRef.current = [];
+    for (const id of ['leg-0', 'leg-1']) {
+      if (map.getLayer(id)) map.removeLayer(id);
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    if (!plan?.points?.length) return;
+    const geometry: [number, number][][] = plan.geometry || [];
+    geometry.forEach((coords, i) => {
+      const empty = plan.hasOrigin && i === 0;
+      map.addSource(`leg-${i}`, { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } } });
+      map.addLayer({
+        id: `leg-${i}`, type: 'line', source: `leg-${i}`,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': empty ? '#64748B' : '#FF6B35', 'line-width': empty ? 3 : 4, ...(empty ? { 'line-dasharray': [1.5, 1.5] } : {}) },
+      });
+    });
+    const kinds = plan.hasOrigin ? ['truck', 'pickup', 'delivery'] : ['pickup', 'delivery'];
+    plan.points.forEach((p: any, i: number) => {
+      const kind = kinds[i];
+      const el = document.createElement('div');
+      el.style.cssText = `width:28px;height:28px;border-radius:999px;display:flex;align-items:center;justify-content:center;color:#fff;font:700 12px system-ui;box-shadow:0 2px 6px rgba(0,0,0,.25);border:2px solid #fff;background:${kind === 'truck' ? '#64748B' : kind === 'pickup' ? '#0B1E3F' : '#FF6B35'}`;
+      el.textContent = kind === 'truck' ? '●' : kind === 'pickup' ? 'P' : 'D';
+      el.title = `${kind === 'truck' ? 'Truck' : kind === 'pickup' ? 'Pickup' : 'Delivery'}: ${p.label}`;
+      markersRef.current.push(new maplibregl.Marker({ element: el }).setLngLat([p.lng, p.lat]).addTo(map));
+    });
+    const bounds = new maplibregl.LngLatBounds();
+    plan.points.forEach((p: any) => bounds.extend([p.lng, p.lat]));
+    geometry.flat().forEach((c) => bounds.extend(c));
+    map.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 600 });
+  }, [plan, ready]);
+
+  return (
+    <div className="relative">
+      <div ref={ref} className="h-[320px] md:h-[420px] w-full bg-[#E9EEF3]" />
+      {failed && <div className="absolute inset-0 flex items-center justify-center text-sm text-[#0B1E3F]/55">The map couldn&apos;t load. The numbers below still work.</div>}
+      {plan?.points?.length > 0 && (
+        <div className="absolute left-3 bottom-3 bg-white/95 rounded-xl px-3 py-2 text-[11px] text-[#0B1E3F]/75 shadow space-y-1 max-w-[70%]">
+          {plan.points.map((p: any, i: number) => {
+            const kind = (plan.hasOrigin ? ['Truck', 'Pickup', 'Delivery'] : ['Pickup', 'Delivery'])[i];
+            return <div key={i} className="truncate"><strong>{kind}:</strong> {p.label}</div>;
+          })}
+          {plan.hasOrigin && <div className="flex items-center gap-3 pt-0.5"><span className="flex items-center gap-1"><span className="w-4 border-t-2 border-dashed border-[#64748B]" />Empty</span><span className="flex items-center gap-1"><span className="w-4 border-t-[3px] border-[#FF6B35]" />Loaded</span></div>}
         </div>
       )}
     </div>

@@ -33,7 +33,8 @@ const csp = [
   "img-src 'self' data: blob: https://images.unsplash.com https://images.pexels.com https://*.googleusercontent.com https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com",
   // XHR / fetch / WS: self + Supabase (auth + db + realtime) + Stripe (api +
   // checkout) + Resend (transactional) + FMCSA + Brave + Google.
-  `connect-src 'self' https://${SUPABASE} wss://${SUPABASE} https://api.stripe.com https://checkout.stripe.com https://api.resend.com https://api.search.brave.com https://places.googleapis.com https://safebrowsing.googleapis.com https://*.fmcsa.dot.gov https://*.dot.gov https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com`,
+  // tiles.openfreemap.org: free map tiles, styles and fonts for the load planner map.
+  `connect-src 'self' https://${SUPABASE} wss://${SUPABASE} https://tiles.openfreemap.org https://api.stripe.com https://checkout.stripe.com https://api.resend.com https://api.search.brave.com https://places.googleapis.com https://safebrowsing.googleapis.com https://*.fmcsa.dot.gov https://*.dot.gov https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com`,
   // iframes: only Stripe Checkout / 3DS.
   "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com",
   // Worker / WASM: self only.
@@ -68,7 +69,8 @@ const securityHeaders = [
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   // Disable browser features we never use. Keeps a compromised script from
   // turning the user's webcam / mic / location on.
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), interest-cohort=(), browsing-topics=(), payment=(self "https://checkout.stripe.com")' },
+  // geolocation=(self): the load planner's "Use my location" button.
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(self), interest-cohort=(), browsing-topics=(), payment=(self "https://checkout.stripe.com")' },
   // Cross-Origin-Opener-Policy: isolate the browsing context so a popup
   // can't reach back into our window. Required for some modern features +
   // mitigates Spectre-class side-channel leaks.
