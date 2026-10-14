@@ -5,7 +5,7 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { getPlan, monthStart } from '@/lib/plans';
 import { getStripe } from '@/lib/stripe';
-import { customerIdOf, listHaulockSubscriptions, paidSubscriptionIds, summarizeBilling, type UserBilling } from '@/lib/billing';
+import { customerIdOf, lifetimeBySubscription, listHaulockSubscriptions, paidSubscriptionIds, summarizeBilling, type UserBilling } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -108,8 +108,9 @@ export async function GET() {
         if (!uid) continue;
         subsByUser.set(uid, [...(subsByUser.get(uid) || []), s]);
       }
+      const lifetime = await lifetimeBySubscription(stripe, Array.from(paidIds));
       billingByUser = new Map();
-      for (const [uid, list] of subsByUser) billingByUser.set(uid, summarizeBilling(list, paidIds));
+      for (const [uid, list] of subsByUser) billingByUser.set(uid, summarizeBilling(list, paidIds, lifetime));
     } catch (e: any) {
       billingError = e?.message || 'Stripe error';
     }

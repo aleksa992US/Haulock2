@@ -8002,13 +8002,19 @@ function AdminPage({ navigate }: any) {
   const [userSort, setUserSort] = useState<{ key: UserSortKey; dir: 1 | -1 }>({ key: 'lastSeen', dir: -1 });
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   useEffect(() => { setUserPage(1); }, [filter, planFilter, roleFilter, billingFilter, userSort]);
-  // Rows without a value (e.g. no subscription date) always sink to the bottom.
+  // Users with a live Stripe subscription always come first; the chosen
+  // column sorts within each group. Rows without a value (e.g. no
+  // subscription date) sink to the bottom of their group.
+  const isLiveSub = (u: any) => ['paying', 'canceling', 'past_due'].includes(u.billing?.status);
   const sorted = [...shown].sort((a, b) => {
+    const pinned = Number(isLiveSub(b)) - Number(isLiveSub(a));
+    if (pinned) return pinned;
     const va = userSortValue(a, userSort.key);
     const vb = userSortValue(b, userSort.key);
     if (va == null || vb == null) return va == null && vb == null ? 0 : va == null ? 1 : -1;
     return (typeof va === 'string' ? va.localeCompare(vb as string) : va - (vb as number)) * userSort.dir;
   });
+  const liveCount = sorted.filter(isLiveSub).length;
   const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(userPage, pageCount);
   const pageStart = (safePage - 1) * PAGE_SIZE;
@@ -8252,12 +8258,25 @@ function AdminPage({ navigate }: any) {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((u: any) => {
+                {visible.map((u: any, idx: number) => {
                   const open = expandedUserId === u.id;
                   const b = u.billing;
                   const lookupLimit = u.isAdmin ? null : u.limits.fmcsaLookups;
+                  // Group headings, only when both groups are in the list.
+                  const at = pageStart + idx;
+                  const grouped = liveCount > 0 && liveCount < sorted.length;
                   return (
                     <React.Fragment key={u.id}>
+                      {grouped && at === 0 && (
+                        <tr className="bg-[#16A34A]/[0.06] border-b border-[#16A34A]/15">
+                          <td colSpan={USER_COLUMNS.length + 1} className="px-3 py-1.5 text-[10px] mono uppercase tracking-wider text-[#16A34A] font-semibold">Active subscriptions · {liveCount}</td>
+                        </tr>
+                      )}
+                      {grouped && at === liveCount && (
+                        <tr className="bg-[#0B1E3F]/[0.03] border-b border-[#0B1E3F]/10">
+                          <td colSpan={USER_COLUMNS.length + 1} className="px-3 py-1.5 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55 font-semibold">Everyone else · {sorted.length - liveCount}</td>
+                        </tr>
+                      )}
                       <tr
                         onClick={() => setExpandedUserId(open ? null : u.id)}
                         className={`border-b border-[#0B1E3F]/5 cursor-pointer transition ${open ? 'bg-[#0B1E3F]/[0.04]' : 'hover:bg-[#0B1E3F]/[0.025]'} ${u.planMismatch ? 'shadow-[inset_3px_0_0_#DC2626]' : u.isAdmin ? 'shadow-[inset_3px_0_0_#0B1E3F]' : ''}`}

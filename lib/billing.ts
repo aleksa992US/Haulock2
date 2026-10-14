@@ -86,6 +86,29 @@ export async function paidSubscriptionIds(stripe: Stripe, subs: Stripe.Subscript
   return paid;
 }
 
+export type Lifetime = { paid: number; refunded: number };
+
+// Money each subscription has collected, in cents: paid invoices, and what
+// was refunded on their charges (same rules as the Revenue card in
+// lib/revenue.ts). One invoice listing per subscription, ten at a time.
+export async function lifetimeBySubscription(stripe: Stripe, subIds: string[]): Promise<Map<string, Lifetime>> {
+  const out = new Map<string, Lifetime>();
+  for (let i = 0; i < subIds.length; i += 10) {
+    await Promise.all(subIds.slice(i, i + 10).map(async (id) => {
+      const t: Lifetime = { paid: 0, refunded: 0 };
+      for await (const inv of stripe.invoices.list({ subscription: id, status: 'paid', limit: 100, expand: ['data.charge'] }) as any) {
+        const amount = Number(inv.amount_paid) || 0;
+        if (amount <= 0) continue;
+        const charge: any = inv.charge && typeof inv.charge === 'object' ? inv.charge : null;
+        t.paid += amount;
+        t.refunded += Math.min(amount, Number(charge?.amount_refunded) || 0);
+      }
+      out.set(id, t);
+    }));
+  }
+  return out;
+}
+
 export type BillingStatus = 'paying' | 'canceling' | 'past_due' | 'canceled' | 'never';
 
 export type UserBilling = {
@@ -103,6 +126,8 @@ export type UserBilling = {
   endsAt: number | null;            // canceling: when paid access stops
   endedAt: number | null;           // canceled: when paid access stopped
   cancelReason: string | null;      // from Stripe's cancellation details
+  lifetimePaidCents: number;        // every paid Haulock invoice, all their subscriptions
+  lifetimeRefundedCents: number;
   // The plan Stripe says this user should have right now.
   expectedPlan: PaidPlan | 'free';
 };
@@ -131,8 +156,9 @@ export function cancelReasonOf(s: Stripe.Subscription): string | null {
 }
 
 // One user's billing picture from their Haulock subscriptions. `paidIds`
-// comes from paidSubscriptionIds, so abandoned checkouts read as 'never'.
-export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<string>): UserBilling {
+// comes from paidSubscriptionIds, so abandoned checkouts read as 'never';
+// `lifetime` from lifetimeBySubscription.
+export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<string>, lifetime?: Map<string, Lifetime>): UserBilling {
   const real = subs.filter((s) => paidIds.has(s.id)).sort((a, b) => b.created - a.created);
   const live = pickLiveSubscription(real);
   const s = live || real[0] || null;
@@ -140,6 +166,8 @@ export function summarizeBilling(subs: Stripe.Subscription[], paidIds: Set<strin
     status: 'never', plan: null, billing: null, amountCents: null, currency: 'USD',
     subscriptionId: null, customerId: null, since: null, firstSubscribedAt: null,
     canceledAt: null, endsAt: null, endedAt: null, cancelReason: null,
+    lifetimePaidCents: real.reduce((n, x) => n + (lifetime?.get(x.id)?.paid || 0), 0),
+    lifetimeRefundedCents: real.reduce((n, x) => n + (lifetime?.get(x.id)?.refunded || 0), 0),
     expectedPlan: 'free',
   };
   if (!s) return base;
