@@ -6,8 +6,9 @@
 //             (GOOGLE_PLACES_API_KEY, already used for address checks),
 //             OpenStreetMap Nominatim (light use only).
 //   Route   — OpenRouteService truck profile (driving-hgv, ORS_API_KEY);
-//             without a key, straight-line distance × a road factor,
-//             clearly marked as an estimate.
+//             else the public Valhalla server run by FOSSGIS (truck
+//             costing, no key, fair use); else straight-line distance × a
+//             road factor, clearly marked as an estimate.
 //   Diesel  — EIA API v2 (EIA_API_KEY); without a key, EIA's weekly
 //             on-highway diesel table on eia.gov.
 
@@ -25,6 +26,7 @@ export type PlannerRoute = {
   legs: PlannerLeg[];
   geometry: [number, number][][];      // one [lng, lat] line per leg
   routing: 'truck' | 'estimate';
+  routingSource: 'ors' | 'valhalla' | 'estimate';
 };
 
 async function fetchJson(url: string, init?: RequestInit): Promise<any> {
@@ -207,8 +209,15 @@ export async function routeBetween(points: PlannerPoint[]): Promise<PlannerRoute
           legs: segs.map((s) => ({ miles: Math.round(Number(s.distance) * 10) / 10, hours: Math.round((Number(s.duration) / 3600) * 100) / 100 })),
           geometry: segs.map((_, i) => thin(wp.length === points.length ? coords.slice(wp[i], wp[i + 1] + 1) : coords, 400)),
           routing: 'truck',
+          routingSource: 'ors',
         };
       }
+    } catch { /* try the next router */ }
+  }
+  if (points.length >= 2) {
+    try {
+      const v = await valhallaRoute(points);
+      if (v) return v;
     } catch { /* fall back to the estimate */ }
   }
   const legs: PlannerLeg[] = [];
@@ -217,7 +226,48 @@ export async function routeBetween(points: PlannerPoint[]): Promise<PlannerRoute
     legs.push({ miles: Math.round(miles * 10) / 10, hours: Math.round((miles / 55) * 100) / 100 });
   }
   const geometry = legs.map((_, i) => [[points[i].lng, points[i].lat], [points[i + 1].lng, points[i + 1].lat]] as [number, number][]);
-  return { points, legs, geometry, routing: 'estimate' };
+  return { points, legs, geometry, routing: 'estimate', routingSource: 'estimate' };
+}
+
+// Valhalla's encoded polyline (precision 6) → [lng, lat] pairs.
+function decodePolyline6(str: string): [number, number][] {
+  const out: [number, number][] = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < str.length) {
+    for (const which of [0, 1]) {
+      let result = 0, shift = 0, b: number;
+      do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20 && index < str.length);
+      const delta = result & 1 ? ~(result >> 1) : result >> 1;
+      if (which === 0) lat += delta; else lng += delta;
+    }
+    out.push([lng / 1e6, lat / 1e6]);
+  }
+  return out;
+}
+
+const routeCache = new Map<string, { at: number; value: PlannerRoute }>();
+
+// Public Valhalla instance (FOSSGIS e.V., OpenStreetMap data), truck costing.
+async function valhallaRoute(points: PlannerPoint[]): Promise<PlannerRoute | null> {
+  const key = points.map((p) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`).join(';');
+  const hit = routeCache.get(key);
+  if (hit && Date.now() - hit.at < 6 * 60 * 60 * 1000) return { ...hit.value, points };
+  const j = await fetchJson('https://valhalla1.openstreetmap.de/route', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+    body: JSON.stringify({ locations: points.map((p) => ({ lat: p.lat, lon: p.lng })), costing: 'truck', units: 'miles', directions_type: 'none' }),
+  });
+  const legsIn: any[] = j?.trip?.legs || [];
+  if (j?.trip?.status !== 0 || legsIn.length !== points.length - 1) return null;
+  const value: PlannerRoute = {
+    points,
+    legs: legsIn.map((l) => ({ miles: Math.round(Number(l.summary?.length) * 10) / 10, hours: Math.round((Number(l.summary?.time) / 3600) * 100) / 100 })),
+    geometry: legsIn.map((l) => thin(decodePolyline6(String(l.shape || '')), 400)),
+    routing: 'truck',
+    routingSource: 'valhalla',
+  };
+  routeCache.set(key, { at: Date.now(), value });
+  return value;
 }
 
 // ---------- diesel ----------
