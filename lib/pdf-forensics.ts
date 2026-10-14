@@ -43,6 +43,17 @@ export type RevisionInfo = {
   summary: string;
 };
 
+// Where on the page a finding is, in PDF user space (origin bottom-left),
+// so the preview can draw a box around it.
+export type ForensicRegion = {
+  page: number;                              // 1-based
+  rect: [number, number, number, number];    // x1, y1, x2, y2
+  kind: 'text_changed' | 'text_removed' | 'cover_box' | 'overlay' | 'markup' | 'invisible_text' | 'touchup' | 'drawing_added';
+  sev: 'critical' | 'warning' | 'info';
+  label: string;
+  detail?: string;
+};
+
 export type PdfForensics = {
   metadata: {
     creationDate: string | null;
@@ -62,6 +73,8 @@ export type PdfForensics = {
   flags: ForensicFlag[];
   normal?: NormalNote[];
   revisions?: RevisionInfo[];
+  regions?: ForensicRegion[];
+  fileSha256?: string;
   summary?: string;
   score: number; // 0-100, higher = more likely tampered
   verdict: 'clean' | 'suspicious' | 'likely_tampered';
@@ -243,7 +256,9 @@ type PageScan = {
   text: string;                // the readable part of it, for showing what changed
   drawSig: string;             // drawing with tags/structure markers and spacing removed
   annots: string[];            // annotation subtypes
+  annotRects: { sub: string; rect: [number, number, number, number] | null; contents: string }[];
   freeTextContents: string[];
+  type0Fonts: Set<string>;     // font resource names that use 2-byte codes
   hasImage: boolean;
   fonts: string[];             // BaseFont names
   width: number;
@@ -267,7 +282,9 @@ function pageStreams(doc: PDFDocument, page: any): string[] {
 function scanPage(doc: PDFDocument, page: any): PageScan {
   const streams = pageStreams(doc, page);
   const annots: string[] = [];
+  const annotRects: PageScan['annotRects'] = [];
   const freeTextContents: string[] = [];
+  const type0Fonts = new Set<string>();
   let hasImage = false;
   const fonts: string[] = [];
   try {
@@ -277,7 +294,15 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
       if (!(a instanceof PDFDict)) continue;
       const sub = nameOf(a.get(PDFName.of('Subtype'))) || 'Unknown';
       annots.push(sub);
-      if (sub === 'FreeText') freeTextContents.push((textOf(a.get(PDFName.of('Contents'))) || '').slice(0, 120));
+      const contents = (textOf(a.get(PDFName.of('Contents'))) || '').slice(0, 120);
+      if (sub === 'FreeText') freeTextContents.push(contents);
+      let rect: [number, number, number, number] | null = null;
+      try {
+        const r = a.lookup(PDFName.of('Rect'));
+        const nums = r instanceof PDFArray ? r.asArray().map((v: any) => Number(v?.asNumber?.() ?? NaN)) : [];
+        if (nums.length === 4 && nums.every(isFinite)) rect = [Math.min(nums[0], nums[2]), Math.min(nums[1], nums[3]), Math.max(nums[0], nums[2]), Math.max(nums[1], nums[3])];
+      } catch { /* no rect */ }
+      annotRects.push({ sub, rect, contents });
     }
   } catch { /* none */ }
   try {
@@ -292,11 +317,12 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
     }
     const fd = res?.lookup(PDFName.of('Font'));
     if (fd instanceof PDFDict) {
-      for (const [, v] of fd.entries()) {
+      for (const [k, v] of fd.entries()) {
         const f = v instanceof PDFRef ? doc.context.lookup(v) : v;
         if (f instanceof PDFDict) {
           const base = nameOf(f.get(PDFName.of('BaseFont')));
           if (base) fonts.push(base);
+          if (nameOf(f.get(PDFName.of('Subtype'))) === 'Type0') type0Fonts.add(k.asString().replace(/^\//, ''));
         }
       }
     }
@@ -315,8 +341,207 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
     // tools reorder commands and re-write colour/positioning state without
     // changing what's drawn; a new box, line or image still shows.
     drawSig: sha(drawStatements(stripStructure(joined)).filter(isPaintStatement).sort().join('\n')),
-    annots, freeTextContents, hasImage, fonts, width, height,
+    annots, annotRects, freeTextContents, type0Fonts, hasImage, fonts, width, height,
   };
+}
+
+// ---------- page layout (where things are drawn) ----------
+
+type Mat = [number, number, number, number, number, number];
+type Box = [number, number, number, number];
+type LaidRun = { raw: string; text: string; box: Box; invisible: boolean; touchup: boolean };
+type LaidRect = { key: string; box: Box; white: boolean; filled: boolean };
+type Layout = { runs: LaidRun[]; rects: LaidRect[]; images: { key: string; box: Box }[] };
+
+const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
+const mul = (m: Mat, n: Mat): Mat => [
+  m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3],
+  m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
+  m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5],
+];
+function boxOf(m: Mat, x1: number, y1: number, x2: number, y2: number): Box {
+  const pts = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]);
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+function literalBody(tok: string): string {
+  return tok.slice(1, -1).replace(/\\([nrtbf()\\]|[0-7]{1,3}|\r?\n)/g, (_x, e) =>
+    /^[0-7]+$/.test(e) ? String.fromCharCode(parseInt(e, 8)) : ({ n: '\n', r: '', t: ' ', b: '', f: '' } as Record<string, string>)[e] ?? (/^\r?\n$/.test(e) ? '' : e));
+}
+
+const layoutCache = new WeakMap<PageScan, Layout>();
+
+// A small content-stream interpreter: tracks the transformation and text
+// matrices so each text string, rectangle and image gets a page position.
+// Glyph widths are estimated (half an em), which is close enough to draw a
+// highlight around a value.
+function layoutOf(page: PageScan): Layout {
+  const hit = layoutCache.get(page);
+  if (hit) return hit;
+  const out: Layout = { runs: [], rects: [], images: [] };
+  const content = page.streams.join('\n').replace(/\bBI\b[\s\S]*?\bID\b[\s\S]*?\bEI\b/g, ' __INLINE_IMAGE__ ');
+  type GS = { ctm: Mat; white: boolean; Tr: number; font: string; Tfs: number; TL: number; Th: number; Tc: number; Trise: number };
+  let gs: GS = { ctm: IDENTITY, white: false, Tr: 0, font: '', Tfs: 12, TL: 0, Th: 1, Tc: 0, Trise: 0 };
+  const stack: GS[] = [];
+  let Tm: Mat = IDENTITY, Tlm: Mat = IDENTITY;
+  let pending: { key: string; box: Box }[] = [];
+  let touchupNext = false;
+  let ops: string[] = [];
+  let depth = 0;
+  let arr: string[] | null = null;       // array being read
+  let lastArr: string[] | null = null;   // last complete array operand (for TJ)
+
+  const show = (tok: string) => {
+    let n: number, text: string;
+    if (tok.startsWith('(')) {
+      text = literalBody(tok);
+      n = text.length;
+      if (!/^[\x20-\x7E\u00A0-\u00FF\n]*$/.test(text)) text = '';
+    } else {
+      const hex = tok.slice(1, -1).replace(/\s+/g, '');
+      n = Math.ceil(hex.length / 2);
+      text = '';
+      if (hex.length % 2 === 0 && !page.type0Fonts.has(gs.font)) {
+        let d = '';
+        for (let i = 0; i < hex.length; i += 2) d += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+        text = /^[\x20-\x7E]*$/.test(d) ? d : '';
+      }
+    }
+    if (page.type0Fonts.has(gs.font)) n = Math.ceil(n / 2); // 2-byte character codes
+    const advance = n * (0.5 * gs.Tfs + gs.Tc) * gs.Th;
+    const m = mul(Tm, gs.ctm);
+    const box = boxOf(m, 0, gs.Trise - 0.22 * gs.Tfs, Math.max(advance, 0.3 * gs.Tfs), gs.Trise + 0.9 * gs.Tfs);
+    out.runs.push({ raw: tok.startsWith('<') ? `<${tok.slice(1, -1).replace(/\s+/g, '')}>` : tok, text, box, invisible: gs.Tr === 3 || gs.Tr === 7, touchup: touchupNext });
+    Tm = mul([1, 0, 0, 1, advance, 0], Tm);
+  };
+  const nextLine = (tx: number, ty: number) => { Tlm = mul([1, 0, 0, 1, tx, ty], Tlm); Tm = Tlm; };
+  const num = (i: number) => Number(ops[ops.length - i]);
+
+  const re = /\((?:\\[\s\S]|[^\\)])*\)|<<|>>|<[0-9A-Fa-f\s]*>|\[|\]|\/[^\s/<>\[\]()%]+|[-+]?(?:\d+\.?\d*|\.\d+)|[A-Za-z'"_][A-Za-z0-9*'"_]*|%[^\r\n]*/g;
+  for (const mt of Array.from(content.matchAll(re))) {
+    const t = mt[0];
+    if (t.startsWith('%')) continue;
+    if (t === '<<') { depth += 1; continue; }
+    if (t === '>>') { depth = Math.max(0, depth - 1); continue; }
+    if (depth > 0) continue; // inline dictionaries (marked-content properties)
+    if (t === '[') { arr = []; continue; }
+    if (t === ']') { lastArr = arr || []; arr = null; ops.push('__ARRAY__'); continue; }
+    if (arr) { arr.push(t); continue; }
+    if (!/^[A-Za-z'"_]/.test(t) || /^(true|false|null)$/.test(t)) { ops.push(t); continue; }
+    const op = t;
+    try {
+      switch (op) {
+        case 'q': stack.push({ ...gs }); break;
+        case 'Q': gs = stack.pop() || gs; break;
+        case 'cm': gs.ctm = mul([num(6), num(5), num(4), num(3), num(2), num(1)], gs.ctm); break;
+        case 'rg': gs.white = num(3) === 1 && num(2) === 1 && num(1) === 1; break;
+        case 'g': gs.white = num(1) === 1; break;
+        case 'k': gs.white = num(4) === 0 && num(3) === 0 && num(2) === 0 && num(1) === 0; break;
+        case 'sc': case 'scn': {
+          const vals = ops.filter((o) => !o.startsWith('/')).map(Number).filter((x) => isFinite(x));
+          gs.white = vals.length > 0 && (vals.length === 4 ? vals.every((v) => v === 0) : vals.every((v) => v === 1));
+          break;
+        }
+        case 'cs': gs.white = false; break;
+        case 're': {
+          const [x, y, w, h] = [num(4), num(3), num(2), num(1)];
+          pending.push({ key: `${ops.slice(-4).join(' ')}`, box: boxOf(gs.ctm, x, y, x + w, y + h) });
+          break;
+        }
+        case 'f': case 'F': case 'f*': case 'B': case 'B*': case 'b': case 'b*':
+          for (const r of pending) out.rects.push({ key: r.key, box: r.box, white: gs.white, filled: true });
+          pending = []; break;
+        case 'S': case 's':
+          for (const r of pending) out.rects.push({ key: r.key, box: r.box, white: false, filled: false });
+          pending = []; break;
+        case 'n': pending = []; break;
+        case 'Do': out.images.push({ key: `${ops[ops.length - 1]} ${gs.ctm.map((v) => v.toFixed(1)).join(' ')}`, box: boxOf(gs.ctm, 0, 0, 1, 1) }); break;
+        case '__INLINE_IMAGE__': out.images.push({ key: `inline ${gs.ctm.map((v) => v.toFixed(1)).join(' ')}`, box: boxOf(gs.ctm, 0, 0, 1, 1) }); break;
+        case 'BT': Tm = IDENTITY; Tlm = IDENTITY; break;
+        case 'ET': touchupNext = false; break; // the edit marker covers one text block
+        case 'Tf': gs.font = String(ops[ops.length - 2] || '').replace(/^\//, ''); gs.Tfs = num(1) || gs.Tfs; break;
+        case 'TL': gs.TL = num(1); break;
+        case 'Tz': gs.Th = num(1) / 100; break;
+        case 'Tc': gs.Tc = num(1); break;
+        case 'Ts': gs.Trise = num(1); break;
+        case 'Tr': gs.Tr = num(1); break;
+        case 'Td': nextLine(num(2), num(1)); break;
+        case 'TD': gs.TL = -num(1); nextLine(num(2), num(1)); break;
+        case 'Tm': Tlm = [num(6), num(5), num(4), num(3), num(2), num(1)]; Tm = Tlm; break;
+        case 'T*': nextLine(0, -gs.TL); break;
+        case 'Tj': { const s0 = ops[ops.length - 1]; if (s0) show(s0); break; }
+        case "'": { nextLine(0, -gs.TL); const s0 = ops[ops.length - 1]; if (s0) show(s0); break; }
+        case '"': { gs.Tc = num(2); nextLine(0, -gs.TL); const s0 = ops[ops.length - 1]; if (s0) show(s0); break; }
+        case 'TJ':
+          for (const el of lastArr || []) {
+            if (el.startsWith('(') || el.startsWith('<')) show(el);
+            else if (isFinite(Number(el))) Tm = mul([1, 0, 0, 1, (-Number(el) / 1000) * gs.Tfs * gs.Th, 0], Tm);
+          }
+          break;
+        case 'MP': case 'BDC': case 'BMC': case 'DP':
+          if (ops.some((o) => o === '/TouchUp_TextEdit')) touchupNext = true;
+          break;
+        default: break;
+      }
+    } catch { /* malformed operands: skip the operator */ }
+    ops = [];
+    lastArr = null;
+  }
+  layoutCache.set(page, out);
+  return out;
+}
+
+// Merge nearby boxes (pieces of the same word or line) into one highlight.
+function mergeBoxes(items: { box: Box; text: string }[], max = 12): { box: Box; text: string }[] {
+  const sorted = items.slice().sort((a, b) => (b.box[1] - a.box[1]) || (a.box[0] - b.box[0]));
+  const out: { box: Box; text: string }[] = [];
+  for (const it of sorted) {
+    const h = it.box[3] - it.box[1];
+    const last = out[out.length - 1];
+    if (last) {
+      const lh = last.box[3] - last.box[1];
+      const overlapY = Math.min(last.box[3], it.box[3]) - Math.max(last.box[1], it.box[1]);
+      const gapX = it.box[0] - last.box[2];
+      if (overlapY > 0.5 * Math.min(h, lh) && gapX < 1.5 * Math.max(h, lh) && gapX > -Math.max(h, lh) * 20) {
+        last.box = [Math.min(last.box[0], it.box[0]), Math.min(last.box[1], it.box[1]), Math.max(last.box[2], it.box[2]), Math.max(last.box[3], it.box[3])];
+        last.text = `${last.text}${it.text}`;
+        continue;
+      }
+    }
+    out.push({ box: [...it.box] as Box, text: it.text });
+  }
+  return out.slice(0, max);
+}
+
+// Overlap area as a share of the smaller box.
+function overlapRatio(a: Box, b: Box): number {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+  const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  if (w <= 0 || h <= 0) return 0;
+  const small = Math.min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]));
+  return small > 0 ? (w * h) / small : 0;
+}
+
+// Runs in `b` that aren't in `a` (as a multiset of exact strings).
+function unmatchedRuns(a: LaidRun[], b: LaidRun[]): LaidRun[] {
+  const left = new Map<string, number>();
+  for (const r of a) left.set(r.raw, (left.get(r.raw) || 0) + 1);
+  const out: LaidRun[] = [];
+  for (const r of b) {
+    const n = left.get(r.raw) || 0;
+    if (n > 0) left.set(r.raw, n - 1);
+    else out.push(r);
+  }
+  return out;
+}
+
+function sane(box: Box, page: PageScan): boolean {
+  const [x1, y1, x2, y2] = box;
+  if (![x1, y1, x2, y2].every(isFinite)) return false;
+  if (x2 - x1 < 1 || y2 - y1 < 1) return false;
+  // Allow for MediaBox offsets; reject boxes clearly off the page.
+  return x2 > -page.width && x1 < page.width * 2 && y2 > -page.height && y1 < page.height * 2;
 }
 
 // Text strings drawn inside BT…ET blocks. `raw` is exact (any change shows);
@@ -393,8 +618,9 @@ function textDelta(a: string, b: string): { before: string; after: string } | nu
   const clip = (x: string) => x.replace(/\s+/g, ' ').trim().slice(0, 80);
   // Widen to whole words for context.
   let s = i; while (s > 0 && /\S/.test(a[s - 1] || '') && i - s < 20) s--;
-  const before = clip(a.slice(s, a.length - j));
-  const after = clip(b.slice(s, b.length - j));
+  let e = 0; while (e < j && /\S/.test(a[a.length - j + e] || '') && e < 20) e++; // shared tail: same in both
+  const before = clip(a.slice(s, a.length - j + e));
+  const after = clip(b.slice(s, b.length - j + e));
   return before || after ? { before, after } : null;
 }
 
@@ -405,8 +631,8 @@ const WHITE_RECT = /(?:(?:^|\s)1(?:\.0+)?\s+1(?:\.0+)?\s+1(?:\.0+)?\s+(?:rg|sc|s
 // A white rectangle drawn AFTER text and FOLLOWED by more text in the same
 // stream is the classic cover-up: hide a value, type a new one on top.
 // Full-page or tiny rectangles (backgrounds, rules) are ignored.
-function coverBoxes(stream: string, pageW: number, pageH: number, textInEarlierLayer = false): number {
-  let n = 0;
+function coverBoxes(stream: string, pageW: number, pageH: number, textInEarlierLayer = false): string[] {
+  const hits: string[] = []; // "x y w h" as written, to find the box on the page
   for (const m of Array.from(stream.matchAll(WHITE_RECT))) {
     const w = Math.abs(Number(m[3]));
     const h = Math.abs(Number(m[4]));
@@ -415,9 +641,9 @@ function coverBoxes(stream: string, pageW: number, pageH: number, textInEarlierL
     const at = m.index as number;
     const before = stream.slice(0, at);
     const after = stream.slice(at + m[0].length);
-    if ((textInEarlierLayer || TEXT_OP.test(before)) && TEXT_OP.test(after)) n += 1;
+    if ((textInEarlierLayer || TEXT_OP.test(before)) && TEXT_OP.test(after)) hits.push(`${m[1]} ${m[2]} ${m[3]} ${m[4]}`);
   }
-  return n;
+  return hits;
 }
 
 // ---------- document fingerprint (per saved version) ----------
@@ -534,6 +760,17 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   const normal: NormalNote[] = [];
   const flag = (f: ForensicFlag) => flags.push(f);
   const ok = (code: string, title: string, desc: string) => normal.push({ code, title, desc });
+  const regions: ForensicRegion[] = [];
+  const region = (page: PageScan, pageNo: number, box: Box, kind: ForensicRegion['kind'], sev: ForensicRegion['sev'], label: string, detail?: string) => {
+    if (regions.length >= 80 || !sane(box, page)) return;
+    const pad = kind === 'text_changed' || kind === 'text_removed' || kind === 'touchup' || kind === 'invisible_text' ? 1.5 : 0;
+    regions.push({
+      page: pageNo,
+      rect: [box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad].map((v) => Math.round(v * 10) / 10) as Box,
+      kind, sev, label,
+      ...(detail ? { detail: detail.replace(/\s+/g, ' ').trim().slice(0, 120) } : {}),
+    });
+  };
 
   const creationDate = toIso(doc.getCreationDate() ?? null);
   const modificationDate = toIso(doc.getModificationDate() ?? null);
@@ -592,6 +829,76 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
         return;
       }
       revisions.push(diffPrints(prev, p, sigEndsByRev(ends[i], ends[i - 1]), i + 1));
+    });
+
+    // Where each change is on the page.
+    revisions.forEach((r, i) => {
+      const prev = prints[i - 1], next = prints[i];
+      if (!prev || !next || i === 0) return;
+      for (const pg of r.pagesChanged) {
+        const a = prev.pages[pg - 1], b = next.pages[pg - 1];
+        if (!a || !b) continue;
+        const la = layoutOf(a), lb = layoutOf(b);
+        const added = unmatchedRuns(la.runs, lb.runs);
+        const removed = unmatchedRuns(lb.runs, la.runs);
+        // A page whose text was re-encoded throughout has nothing specific to point at.
+        if (added.length > 40 && added.length > 0.6 * lb.runs.length) continue;
+        const gone = mergeBoxes(removed.map((x) => ({ box: x.box, text: x.text })), 8);
+        const used = new Set<number>();
+        for (const m of mergeBoxes(added.map((x) => ({ box: x.box, text: x.text })))) {
+          // Old text in the same spot: one box showing "before → after".
+          const k = gone.findIndex((g, gi) => !used.has(gi) && overlapRatio(g.box, m.box) > 0.5);
+          if (k >= 0) {
+            used.add(k);
+            const d = textDelta(gone[k].text, m.text);
+            region(b, pg, m.box, 'text_changed', 'critical', `Text changed in version ${r.index}`,
+              d && (d.before || d.after) ? `“${d.before || '(nothing)'}” → “${d.after || '(removed)'}”` : m.text ? `Now reads “${m.text}”` : undefined);
+          } else {
+            region(b, pg, m.box, 'text_changed', 'critical', `Text added in version ${r.index}`, m.text ? `Reads “${m.text}”` : undefined);
+          }
+        }
+        gone.forEach((g, gi) => {
+          if (!used.has(gi)) region(a, pg, g.box, 'text_removed', 'warning', `Text removed in version ${r.index}`, g.text ? `Used to read “${g.text}”` : undefined);
+        });
+      }
+      for (const pg of [...r.pagesChanged, ...r.pagesGraphicsOnly]) {
+        const a = prev.pages[pg - 1], b = next.pages[pg - 1];
+        if (!a || !b) continue;
+        const area = b.width * b.height;
+        const left = new Map<string, number>();
+        const key = (x: LaidRect) => `${x.key}|${x.filled}|${x.white}`;
+        for (const x of layoutOf(a).rects) left.set(key(x), (left.get(key(x)) || 0) + 1);
+        let shown = 0;
+        for (const x of layoutOf(b).rects) {
+          const n = left.get(key(x)) || 0;
+          if (n > 0) { left.set(key(x), n - 1); continue; }
+          const w = x.box[2] - x.box[0], h = x.box[3] - x.box[1];
+          if (w < 3 || h < 3 || w * h > area * 0.6 || shown >= 6) continue; // rules and backgrounds
+          shown += 1;
+          region(b, pg, x.box, 'drawing_added', x.white ? 'critical' : 'warning', x.white ? `White box added in version ${r.index}` : `Shape added in version ${r.index}`,
+            x.white ? 'Covers whatever was underneath it' : undefined);
+        }
+        const imgs = new Map<string, number>();
+        for (const x of layoutOf(a).images) imgs.set(x.key, (imgs.get(x.key) || 0) + 1);
+        for (const x of layoutOf(b).images) {
+          const n = imgs.get(x.key) || 0;
+          if (n > 0) { imgs.set(x.key, n - 1); continue; }
+          const w = x.box[2] - x.box[0], h = x.box[3] - x.box[1];
+          if (w * h > area * 0.9) continue; // full-page scan
+          region(b, pg, x.box, 'drawing_added', 'warning', `Image added in version ${r.index}`, 'Stamps and logos look like this; so does a pasted-in value');
+        }
+      }
+      if (r.kind === 'markup') {
+        for (let pg = 1; pg <= next.pages.length; pg++) {
+          const a = prev.pages[pg - 1], b = next.pages[pg - 1];
+          if (!b) continue;
+          const had = new Set((a?.annotRects || []).map((x) => `${x.sub}|${x.rect?.join(',')}`));
+          for (const x of b.annotRects) {
+            if (!x.rect || x.sub === 'Widget' || x.sub === 'Link' || x.sub === 'FreeText' || had.has(`${x.sub}|${x.rect.join(',')}`)) continue;
+            region(b, pg, x.rect, 'markup', 'warning', `${x.sub} added in version ${r.index}`, x.contents || undefined);
+          }
+        }
+      }
     });
 
     const content = revisions.filter((r) => r.kind === 'content');
@@ -670,12 +977,18 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
 
   // ---- 4. Cover-up boxes ----
   let coverHits = 0; const coverPages: number[] = []; let appendedCover = false;
+  const coverKeys: { page: number; key: string }[] = [];
   pages.forEach((p, i) => {
     p.streams.forEach((s, j) => {
       // In an added layer (j > 0) the covered text sits in an earlier layer.
       const earlierText = j > 0 && p.streams.slice(0, j).some((x) => TEXT_OP.test(x));
-      const n = coverBoxes(s, p.width, p.height, earlierText);
-      if (n) { coverHits += n; if (!coverPages.includes(i + 1)) coverPages.push(i + 1); if (j > 0) appendedCover = true; }
+      const keys = coverBoxes(s, p.width, p.height, earlierText);
+      if (keys.length) {
+        coverHits += keys.length;
+        if (!coverPages.includes(i + 1)) coverPages.push(i + 1);
+        if (j > 0) appendedCover = true;
+        for (const key of keys) coverKeys.push({ page: i + 1, key });
+      }
     });
   });
   // Editors that "edit" text usually append a new drawing layer: white box over
@@ -691,6 +1004,13 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
         : 'A white box sits between pieces of text. Many generators draw table cells this way, so on its own it’s just a note.',
       pts: strong ? 40 : 4,
     });
+    if (strong) {
+      for (const c of coverKeys) {
+        const p = pages[c.page - 1];
+        const rect = layoutOf(p).rects.find((x) => x.white && x.filled && x.key === c.key);
+        if (rect) region(p, c.page, rect.box, 'cover_box', 'critical', 'White box over the original text', 'New text was written on top of it');
+      }
+    }
   }
 
   // ---- 5. Typed text boxes and other markup (final file) ----
@@ -703,6 +1023,11 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
       pts: 20,
     });
   }
+  pages.forEach((p, i) => {
+    for (const a of p.annotRects) {
+      if (a.sub === 'FreeText' && a.rect) region(p, i + 1, a.rect, 'overlay', 'warning', 'Typed text box on top of the page', a.contents ? `Reads “${a.contents}”` : undefined);
+    }
+  });
   const widgets = pages.reduce((n, p) => n + p.annots.filter((a) => a === 'Widget').length, 0);
   if (widgets) ok('FORM_FIELDS', `Fillable form (${widgets} field${widgets === 1 ? '' : 's'})`, 'Form fields are meant to be filled in after the document is made. That’s normal.');
 
@@ -713,7 +1038,19 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   if (ocr.length) ok('OCR_LAYER', `Scanned page with a searchable text layer (${pageList(ocr.map((x) => x.i))})`, 'Invisible text over a scanned image is how OCR makes scans searchable. Normal.');
   if (hidden.length) {
     flag({ sev: 'warning', code: 'INVISIBLE_TEXT', title: `Invisible text on ${pageList(hidden.map((x) => x.i))}`, desc: 'The page contains text that’s drawn invisibly, with no scanned image behind it. It can be used to hide or plant content that copy-paste and search will pick up.', pts: 15 });
+    for (const h of hidden) {
+      const p = pages[h.i - 1];
+      for (const m of mergeBoxes(layoutOf(p).runs.filter((r) => r.invisible).map((r) => ({ box: r.box, text: r.text })), 8)) {
+        region(p, h.i, m.box, 'invisible_text', 'warning', 'Invisible text', m.text ? `Hidden text reads “${m.text}”` : undefined);
+      }
+    }
   }
+  touchPages.forEach((pg) => {
+    const p = pages[pg - 1];
+    for (const m of mergeBoxes(layoutOf(p).runs.filter((r) => r.touchup).map((r) => ({ box: r.box, text: r.text })), 8)) {
+      region(p, pg, m.box, 'touchup', 'critical', 'Retyped with Acrobat “Edit Text”', m.text ? `Reads “${m.text}”` : undefined);
+    }
+  });
 
   // ---- 7. Leftover duplicate objects (single-save files) ----
   if (laterSaves === 0) {
@@ -851,6 +1188,8 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
     flags: flags.sort((a, b) => b.pts - a.pts),
     normal,
     revisions: revisions.length ? revisions : undefined,
+    regions: regions.length ? regions : undefined,
+    fileSha256: sha(buffer),
     summary,
     score,
     verdict,

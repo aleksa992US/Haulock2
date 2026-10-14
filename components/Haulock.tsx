@@ -438,7 +438,7 @@ function Landing({ navigate, user }: any) {
               Know who&apos;s on the <span className="serif italic">other end</span> of the rate con.
             </h1>
             <p className="fade-up fade-up-3 text-lg md:text-xl text-[#0B1E3F]/70 max-w-xl mb-10 leading-relaxed">
-              Verify any broker or carrier in seconds. Cross-checks FMCSA, the company website, social presence, and Google Business listing — catching double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.
+              Verify any broker or carrier in seconds. Cross-checks FMCSA (including the officer names on file), the company website, social presence, and Google Business listing — catching double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.
             </p>
             <div className="fade-up fade-up-4 flex flex-col sm:flex-row gap-3 mb-12">
               <button onClick={() => navigate('signup')} className="group px-7 py-4 bg-[#0B1E3F] text-white text-base font-medium rounded-full hover:bg-[#0B1E3F]/90 transition flex items-center justify-center gap-2 card-shadow-lg">
@@ -521,7 +521,7 @@ function Landing({ navigate, user }: any) {
               role="Brokers"
               tagline="Verify carriers before you tender."
               points={[
-                'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, and 24-month inspections.',
+                'Live FMCSA authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and the officer names on the carrier’s FMCSA filing.',
                 'Lookalike-domain detection on every carrier email so you spot the impersonator using a real MC.',
                 'Chameleon-network detection on shared phones and addresses, plus FMCSA enforcement cross-reference.',
               ]}
@@ -540,7 +540,7 @@ function Landing({ navigate, user }: any) {
               role="Carriers"
               tagline="Verify brokers before you hook the trailer."
               points={[
-                'MC, DOT, surety bond, address, and website cross-checked in one lookup.',
+                'MC, DOT, surety bond, address, and website cross-checked in one lookup, plus the officer names and phone FMCSA has on file.',
                 'Drop the rate confirmation PDF: AI extracts the broker, scores it for fraud language, flags spoofed identities.',
                 'Watchlist auto-rescans every 24 hours and emails you the moment something changes.',
               ]}
@@ -553,8 +553,8 @@ function Landing({ navigate, user }: any) {
               role="Drivers & dispatchers"
               tagline="Make sure no one shaved the rate."
               points={[
-                'Drop the rate con PDF. We read the hidden metadata and flag if it was edited after the broker sent it.',
-                'See exactly which tool touched the file and when. iLovePDF + a 3-day gap is a red flag every time.',
+                'Drop the rate con PDF. We open the file, rebuild every saved version, and show the exact text that changed, before and after.',
+                'Flags white-out boxes, text typed on top, hidden text, and online editors like iLovePDF. Filled-in form fields and signatures aren’t flagged.',
                 'Free to check. No credit card. 3 PDF scans and 3 broker lookups every month, on us.',
               ]}
               cta="Check a rate con free"
@@ -605,12 +605,15 @@ function Landing({ navigate, user }: any) {
             </h2>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
-            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Paste an MC, DOT, or company name. Get authority status, age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="Live" statLabel="from FMCSA" />
-            <FeatureCard icon={Globe} iconBg="#FF6B35" title="Website & domain check" desc="We find the counterparty's real website, check WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
+            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Type an MC, DOT, or company name and pick the right company as you type. Carrier and broker authority shown separately, plus authority age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="Live" statLabel="from FMCSA" />
+            <FeatureCard icon={UserCheck} iconBg="#FF6B35" title="Officer names on file" desc="See the company officers on the FMCSA filing (MCS-150), plus the phone and email on it and when it was last updated. Ask for the owner by name, on the number FMCSA has — not the one on the rate con." stat="MCS-150" statLabel="FMCSA company census" />
+            <FeatureCard icon={Globe} iconBg="#16A34A" title="Website & domain check" desc="We find the counterparty's real website and check it, and their email domain, against the FMCSA record. Plus WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
+            <FeatureCard icon={Clock} iconBg="#0B1E3F" title="FMCSA history" desc="Authority and insurance history, plus name, address, and phone changes on the FMCSA record over time. A phone number that changed last week is worth asking about." stat="Timeline" statLabel="authority & identity changes" />
+            <FeatureCard icon={MapPin} iconBg="#FF6B35" title="Google Business address" desc="Cross-checks the FMCSA-registered address against Google Places. Flags UPS Store mailboxes, residential homes, and addresses shared by unrelated businesses." stat="Places" statLabel="real-world match" />
             <FeatureCard icon={Users} iconBg="#16A34A" title="Social media footprint" desc="Scans Facebook, LinkedIn, Twitter/X, Instagram, YouTube, and TikTok for the company's presence. Real companies leave a trail. Ghost identities don't." stat="6" statLabel="platforms matched" />
-            <FeatureCard icon={MapPin} iconBg="#0B1E3F" title="Google Business address" desc="Cross-checks the FMCSA-registered address against Google Places. Flags UPS Store mailboxes, residential homes, and addresses shared by unrelated businesses." stat="Places" statLabel="real-world match" />
+            <FeatureCard icon={Eye} iconBg="#0B1E3F" title="Web reputation scan" desc="Searches FreightWaves, Land Line, TruckersReport, BBB, Reddit, and government enforcement sites for fraud, scam, or lawsuit mentions tied to the carrier or broker." stat="50+" statLabel="trusted sources" />
             <FeatureCard icon={FileText} iconBg="#FF6B35" title="Rate con analyzer" desc="Drop a PDF. We extract the broker, verify the email domain against the registered MC, and flag spoofed letterheads and impersonated identities automatically." stat="AI" statLabel="broker & email extraction" />
-            <FeatureCard icon={Eye} iconBg="#16A34A" title="Web reputation scan" desc="Searches FreightWaves, Land Line, TruckersReport, BBB, Reddit, and government enforcement sites for fraud, scam, or lawsuit mentions tied to the carrier or broker." stat="50+" statLabel="trusted sources" />
+            <FeatureCard icon={ScanLine} iconBg="#16A34A" title="PDF tamper check" desc="Drop any PDF. We rebuild every saved version inside the file and show the exact text that changed, plus white-out boxes, typed-on-top text, hidden text, and edits after signing. Filled-in forms and signatures aren't flagged." stat="No AI" statLabel="file checked, not stored" />
           </div>
         </div>
       </section>
@@ -625,8 +628,8 @@ function Landing({ navigate, user }: any) {
             </div>
             <div className="space-y-4">
               {[
-                { n: '01', icon: Zap, title: 'Enter MC, DOT, company name, or drop a rate con', desc: 'Works with any identifier — for a broker or a carrier. Type it, paste it, or drop a PDF. Upload works from your phone in the cab or the desk.' },
-                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority & insurance, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, web reputation across 50+ trusted news outlets, and more.' },
+                { n: '01', icon: Zap, title: 'Enter MC, DOT, company name, or drop a rate con', desc: 'Works with any identifier — for a broker or a carrier. Start typing and pick the right company from the suggestions, or drop a PDF. Upload works from your phone in the cab or the desk.' },
+                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority & insurance, the officer names on the FMCSA filing, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, web reputation across 50+ trusted news outlets, and more.' },
                 { n: '03', icon: Target, title: 'Get a score and a clear verdict', desc: 'Plain English. No jargon. "Book this load" or "Walk away." Share with your dispatcher or ops team in one click.' },
               ].map((step, i) => (
                 <div key={i} className="group bg-white border border-[#0B1E3F]/10 rounded-2xl p-7 hover:border-[#0B1E3F]/20 transition card-shadow text-[#0B1E3F]">
@@ -661,14 +664,17 @@ function Landing({ navigate, user }: any) {
                 It happens more than you think. A dispatcher gets a $1,400 rate con from a broker, downloads it, opens it in a free online PDF editor, changes the number to $1,100, and forwards it to the driver. You haul the load thinking the rate is $1,100 and the dispatcher pockets the $300 spread.
               </p>
               <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
-                Every PDF contains <strong className="text-[#0B1E3F]">hidden metadata</strong> about who made it, when it was made, and every tool that touched it. Haulock reads that metadata and tells you the truth in plain English:
+                Haulock opens the file itself, not just its <strong className="text-[#0B1E3F]">hidden metadata</strong>. We rebuild every saved version inside the PDF, compare them page by page, and look for white-out boxes, text typed on top, hidden text, and changes made after signing. Then we tell you in plain English:
               </p>
-              <ul className="space-y-3 mb-8 text-[#0B1E3F]/80">
-                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>&ldquo;This PDF was edited 3 days after it was created — by iLovePDF.&rdquo;</span></li>
-                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>&ldquo;Author name &lsquo;Mike&rsquo; doesn&apos;t match the broker&apos;s name on the letterhead.&rdquo;</span></li>
+              <ul className="space-y-3 mb-6 text-[#0B1E3F]/80">
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>&ldquo;The rate on page 1 was changed in a later save: $1,400.00 → $1,100.00.&rdquo;</span></li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#DC2626] flex-shrink-0 mt-2" /><span>&ldquo;A white box was drawn over the old rate and new text typed on top — saved with iLovePDF.&rdquo;</span></li>
                 <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] flex-shrink-0 mt-2" /><span>&ldquo;All metadata stripped — someone hid what tool they used.&rdquo;</span></li>
-                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0 mt-2" /><span>&ldquo;Clean. Created by Microsoft Word, unmodified since.&rdquo;</span></li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-[#16A34A] flex-shrink-0 mt-2" /><span>&ldquo;Clean. Form fields were filled in and it was signed — that&apos;s normal. Nothing else changed.&rdquo;</span></li>
               </ul>
+              <p className="text-[#0B1E3F]/60 text-sm mb-8 leading-relaxed">
+                Changed spots are highlighted on a preview of your PDF. No AI and no broker lookup needed — the file itself is checked, and it isn&apos;t stored.
+              </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <button onClick={() => navigate('signup')} className="px-6 py-3.5 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center justify-center gap-2">
                   Sign up free & check a PDF <ArrowRight className="w-4 h-4" />
@@ -690,33 +696,33 @@ function Landing({ navigate, user }: any) {
                   </div>
                 </div>
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#DC2626]/10 rounded-full text-xs mono uppercase tracking-wider font-semibold text-[#DC2626]">
-                  Likely tampered · 72
+                  Likely tampered · 85
                 </div>
               </div>
               <div className="space-y-2.5 mb-5">
                 <div className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/15 rounded-lg">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#DC2626]" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-[#0B1E3F]">PDF edited 12 days after creation</div>
-                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Original: Apr 2, 2026 · Last saved: Apr 14, 2026</div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Text changed after it was created: &ldquo;$1,400.00&rdquo; → &ldquo;$1,100.00&rdquo;</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Page 1 · the file still holds the original version from Apr 2, 2026</div>
                   </div>
-                  <div className="text-xs mono text-[#0B1E3F]/40">+35</div>
+                  <div className="text-xs mono text-[#0B1E3F]/40">+45</div>
                 </div>
                 <div className="flex items-start gap-3 p-3 bg-[#DC2626]/5 border border-[#DC2626]/15 rounded-lg">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#DC2626]" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-[#0B1E3F]">Processed with &ldquo;iLovePDF&rdquo;</div>
-                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Free online PDF editor — not what real brokers use</div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Saved with an online PDF editor (iLovePDF)</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Brokers normally make PDFs from their TMS or office software</div>
                   </div>
                   <div className="text-xs mono text-[#0B1E3F]/40">+40</div>
                 </div>
-                <div className="flex items-start gap-3 p-3 bg-[#F59E0B]/5 border border-[#F59E0B]/15 rounded-lg">
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#F59E0B]" />
+                <div className="flex items-start gap-3 p-3 bg-[#16A34A]/5 border border-[#16A34A]/15 rounded-lg">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-[#16A34A]" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-[#0B1E3F]">Author: &ldquo;Mike K.&rdquo;</div>
-                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Cross-check against the broker&apos;s known contacts</div>
+                    <div className="text-sm font-semibold text-[#0B1E3F]">Fillable form, 6 fields filled in</div>
+                    <div className="text-xs text-[#0B1E3F]/60 mt-0.5">Form fields are meant to be filled in. That&apos;s normal.</div>
                   </div>
-                  <div className="text-xs mono text-[#0B1E3F]/40">+10</div>
+                  <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/40">Normal</div>
                 </div>
               </div>
               <div className="pt-4 border-t border-[#0B1E3F]/10 grid grid-cols-2 gap-2 text-[11px] mono">
@@ -754,7 +760,7 @@ function Landing({ navigate, user }: any) {
                   For brokers: <span className="serif italic">check the COI</span> before you book.
                 </h2>
                 <p className="text-[#0B1E3F]/70 text-lg mb-6 leading-relaxed">
-                  A certificate of insurance is easy to fake and easy to outlive — a policy can be cancelled the day after the certificate is printed. Haulock reads the COI and compares it with the filings the carrier&apos;s insurer made with FMCSA:
+                  A certificate of insurance is easy to fake and easy to outlive — a policy can be cancelled the day after the certificate is printed. Upload the ACORD 25 certificate and Haulock reads the insurers, policies, and coverage on it, then compares them with the filings the carrier&apos;s insurer made with FMCSA:
                 </p>
                 <ul className="space-y-3 mb-6 text-[#0B1E3F]/80">
                   {[
@@ -881,7 +887,7 @@ function Landing({ navigate, user }: any) {
             <div className="p-8 rounded-3xl border border-[#0B1E3F]/10 bg-[#F5F3EE]">
               <div className="w-11 h-11 rounded-xl bg-[#0B1E3F] flex items-center justify-center mb-5"><Eye className="w-5 h-5 text-white" /></div>
               <h3 className="text-2xl font-semibold mb-3">See how often you&apos;re checked</h3>
-              <p className="text-[#0B1E3F]/70 leading-relaxed">Every time a broker, carrier or shipper checks your MC on Haulock, it counts. See checks per week and how many different companies looked you up.</p>
+              <p className="text-[#0B1E3F]/70 leading-relaxed">Every time a broker, carrier or shipper checks your MC on Haulock, it counts. See checks per week and how many different accounts looked you up, with a notice in the app when you&apos;re checked.</p>
               <div className="mt-6 p-4 bg-white rounded-2xl border border-[#0B1E3F]/10">
                 <div className="flex items-baseline gap-2"><span className="text-3xl font-semibold">23</span><span className="text-sm text-[#0B1E3F]/60">checks in the last 30 days · by 9 accounts</span></div>
                 <div className="flex items-end h-12 mt-3" style={{ gap: 2 }} aria-hidden="true">
@@ -891,7 +897,7 @@ function Landing({ navigate, user }: any) {
                 </div>
                 <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mt-2">Example · last 12 weeks</div>
               </div>
-              <p className="mt-4 text-xs text-[#0B1E3F]/55">Counts only: we never reveal who searched. Searches on FMCSA&apos;s own site aren&apos;t visible to anyone.</p>
+              <p className="mt-4 text-xs text-[#0B1E3F]/55">Counts only: we never reveal who searched. Unlocks once you verify the company is yours, with a login email on your company&apos;s domain or a code we send to the email on your FMCSA filing. Searches on FMCSA&apos;s own site aren&apos;t visible to anyone.</p>
             </div>
             <div className="p-8 rounded-3xl border border-[#0B1E3F]/10 bg-[#F5F3EE]">
               <div className="w-11 h-11 rounded-xl bg-[#FF6B35] flex items-center justify-center mb-5"><Bell className="w-5 h-5 text-white" /></div>
@@ -982,8 +988,8 @@ function Landing({ navigate, user }: any) {
           <div className="text-xs mono uppercase tracking-[0.2em] text-[#0B1E3F]/50 mb-5 text-center">— 14 data sources, cross-checked on every lookup</div>
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-3">
             {[
-              'FMCSA SAFER', 'L&I authority status', 'MCS-150 filings', 'Insurance filings', 'Crash & inspection history',
-              'Authority history', 'Company website', 'Domain WHOIS', 'DNS (MX / SPF)', 'Google Safe Browsing',
+              'FMCSA SAFER', 'L&I authority status', 'MCS-150 officers & contacts', 'Insurance filings', 'Crash & inspection history',
+              'Authority & identity history', 'Company website', 'Domain WHOIS', 'DNS (MX / SPF)', 'Google Safe Browsing',
               'Google Business address', 'Social profiles (6 platforms)', 'Disposable email registry', 'Web reputation scan',
             ].map((src, i) => (
               <span key={i} className="px-3 py-1.5 bg-[#F5F3EE] border border-[#0B1E3F]/10 rounded-full text-xs mono text-[#0B1E3F]/70">
