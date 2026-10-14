@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
+import type Stripe from 'stripe';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { isAdmin } from '@/lib/admin';
 import { getStripe, planFromPriceId } from '@/lib/stripe';
+import { listHaulockSubscriptions, paidSubscriptionIds } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function GET() {
   const stripe = getStripe();
@@ -17,27 +20,32 @@ export async function GET() {
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   if (!(await isAdmin(me.email))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  // Pull recent active subscriptions (all statuses) — the 100 newest.
-  // Expand latest_invoice so we can show actual charged amounts (post-discount),
-  // and the customer object so we have names/emails for the table.
-  const subs = await stripe.subscriptions.list({
-    status: 'all',
-    limit: 100,
-    expand: ['data.customer', 'data.latest_invoice'],
-  });
+  // Every Haulock subscription, all statuses. The Stripe account is shared
+  // with other products, so taking only the newest 100 of everything could
+  // miss Haulock subscriptions. Expand latest_invoice so we can show actual
+  // charged amounts (post-discount), and the customer object so we have
+  // names/emails for the table.
+  let haulockSubs: Stripe.Subscription[];
+  let paidIds: Set<string>;
+  try {
+    ({ subs: haulockSubs } = await listHaulockSubscriptions(stripe, ['data.customer', 'data.latest_invoice']));
+    paidIds = await paidSubscriptionIds(stripe, haulockSubs);
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || 'Stripe error' }, { status: 502 });
+  }
 
-  // Filter Haulock-tagged subs, and drop `incomplete` rows from the UI — those are
-  // abandoned checkout attempts (user closed the tab, refreshed, etc.) and they
-  // clutter metrics. They auto-expire in Stripe after ~23h anyway.
-  const haulockSubs = subs.data.filter((s) => s.metadata?.product === 'haulock');
-  const completedSubs = haulockSubs.filter((s) => s.status !== 'incomplete' && s.status !== 'incomplete_expired');
+  // Only subscriptions that were actually paid for count. Abandoned checkout
+  // attempts (closed tab, retried with another promo code) stay incomplete or
+  // get canceled before any invoice is paid; counting them inflated Canceled,
+  // New, and Ever paid.
+  const completedSubs = haulockSubs.filter((s) => paidIds.has(s.id));
 
   const now = Math.floor(Date.now() / 1000);
   const active = completedSubs.filter((s) => s.status === 'active' || s.status === 'trialing');
   const pastDue = completedSubs.filter((s) => s.status === 'past_due' || s.status === 'unpaid');
   const canceled = completedSubs.filter((s) => s.status === 'canceled');
   const last30d = completedSubs.filter((s) => s.created >= now - 30 * 24 * 60 * 60);
-  const incomplete = haulockSubs.filter((s) => s.status === 'incomplete' || s.status === 'incomplete_expired');
+  const incomplete = haulockSubs.filter((s) => !paidIds.has(s.id));
 
   // MRR: for each active sub, the monthly recurring amount AFTER any discount
   // that applies on an ongoing basis. Stripe coupons with duration='once' only

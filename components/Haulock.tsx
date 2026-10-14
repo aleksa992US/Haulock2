@@ -10,7 +10,7 @@ import {
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
   Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
   Truck, UserCheck, LifeBuoy, MessageSquare, Fuel, Navigation, Route as RouteIcon,
-  X,
+  X, LogIn,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
@@ -2357,13 +2357,13 @@ function Nav({ navigate, user }: any) {
   const initial = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase();
   return (
     <nav className="sticky top-0 z-50 bg-[#F5F3EE] border-b border-[#0B1E3F]/10 text-[#0B1E3F]">
-      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-2">
         {/* Logo always sends the user back to the marketing home. Used to
             be an unwrapped <Logo /> which felt broken on /blog, /about,
             /terms, /privacy etc. — the standard convention every
             user expects. */}
-        <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} aria-label="Haulock home" className="hover:opacity-80 transition">
-          <Logo />
+        <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} aria-label="Haulock home" className="hover:opacity-80 transition min-w-0">
+          <Logo className="h-8 sm:h-10" />
         </button>
         <div className="hidden md:flex items-center gap-8 text-sm text-[#0B1E3F]/70">
           <button onClick={() => { navigate('landing'); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }} className="hover:text-[#0B1E3F]">Home</button>
@@ -2376,7 +2376,7 @@ function Nav({ navigate, user }: any) {
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
           <button onClick={() => navigate('blog')} className="hover:text-[#0B1E3F]">Blog</button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {user ? (
             <button
               onClick={() => navigate('dashboard')}
@@ -2394,8 +2394,19 @@ function Nav({ navigate, user }: any) {
             </button>
           ) : (
             <>
-              <button onClick={() => navigate('login')} className="px-4 py-2 text-sm text-[#0B1E3F]/70 hover:text-[#0B1E3F]">Log in</button>
-              <button onClick={() => navigate('signup')} className="px-4 py-2 bg-[#0B1E3F] text-white text-sm rounded-full hover:bg-[#0B1E3F]/90 transition">Get started</button>
+              {/* Same pill shape as the signed-in account chip above, so
+                  returning users find their account in the same spot. */}
+              <button
+                onClick={() => navigate('login')}
+                className="group flex items-center gap-1.5 sm:gap-2 pl-1 sm:pl-1.5 pr-3 sm:pr-4 py-1 bg-white border border-[#0B1E3F]/15 hover:border-[#0B1E3F]/40 rounded-full transition card-shadow whitespace-nowrap"
+                title="Log in to your account"
+              >
+                <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-[#0B1E3F]/[0.07] text-[#0B1E3F] group-hover:bg-[#0B1E3F] group-hover:text-white flex items-center justify-center transition">
+                  <LogIn className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-sm font-semibold text-[#0B1E3F]">Log in</span>
+              </button>
+              <button onClick={() => navigate('signup')} className="px-3.5 sm:px-4 py-2 bg-[#0B1E3F] text-white text-sm rounded-full hover:bg-[#0B1E3F]/90 transition whitespace-nowrap">Get started</button>
             </>
           )}
         </div>
@@ -2404,12 +2415,12 @@ function Nav({ navigate, user }: any) {
   );
 }
 
-function Logo({ white }: any) {
+function Logo({ white, className = 'h-10' }: any) {
   return (
     <img
       src="/haulock-logo.png"
       alt="Haulock"
-      className="h-10 w-auto object-contain"
+      className={`${className} w-auto object-contain`}
       style={white ? { filter: 'brightness(0) invert(1)' } : undefined}
     />
   );
@@ -7753,12 +7764,36 @@ type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsle
 
 type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
 type RoleFilter = 'all' | 'admin' | 'affiliate' | 'regular';
+type BillingFilter = 'all' | 'paying' | 'canceling' | 'past_due' | 'canceled' | 'never' | 'mismatch';
+
+const fmtBillingDate = (ts: number | null) =>
+  ts ? new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+// Stripe's view of one user, from /api/admin/users `billing`.
+function BillingBadge({ b }: { b: any }) {
+  if (!b || b.status === 'never') return null;
+  const plan = b.plan ? getPlan(b.plan).label : 'Paid';
+  const price = b.amountCents != null
+    ? `${new Intl.NumberFormat('en-US', { style: 'currency', currency: b.currency || 'USD', minimumFractionDigits: 0 }).format(b.amountCents / 100)}/${b.billing === 'annual' ? 'yr' : 'mo'}`
+    : null;
+  const look: Record<string, { cls: string; text: string; title: string }> = {
+    paying:    { cls: 'bg-[#16A34A]/10 text-[#16A34A]', text: `Paying · ${plan}${price ? ` · ${price}` : ''}`, title: `Paying since ${fmtBillingDate(b.since)}` },
+    canceling: { cls: 'bg-[#F59E0B]/10 text-[#B45309]', text: `Canceling · ${plan} until ${fmtBillingDate(b.endsAt)}`, title: 'Canceled in Stripe; keeps paid access until the end of the period they paid for, then drops to Free.' },
+    past_due:  { cls: 'bg-[#F59E0B]/10 text-[#B45309]', text: `Payment failed · ${plan}`, title: 'Card declined. Stripe is retrying; access stays on until retries run out.' },
+    canceled:  { cls: 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60', text: `Canceled ${fmtBillingDate(b.canceledAt)} · was ${plan}`, title: 'No active Stripe subscription.' },
+  };
+  const l = look[b.status];
+  if (!l) return null;
+  return <span className={`px-2 py-0.5 text-[10px] mono uppercase tracking-wider rounded-full ${l.cls}`} title={l.title}>{l.text}</span>;
+}
 
 function AdminPage({ navigate }: any) {
   const [users, setUsers] = useState<any[] | null>(null);
+  const [billingError, setBillingError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [planFilter, setPlanFilter] = useState<PlanFilter>('all');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
+  const [billingFilter, setBillingFilter] = useState<BillingFilter>('all');
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [tab, setTab] = useState<AdminTab>('overview');
@@ -7770,6 +7805,7 @@ function AdminPage({ navigate }: any) {
     const data = await res.json();
     if (!res.ok) { setError(data?.error || `Failed (${res.status})`); setUsers([]); return; }
     setUsers(data.users || []);
+    setBillingError(data.billingError || null);
   };
   useEffect(() => { load(); }, []);
 
@@ -7855,6 +7891,11 @@ function AdminPage({ navigate }: any) {
     if (roleFilter === 'admin' && !u.isAdmin) return false;
     if (roleFilter === 'affiliate' && (u.role !== 'affiliate' || u.isAdmin)) return false;
     if (roleFilter === 'regular' && (u.isAdmin || u.role === 'affiliate')) return false;
+    // Billing filter — Stripe's view, or plan/Stripe disagreements.
+    // "Paying" includes canceling users: they've paid through the period end.
+    if (billingFilter === 'mismatch' && !u.planMismatch) return false;
+    if (billingFilter === 'paying' && u.billing?.status !== 'paying' && u.billing?.status !== 'canceling') return false;
+    if (!['all', 'mismatch', 'paying'].includes(billingFilter) && u.billing?.status !== billingFilter) return false;
     return true;
   });
 
@@ -7863,7 +7904,7 @@ function AdminPage({ navigate }: any) {
   // results always start at the top of the matching subset.
   const PAGE_SIZE = 10;
   const [userPage, setUserPage] = useState(1);
-  useEffect(() => { setUserPage(1); }, [filter, planFilter, roleFilter]);
+  useEffect(() => { setUserPage(1); }, [filter, planFilter, roleFilter, billingFilter]);
   const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
   const safePage = Math.min(userPage, pageCount);
   const pageStart = (safePage - 1) * PAGE_SIZE;
@@ -7875,7 +7916,11 @@ function AdminPage({ navigate }: any) {
     lookupsThisMonth: acc.lookupsThisMonth + (u.usage?.lookupsThisMonth || 0),
     scansThisMonth: acc.scansThisMonth + (u.usage?.scansThisMonth || 0),
     watchlist: acc.watchlist + (u.usage?.watchlist || 0),
-  }), { users: 0, admins: 0, lookupsThisMonth: 0, scansThisMonth: 0, watchlist: 0 });
+    paying: acc.paying + (u.billing?.status === 'paying' || u.billing?.status === 'canceling' ? 1 : 0),
+    canceling: acc.canceling + (u.billing?.status === 'canceling' ? 1 : 0),
+    mismatch: acc.mismatch + (u.planMismatch ? 1 : 0),
+  }), { users: 0, admins: 0, lookupsThisMonth: 0, scansThisMonth: 0, watchlist: 0, paying: 0, canceling: 0, mismatch: 0 });
+  const showUsers = (b: BillingFilter) => { setFilter(''); setPlanFilter('all'); setRoleFilter('all'); setBillingFilter(b); setTab('users'); };
 
   // Tab definitions. `id` is the state value, `label` shows in the bar,
   // `count` (optional) renders a small badge — handy for the user count.
@@ -7923,7 +7968,23 @@ function AdminPage({ navigate }: any) {
       {/* OVERVIEW: top-of-funnel summary tiles + Stripe billing health */}
       {tab === 'overview' && (
         <div className="space-y-8">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <button
+              onClick={() => showUsers('paying')}
+              disabled={users == null || !!billingError}
+              className="p-4 bg-white border border-[#16A34A]/30 rounded-xl text-left hover:border-[#16A34A]/60 transition disabled:hover:border-[#16A34A]/30"
+              title={billingError ? `Stripe unavailable: ${billingError}` : 'Users with a live Stripe subscription. Click to list them.'}
+            >
+              <div className="text-[10px] mono uppercase tracking-wider text-[#16A34A]">Paying now</div>
+              <div className="text-2xl font-semibold mt-1">{users == null || billingError ? '—' : totals.paying}</div>
+              {users != null && !billingError && (totals.canceling > 0 || totals.mismatch > 0) && (
+                <div className="text-[10px] mono mt-1 text-[#0B1E3F]/55">
+                  {totals.canceling > 0 && <span>{totals.canceling} canceling</span>}
+                  {totals.canceling > 0 && totals.mismatch > 0 && ' · '}
+                  {totals.mismatch > 0 && <span className="text-[#DC2626]">{totals.mismatch} need fix</span>}
+                </div>
+              )}
+            </button>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Users</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.users}</div></div>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Admins</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.admins}</div></div>
             <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl"><div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Lookups this mo.</div><div className="text-2xl font-semibold mt-1">{users == null ? '—' : totals.lookupsThisMonth}</div></div>
@@ -7978,12 +8039,17 @@ function AdminPage({ navigate }: any) {
               || (u.mc || '').includes(f));
             const planCounts: Record<PlanFilter, number> = { all: baseSet.length, free: 0, carrier: 0, team: 0, fleet: 0 };
             const roleCounts: Record<RoleFilter, number> = { all: baseSet.length, admin: 0, affiliate: 0, regular: 0 };
+            const billingCounts: Record<BillingFilter, number> = { all: baseSet.length, paying: 0, canceling: 0, past_due: 0, canceled: 0, never: 0, mismatch: 0 };
             for (const u of baseSet) {
               const p = ((u.plan || 'free').toLowerCase() as PlanFilter);
               if (p === 'free' || p === 'carrier' || p === 'team' || p === 'fleet') planCounts[p] += 1;
               if (u.isAdmin) roleCounts.admin += 1;
               else if (u.role === 'affiliate') roleCounts.affiliate += 1;
               else roleCounts.regular += 1;
+              const bs = u.billing?.status as BillingFilter | undefined;
+              if (bs && bs in billingCounts) billingCounts[bs] += 1;
+              if (bs === 'canceling') billingCounts.paying += 1;
+              if (u.planMismatch) billingCounts.mismatch += 1;
             }
             const Pill = ({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) => (
               <button
@@ -8012,10 +8078,26 @@ function AdminPage({ navigate }: any) {
                   <Pill active={roleFilter === 'affiliate'} onClick={() => setRoleFilter('affiliate')} label="Affiliate" count={roleCounts.affiliate} />
                   <Pill active={roleFilter === 'regular'}   onClick={() => setRoleFilter('regular')}   label="Regular"   count={roleCounts.regular} />
                 </div>
-                {(planFilter !== 'all' || roleFilter !== 'all') && (
+                {billingError ? (
+                  <div className="text-[11px] mono text-[#DC2626]" title={billingError}>Stripe billing unavailable: {billingError}</div>
+                ) : (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mr-1" title="From Stripe, not the plan stored on the account">Billing</span>
+                    <Pill active={billingFilter === 'all'}       onClick={() => setBillingFilter('all')}       label="All"            count={billingCounts.all} />
+                    <Pill active={billingFilter === 'paying'}    onClick={() => setBillingFilter('paying')}    label="Paying"         count={billingCounts.paying} />
+                    <Pill active={billingFilter === 'canceling'} onClick={() => setBillingFilter('canceling')} label="Canceling"      count={billingCounts.canceling} />
+                    <Pill active={billingFilter === 'past_due'}  onClick={() => setBillingFilter('past_due')}  label="Payment failed" count={billingCounts.past_due} />
+                    <Pill active={billingFilter === 'canceled'}  onClick={() => setBillingFilter('canceled')}  label="Canceled"       count={billingCounts.canceled} />
+                    <Pill active={billingFilter === 'never'}     onClick={() => setBillingFilter('never')}     label="Never paid"     count={billingCounts.never} />
+                    {billingCounts.mismatch > 0 && (
+                      <Pill active={billingFilter === 'mismatch'} onClick={() => setBillingFilter('mismatch')} label="⚠ Needs fix" count={billingCounts.mismatch} />
+                    )}
+                  </div>
+                )}
+                {(planFilter !== 'all' || roleFilter !== 'all' || billingFilter !== 'all') && (
                   <button
                     type="button"
-                    onClick={() => { setPlanFilter('all'); setRoleFilter('all'); }}
+                    onClick={() => { setPlanFilter('all'); setRoleFilter('all'); setBillingFilter('all'); }}
                     className="ml-auto text-[11px] mono text-[#0B1E3F]/55 hover:text-[#DC2626] transition"
                   >
                     Clear filters
@@ -8055,16 +8137,40 @@ function AdminPage({ navigate }: any) {
                       <div className="flex items-center gap-2 flex-wrap mb-1">
                         <div className="font-semibold text-[#0B1E3F] truncate">{u.name || u.email}</div>
                         {u.isAdmin && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#0B1E3F] text-white text-[10px] mono uppercase tracking-wider rounded-full"><ShieldCheck className="w-2.5 h-2.5" /> admin</span>}
-                        <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] text-[10px] mono uppercase tracking-wider rounded-full">{u.planLabel}</span>
+                        <span className="px-2 py-0.5 bg-[#FF6B35]/10 text-[#FF6B35] text-[10px] mono uppercase tracking-wider rounded-full" title="Plan the app gives them now">{u.planLabel}</span>
+                        <BillingBadge b={u.billing} />
+                        {u.team?.role === 'member' && <span className="px-2 py-0.5 bg-[#0B1E3F]/5 text-[#0B1E3F]/60 text-[10px] mono uppercase tracking-wider rounded-full" title="Gets the plan of the team they joined">team member</span>}
                         {!u.confirmedAt && <span className="px-2 py-0.5 bg-[#F59E0B]/10 text-[#F59E0B] text-[10px] mono uppercase tracking-wider rounded-full">unconfirmed</span>}
                       </div>
                       <div className="text-xs mono text-[#0B1E3F]/60 truncate">{u.email}{u.company ? ` · ${u.company}` : ''}{u.mc ? ` · MC-${u.mc}` : ''}</div>
                       <div className="text-xs text-[#0B1E3F]/55 mt-1">
                         Joined {u.createdAt ? timeAgo(u.createdAt) : '—'}
                         {u.lastSignInAt ? ` · last seen ${timeAgo(u.lastSignInAt)}` : ' · never signed in'}
+                        {u.billing?.status === 'paying' && u.billing.since ? ` · paying since ${fmtBillingDate(u.billing.since)}` : ''}
                       </div>
                     </div>
                   </div>
+                  {u.planMismatch && (
+                    <div className="mt-3 px-3 py-2 rounded-lg bg-[#DC2626]/5 border border-[#DC2626]/20 text-xs text-[#0B1E3F] flex items-center gap-3 flex-wrap">
+                      <AlertTriangle className="w-3.5 h-3.5 text-[#DC2626] flex-shrink-0" />
+                      <div className="flex-1 min-w-[200px]">
+                        {u.expectedPlan === 'free'
+                          ? <>Gets <strong>{u.planLabel}</strong> in the app, but has no active Stripe subscription{u.billing?.status === 'canceled' ? <> (canceled {fmtBillingDate(u.billing.canceledAt)})</> : ''}{u.team?.role === 'member' ? <> on their team owner&apos;s account</> : ''}.</>
+                          : <>Stripe says <strong>{getPlan(u.expectedPlan).label}</strong>{u.team?.role === 'member' ? <> (via their team owner)</> : ''}, but the app gives <strong>{u.planLabel}</strong>.</>}
+                      </div>
+                      {u.team?.role === 'member' ? (
+                        <span className="text-[11px] text-[#0B1E3F]/55">Fix it on the team owner.</span>
+                      ) : (
+                        <button
+                          onClick={() => patchUser(u.id, { plan: u.expectedPlan })}
+                          disabled={pendingId === u.id}
+                          className="px-3 py-1 rounded-full bg-[#DC2626] text-white text-[11px] font-medium hover:bg-[#DC2626]/90 transition disabled:opacity-50"
+                        >
+                          {pendingId === u.id ? 'Saving…' : `Set to ${getPlan(u.expectedPlan).label}`}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
                     <UsageMiniCard label="Lookups / mo" value={u.usage.lookupsThisMonth} limit={u.isAdmin ? null : u.limits.fmcsaLookups} />
                     <UsageMiniCard label="Scans / mo" value={u.usage.scansThisMonth} limit={u.isAdmin ? null : u.limits.rateConScans} />

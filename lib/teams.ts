@@ -35,6 +35,25 @@ export async function resolveTeamContext(userId: string, userMetaPlan?: string |
   return { team: null, role: null, ownerUserId: userId, effectivePlan: getPlan(userMetaPlan) };
 }
 
+// Writes a plan everywhere the app reads it: the user's own metadata and the
+// team they own (resolveTeamContext prefers the team's plan). Updating only
+// the metadata left canceled owners on paid limits through their team.
+export async function applyUserPlan(userId: string, plan: string): Promise<void> {
+  const svc = getServiceSupabase();
+  if (!svc) throw new Error('Service role not configured');
+  const { data, error } = await svc.auth.admin.getUserById(userId);
+  if (error || !data?.user) throw new Error(error?.message || 'User not found');
+  const prev = data.user.user_metadata || {};
+  if (prev.plan !== plan) {
+    const { error: updErr } = await svc.auth.admin.updateUserById(userId, {
+      user_metadata: { ...prev, plan, plan_changed_at: new Date().toISOString() },
+    });
+    if (updErr) throw new Error(updErr.message);
+  }
+  const { error: teamErr } = await svc.from('teams').update({ plan }).eq('owner_user_id', userId);
+  if (teamErr) throw new Error(teamErr.message);
+}
+
 export async function ensureTeamForOwner(opts: { userId: string; plan: string; name?: string | null }): Promise<string> {
   const svc = getServiceSupabase();
   if (!svc) throw new Error('Service role not configured');

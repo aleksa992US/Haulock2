@@ -73,6 +73,7 @@ export async function GET() {
         stripe_customer_id: customerId,
       },
     });
+    await svc.from('teams').update({ plan: resolvedPlan }).eq('owner_user_id', me.id);
   }
 
   const periodEnd = (active as any).current_period_end ?? null;

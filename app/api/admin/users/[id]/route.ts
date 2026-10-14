@@ -4,6 +4,7 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin, invalidateAdminCache } from '@/lib/admin';
 import { PLANS } from '@/lib/plans';
 import { getStripe } from '@/lib/stripe';
+import { applyUserPlan } from '@/lib/teams';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,13 +23,14 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const body = await req.json().catch(() => null) as { plan?: string; isAdmin?: boolean } | null;
   if (!body) return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
 
-  // Update plan (stored in user_metadata)
+  // Update plan (user_metadata + the team they own)
   if (typeof body.plan === 'string') {
     if (!(body.plan in PLANS)) return NextResponse.json({ error: 'Unknown plan' }, { status: 400 });
-    const { data: existing } = await svc.auth.admin.getUserById(params.id);
-    const merged = { ...(existing.user?.user_metadata || {}), plan: body.plan };
-    const { error } = await svc.auth.admin.updateUserById(params.id, { user_metadata: merged });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    try {
+      await applyUserPlan(params.id, body.plan);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || 'Plan update failed' }, { status: 500 });
+    }
   }
 
   // Toggle admin (by email, in admins table)

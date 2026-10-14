@@ -1,21 +1,12 @@
 import { NextResponse } from 'next/server';
 import type Stripe from 'stripe';
-import { getStripe, planFromPriceId } from '@/lib/stripe';
-import { getServiceSupabase } from '@/lib/supabase/service';
+import { getStripe } from '@/lib/stripe';
+import { pickLiveSubscription, subscriptionPlan } from '@/lib/billing';
+import { applyUserPlan } from '@/lib/teams';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 // Webhooks need the raw body for signature verification — don't cache or parse.
-
-async function setUserPlan(userId: string, plan: string) {
-  const svc = getServiceSupabase();
-  if (!svc) return;
-  const { data } = await svc.auth.admin.getUserById(userId);
-  const prev = data?.user?.user_metadata || {};
-  await svc.auth.admin.updateUserById(userId, {
-    user_metadata: { ...prev, plan, plan_changed_at: new Date().toISOString() },
-  });
-}
 
 function haulockMeta(obj: any): { isHaulock: boolean; userId?: string; plan?: string } {
   const m = obj?.metadata || {};
@@ -24,6 +15,20 @@ function haulockMeta(obj: any): { isHaulock: boolean; userId?: string; plan?: st
     userId: m.user_id,
     plan: m.plan,
   };
+}
+
+// Re-derive the user's plan from ALL of the customer's Haulock subscriptions
+// instead of trusting the one event. Events can arrive out of order, and a
+// customer can have an abandoned or canceled subscription next to a live one
+// (deleting the old one must not drop them to free). No live subscription
+// means free.
+async function syncPlanFromStripe(stripe: Stripe, userId: string, customer: string | Stripe.Customer | Stripe.DeletedCustomer | null) {
+  const customerId = typeof customer === 'string' ? customer : customer?.id;
+  if (!customerId) return;
+  const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
+  const live = pickLiveSubscription(subs.data.filter((s) => s.metadata?.product === 'haulock'));
+  const plan = (live && (subscriptionPlan(live) || haulockMeta(live).plan)) || 'free';
+  await applyUserPlan(userId, plan);
 }
 
 export async function POST(req: Request) {
@@ -44,62 +49,50 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `Webhook signature verification failed: ${err?.message}` }, { status: 400 });
   }
 
-  switch (event.type) {
-    case 'customer.subscription.created':
-    case 'customer.subscription.updated': {
-      const sub = event.data.object as Stripe.Subscription;
-      const meta = haulockMeta(sub);
-      if (!meta.isHaulock || !meta.userId) break;
-
-      // Derive plan: prefer the Price ID mapping (authoritative), fall back to metadata.
-      const priceId = sub.items.data[0]?.price?.id;
-      const mapped = planFromPriceId(priceId);
-      const nextPlan = mapped?.plan || meta.plan || 'free';
-
-      // Activate only when the subscription is fully active.
-      if (sub.status === 'active' || sub.status === 'trialing') {
-        await setUserPlan(meta.userId, nextPlan);
-      } else if (sub.status === 'canceled' || sub.status === 'unpaid' || sub.status === 'incomplete_expired') {
-        await setUserPlan(meta.userId, 'free');
+  try {
+    switch (event.type) {
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object as Stripe.Subscription;
+        const meta = haulockMeta(sub);
+        if (!meta.isHaulock || !meta.userId) break;
+        // Unpaid checkout attempts never granted a plan, so they can't change one.
+        if (sub.status === 'incomplete' || sub.status === 'incomplete_expired') break;
+        await syncPlanFromStripe(stripe, meta.userId, sub.customer);
+        break;
       }
-      break;
-    }
 
-    case 'customer.subscription.deleted': {
-      const sub = event.data.object as Stripe.Subscription;
-      const meta = haulockMeta(sub);
-      if (!meta.isHaulock || !meta.userId) break;
-      await setUserPlan(meta.userId, 'free');
-      break;
-    }
-
-    case 'invoice.payment_succeeded': {
-      // First successful payment on a default_incomplete subscription transitions it to active.
-      const invoice = event.data.object as Stripe.Invoice;
-      const meta = haulockMeta(invoice);
-      if (!meta.isHaulock || !meta.userId) break;
-      if (invoice.billing_reason === 'subscription_create') {
-        // Stripe SDK v22 changed InvoiceLineItem — the price id can live on
-        // `line.price.id` (older shape) or `line.pricing.price_details.price`
-        // (newer shape). Read both defensively.
-        const line: any = invoice.lines?.data?.[0];
-        const priceId: string | undefined =
-          line?.price?.id || line?.pricing?.price_details?.price;
-        const mapped = planFromPriceId(priceId);
-        const nextPlan = mapped?.plan || meta.plan || 'free';
-        await setUserPlan(meta.userId, nextPlan);
+      case 'invoice.payment_succeeded': {
+        // First successful payment on a default_incomplete subscription transitions it to active.
+        const invoice = event.data.object as Stripe.Invoice;
+        // Subscription invoices don't carry the subscription's metadata on
+        // `metadata`; Stripe copies it to subscription_details (moved under
+        // `parent` in newer API versions).
+        const inv: any = invoice;
+        const meta = haulockMeta({
+          metadata: inv.subscription_details?.metadata || inv.parent?.subscription_details?.metadata || inv.metadata,
+        });
+        if (!meta.isHaulock || !meta.userId) break;
+        if (invoice.billing_reason === 'subscription_create') {
+          await syncPlanFromStripe(stripe, meta.userId, invoice.customer);
+        }
+        break;
       }
-      break;
-    }
 
-    case 'invoice.payment_failed': {
-      // Leave the plan where it is; Stripe will retry. Could send an email here later.
-      break;
-    }
+      case 'invoice.payment_failed': {
+        // Leave the plan where it is; Stripe will retry. Could send an email here later.
+        break;
+      }
 
-    default:
-      // Ignore everything else — keeps noise down.
-      break;
+      default:
+        // Ignore everything else — keeps noise down.
+        break;
+    }
+  } catch (err: any) {
+    // A 500 makes Stripe retry the event, so a failed plan write isn't lost.
+    console.error(`[stripe webhook] ${event.type} failed:`, err?.message);
+    return NextResponse.json({ error: 'Plan sync failed' }, { status: 500 });
   }
 
   return NextResponse.json({ received: true });
