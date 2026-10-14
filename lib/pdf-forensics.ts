@@ -259,6 +259,7 @@ type PageScan = {
   annotRects: { sub: string; rect: [number, number, number, number] | null; contents: string }[];
   freeTextContents: string[];
   type0Fonts: Set<string>;     // font resource names that use 2-byte codes
+  toUnicode: Map<string, Map<number, string>>; // font resource name → code → text
   hasImage: boolean;
   fonts: string[];             // BaseFont names
   width: number;
@@ -279,12 +280,42 @@ function pageStreams(doc: PDFDocument, page: any): string[] {
   return out;
 }
 
+// A font's ToUnicode CMap (bfchar / bfrange): what each character code
+// means as text. Lets us read text in embedded subset fonts, which is how
+// Word, Acrobat and most generators write PDFs.
+function utf16(hex: string): string {
+  let out = '';
+  for (let i = 0; i + 4 <= hex.length; i += 4) out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
+  if (hex.length % 4 === 2) out += String.fromCharCode(parseInt(hex.slice(-2), 16));
+  return out;
+}
+function parseToUnicode(cmap: string): Map<number, string> {
+  const map = new Map<number, string>();
+  for (const block of Array.from(cmap.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))) {
+    for (const m of Array.from(block[1].matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>/g))) map.set(parseInt(m[1], 16), utf16(m[2]));
+  }
+  for (const block of Array.from(cmap.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))) {
+    for (const m of Array.from(block[1].matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<([0-9A-Fa-f]*)>|\[([^\]]*)\])/g))) {
+      const lo = parseInt(m[1], 16), hi = Math.min(parseInt(m[2], 16), parseInt(m[1], 16) + 2000);
+      if (m[4] != null) {
+        const dst = m[4];
+        const head = dst.slice(0, -4), tail = parseInt(dst.slice(-4) || '0', 16);
+        for (let c = lo; c <= hi; c++) map.set(c, utf16(head + (tail + c - lo).toString(16).padStart(4, '0')));
+      } else if (m[5] != null) {
+        Array.from(m[5].matchAll(/<([0-9A-Fa-f]*)>/g)).forEach((d, i) => { if (lo + i <= hi) map.set(lo + i, utf16(d[1])); });
+      }
+    }
+  }
+  return map;
+}
+
 function scanPage(doc: PDFDocument, page: any): PageScan {
   const streams = pageStreams(doc, page);
   const annots: string[] = [];
   const annotRects: PageScan['annotRects'] = [];
   const freeTextContents: string[] = [];
   const type0Fonts = new Set<string>();
+  const toUnicode = new Map<string, Map<number, string>>();
   let hasImage = false;
   const fonts: string[] = [];
   try {
@@ -322,7 +353,12 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
         if (f instanceof PDFDict) {
           const base = nameOf(f.get(PDFName.of('BaseFont')));
           if (base) fonts.push(base);
-          if (nameOf(f.get(PDFName.of('Subtype'))) === 'Type0') type0Fonts.add(k.asString().replace(/^\//, ''));
+          const resName = k.asString().replace(/^\//, '');
+          if (nameOf(f.get(PDFName.of('Subtype'))) === 'Type0') type0Fonts.add(resName);
+          try {
+            const bytes = decodeStream(f.lookup(PDFName.of('ToUnicode')));
+            if (bytes) { const m = parseToUnicode(latin1(bytes)); if (m.size) toUnicode.set(resName, m); }
+          } catch { /* no map */ }
         }
       }
     }
@@ -341,7 +377,7 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
     // tools reorder commands and re-write colour/positioning state without
     // changing what's drawn; a new box, line or image still shows.
     drawSig: sha(drawStatements(stripStructure(joined)).filter(isPaintStatement).sort().join('\n')),
-    annots, annotRects, freeTextContents, type0Fonts, hasImage, fonts, width, height,
+    annots, annotRects, freeTextContents, type0Fonts, toUnicode, hasImage, fonts, width, height,
   };
 }
 
@@ -366,8 +402,9 @@ function boxOf(m: Mat, x1: number, y1: number, x2: number, y2: number): Box {
 }
 
 function literalBody(tok: string): string {
-  return tok.slice(1, -1).replace(/\\([nrtbf()\\]|[0-7]{1,3}|\r?\n)/g, (_x, e) =>
-    /^[0-7]+$/.test(e) ? String.fromCharCode(parseInt(e, 8)) : ({ n: '\n', r: '', t: ' ', b: '', f: '' } as Record<string, string>)[e] ?? (/^\r?\n$/.test(e) ? '' : e));
+  // \ + end-of-line (CR, LF or CRLF) is a line continuation: no character.
+  return tok.slice(1, -1).replace(/\\(\r\n?|\n|[nrtbf()\\]|[0-7]{1,3})/g, (_x, e) =>
+    /^[0-7]+$/.test(e) ? String.fromCharCode(parseInt(e, 8)) : /^[\r\n]/.test(e) ? '' : ({ n: '\n', r: '', t: ' ', b: '', f: '' } as Record<string, string>)[e] ?? e);
 }
 
 const layoutCache = new WeakMap<PageScan, Layout>();
@@ -393,22 +430,25 @@ function layoutOf(page: PageScan): Layout {
   let lastArr: string[] | null = null;   // last complete array operand (for TJ)
 
   const show = (tok: string) => {
-    let n: number, text: string;
-    if (tok.startsWith('(')) {
-      text = literalBody(tok);
-      n = text.length;
-      if (!/^[\x20-\x7E\u00A0-\u00FF\n]*$/.test(text)) text = '';
-    } else {
+    // The string's bytes, then character codes (2 bytes each for Type0 fonts).
+    let bytes = '';
+    if (tok.startsWith('(')) bytes = literalBody(tok);
+    else {
       const hex = tok.slice(1, -1).replace(/\s+/g, '');
-      n = Math.ceil(hex.length / 2);
-      text = '';
-      if (hex.length % 2 === 0 && !page.type0Fonts.has(gs.font)) {
-        let d = '';
-        for (let i = 0; i < hex.length; i += 2) d += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
-        text = /^[\x20-\x7E]*$/.test(d) ? d : '';
-      }
+      for (let i = 0; i < hex.length; i += 2) bytes += String.fromCharCode(parseInt(hex.slice(i, i + 2).padEnd(2, '0'), 16));
     }
-    if (page.type0Fonts.has(gs.font)) n = Math.ceil(n / 2); // 2-byte character codes
+    const wide = page.type0Fonts.has(gs.font);
+    const codes: number[] = [];
+    for (let i = 0; i < bytes.length; i += wide ? 2 : 1) codes.push(wide ? (bytes.charCodeAt(i) << 8) | (bytes.charCodeAt(i + 1) || 0) : bytes.charCodeAt(i));
+    const n = codes.length;
+    const cmap = page.toUnicode.get(gs.font);
+    let text = '';
+    if (cmap) {
+      const parts = codes.map((c) => cmap.get(c));
+      text = parts.every((x) => x != null) ? parts.join('') : '';
+    } else if (!wide && /^[\x20-\x7E\u00A0-\u00FF\n]*$/.test(bytes)) {
+      text = bytes;
+    }
     const advance = n * (0.5 * gs.Tfs + gs.Tc) * gs.Th;
     const m = mul(Tm, gs.ctm);
     const box = boxOf(m, 0, gs.Trise - 0.22 * gs.Tfs, Math.max(advance, 0.3 * gs.Tfs), gs.Trise + 0.9 * gs.Tfs);
@@ -514,6 +554,21 @@ function mergeBoxes(items: { box: Box; text: string }[], max = 12): { box: Box; 
   return out.slice(0, max);
 }
 
+// One box per spot: an Acrobat "Edit Text" mark on text we already show as
+// changed becomes part of that box's label.
+function dedupeRegions(list: ForensicRegion[]): ForensicRegion[] {
+  const out: ForensicRegion[] = [];
+  for (const g of list) {
+    const same = out.find((o) => o.page === g.page && overlapRatio(o.rect, g.rect) > 0.8);
+    if (same && (g.kind === 'touchup' || same.kind === g.kind)) {
+      if (g.kind === 'touchup' && same.kind === 'text_changed' && !same.label.includes('Edit Text')) same.label += ' (Acrobat “Edit Text”)';
+      continue;
+    }
+    out.push({ ...g });
+  }
+  return out;
+}
+
 // Overlap area as a share of the smaller box.
 function overlapRatio(a: Box, b: Box): number {
   const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
@@ -543,6 +598,110 @@ function sane(box: Box, page: PageScan): boolean {
   // Allow for MediaBox offsets; reject boxes clearly off the page.
   return x2 > -page.width && x1 < page.width * 2 && y2 > -page.height && y1 < page.height * 2;
 }
+
+// ---------- line-level text comparison ----------
+// Editors re-order and re-encode text when they save (Acrobat rewrites the
+// whole page for a one-character edit), so versions are compared as lines
+// of readable text by position, not as raw strings in stream order.
+
+type Line = { y: number; h: number; box: Box; text: string; norm: string; spans: { run: LaidRun; start: number; end: number }[] };
+const linesCache = new WeakMap<PageScan, Line[]>();
+
+function linesOf(page: PageScan): Line[] {
+  const hit = linesCache.get(page);
+  if (hit) return hit;
+  const runs = layoutOf(page).runs.slice().sort((a, b) => (b.box[1] - a.box[1]) || (a.box[0] - b.box[0]));
+  const groups: LaidRun[][] = [];
+  for (const r of runs) {
+    const h = r.box[3] - r.box[1];
+    const g = groups.find((x) => Math.abs(x[0].box[1] - r.box[1]) <= Math.max(1.5, 0.25 * h));
+    if (g) g.push(r); else groups.push([r]);
+  }
+  const out: Line[] = groups.map((g) => {
+    g.sort((a, b) => a.box[0] - b.box[0]);
+    const readable = g.every((r) => r.text || !r.raw.replace(/[()<>\s]/g, ''));
+    let text = '';
+    const spans: Line['spans'] = [];
+    g.forEach((r, i) => {
+      const h = r.box[3] - r.box[1];
+      if (i > 0 && r.box[0] - g[i - 1].box[2] > 0.25 * h && !/\s$/.test(text)) text += ' ';
+      const piece = readable ? r.text : r.raw;
+      spans.push({ run: r, start: text.length, end: text.length + piece.length });
+      text += piece;
+    });
+    const box: Box = [Math.min(...g.map((r) => r.box[0])), Math.min(...g.map((r) => r.box[1])), Math.max(...g.map((r) => r.box[2])), Math.max(...g.map((r) => r.box[3]))];
+    return { y: g[0].box[1], h: box[3] - box[1], box, text: text.replace(/\s+/g, ' '), norm: (readable ? '' : 'raw:') + text.replace(/\s+/g, ''), spans };
+  }).filter((l) => l.norm && l.norm !== 'raw:');
+  linesCache.set(page, out);
+  return out;
+}
+
+// Where two strings differ, widened to whole words, with offsets.
+function diffSpan(a: string, b: string): { before: string; after: string; aStart: number; aEnd: number; bStart: number; bEnd: number } {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  let j = 0;
+  while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  let s = i; while (s > 0 && /\S/.test(a[s - 1]) && i - s < 24) s--;
+  let e = 0; while (e < j && /\S/.test(a[a.length - j + e]) && e < 24) e++;
+  const aEnd = a.length - j + e, bEnd = b.length - j + e;
+  return { before: a.slice(s, aEnd).trim(), after: b.slice(s, bEnd).trim(), aStart: s, aEnd, bStart: s, bEnd };
+}
+
+function spanBox(line: Line, start: number, end: number): Box {
+  const hit = line.spans.filter((x) => x.end > start && x.start < Math.max(end, start + 1));
+  if (!hit.length) return line.box;
+  return [Math.min(...hit.map((x) => x.run.box[0])), Math.min(...hit.map((x) => x.run.box[1])), Math.max(...hit.map((x) => x.run.box[2])), Math.max(...hit.map((x) => x.run.box[3]))];
+}
+
+type TextChange = { kind: 'changed' | 'added' | 'removed'; before: string; after: string; boxOld?: Box; boxNew?: Box };
+
+// Lines in the new version that aren't in the old one, paired by position.
+function lineDiff(a: PageScan, b: PageScan): TextChange[] {
+  const la = linesOf(a), lb = linesOf(b);
+  const left = new Map<string, number>();
+  for (const l of la) left.set(l.norm, (left.get(l.norm) || 0) + 1);
+  const newOnly: Line[] = [];
+  for (const l of lb) {
+    const n = left.get(l.norm) || 0;
+    if (n > 0) left.set(l.norm, n - 1); else newOnly.push(l);
+  }
+  const right = new Map<string, number>();
+  for (const l of lb) right.set(l.norm, (right.get(l.norm) || 0) + 1);
+  const oldOnly: Line[] = [];
+  for (const l of la) {
+    const n = right.get(l.norm) || 0;
+    if (n > 0) right.set(l.norm, n - 1); else oldOnly.push(l);
+  }
+  const out: TextChange[] = [];
+  const used = new Set<Line>();
+  for (const nl of newOnly) {
+    let best: Line | null = null, bestD = Infinity;
+    for (const ol of oldOnly) {
+      if (used.has(ol)) continue;
+      const d = Math.abs(ol.y - nl.y);
+      if (d <= Math.max(3, 0.6 * nl.h) && d < bestD) { best = ol; bestD = d; }
+    }
+    if (best) {
+      used.add(best);
+      const d = diffSpan(best.text, nl.text);
+      out.push({ kind: 'changed', before: d.before, after: d.after, boxOld: spanBox(best, d.aStart, d.aEnd), boxNew: spanBox(nl, d.bStart, d.bEnd) });
+    } else {
+      out.push({ kind: 'added', before: '', after: nl.text, boxNew: nl.box });
+    }
+  }
+  for (const ol of oldOnly) if (!used.has(ol)) out.push({ kind: 'removed', before: ol.text, after: '', boxOld: ol.box });
+  return out;
+}
+const lineDiffCache = new WeakMap<PageScan, WeakMap<PageScan, TextChange[]>>();
+function lineDiffCached(a: PageScan, b: PageScan): TextChange[] {
+  let m = lineDiffCache.get(a);
+  if (!m) { m = new WeakMap(); lineDiffCache.set(a, m); }
+  let v = m.get(b);
+  if (!v) { v = lineDiff(a, b); m.set(b, v); }
+  return v;
+}
+const readableOnly = (t: string) => !t.startsWith('raw:') && !/^[()<>0-9A-Fa-f\s]*$/.test(t) ? t : '';
 
 // Text strings drawn inside BT…ET blocks. `raw` is exact (any change shows);
 // `text` is the readable form when the font encoding is plain (literal
@@ -693,10 +852,14 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
   for (let i = 0; i < shared; i++) {
     const a = prev.pages[i], b = next.pages[i];
     if (a.hash === b.hash) continue;
-    if (a.textSig !== b.textSig && a.textBag !== b.textBag) {
+    const lines = a.textSig !== b.textSig && a.textBag !== b.textBag ? lineDiffCached(a, b) : [];
+    if (lines.length) {
       pagesChanged.push(i + 1);
-      const d = textDelta(a.text, b.text);
-      if (d) textChanges.push({ page: i + 1, ...d });
+      // Changed lines first (that's the edit), then added, then removed.
+      const order = { changed: 0, added: 1, removed: 2 } as const;
+      for (const c of lines.slice().sort((x, y) => order[x.kind] - order[y.kind]).slice(0, 6)) {
+        textChanges.push({ page: i + 1, before: c.before.slice(0, 80), after: c.after.slice(0, 80) });
+      }
     } else if (a.drawSig !== b.drawSig) {
       pagesGraphicsOnly.push(i + 1);
     } else {
@@ -838,35 +1001,28 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
       for (const pg of r.pagesChanged) {
         const a = prev.pages[pg - 1], b = next.pages[pg - 1];
         if (!a || !b) continue;
-        const la = layoutOf(a), lb = layoutOf(b);
-        const added = unmatchedRuns(la.runs, lb.runs);
-        const removed = unmatchedRuns(lb.runs, la.runs);
+        const changes = lineDiffCached(a, b);
         // A page whose text was re-encoded throughout has nothing specific to point at.
-        if (added.length > 40 && added.length > 0.6 * lb.runs.length) continue;
-        const gone = mergeBoxes(removed.map((x) => ({ box: x.box, text: x.text })), 8);
-        const used = new Set<number>();
-        for (const m of mergeBoxes(added.map((x) => ({ box: x.box, text: x.text })))) {
-          // Old text in the same spot: one box showing "before → after".
-          const k = gone.findIndex((g, gi) => !used.has(gi) && overlapRatio(g.box, m.box) > 0.5);
-          if (k >= 0) {
-            used.add(k);
-            const d = textDelta(gone[k].text, m.text);
-            region(b, pg, m.box, 'text_changed', 'critical', `Text changed in version ${r.index}`,
-              d && (d.before || d.after) ? `“${d.before || '(nothing)'}” → “${d.after || '(removed)'}”` : m.text ? `Now reads “${m.text}”` : undefined);
-          } else {
-            region(b, pg, m.box, 'text_changed', 'critical', `Text added in version ${r.index}`, m.text ? `Reads “${m.text}”` : undefined);
+        if (changes.length > 25 && changes.length > 0.6 * linesOf(b).length) continue;
+        for (const c of changes) {
+          if (c.kind === 'changed' && c.boxNew) {
+            region(b, pg, c.boxNew, 'text_changed', 'critical', `Text changed in version ${r.index}`,
+              c.before || c.after ? `“${readableOnly(c.before) || '(nothing)'}” → “${readableOnly(c.after) || '(removed)'}”` : undefined);
+          } else if (c.kind === 'added' && c.boxNew) {
+            region(b, pg, c.boxNew, 'text_changed', 'critical', `Text added in version ${r.index}`, readableOnly(c.after) ? `Reads “${c.after}”` : undefined);
+          } else if (c.kind === 'removed' && c.boxOld) {
+            region(a, pg, c.boxOld, 'text_removed', 'warning', `Text removed in version ${r.index}`, readableOnly(c.before) ? `Used to read “${c.before}”` : undefined);
           }
         }
-        gone.forEach((g, gi) => {
-          if (!used.has(gi)) region(a, pg, g.box, 'text_removed', 'warning', `Text removed in version ${r.index}`, g.text ? `Used to read “${g.text}”` : undefined);
-        });
       }
       for (const pg of [...r.pagesChanged, ...r.pagesGraphicsOnly]) {
         const a = prev.pages[pg - 1], b = next.pages[pg - 1];
         if (!a || !b) continue;
         const area = b.width * b.height;
         const left = new Map<string, number>();
-        const key = (x: LaidRect) => `${x.key}|${x.filled}|${x.white}`;
+        // By position, not by how the command is written: editors re-write the
+        // whole page (new matrices, renamed images) when saving one edit.
+        const key = (x: LaidRect) => `${x.box.map((v) => Math.round(v)).join(',')}|${x.filled}|${x.white}`;
         for (const x of layoutOf(a).rects) left.set(key(x), (left.get(key(x)) || 0) + 1);
         let shown = 0;
         for (const x of layoutOf(b).rects) {
@@ -879,10 +1035,11 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
             x.white ? 'Covers whatever was underneath it' : undefined);
         }
         const imgs = new Map<string, number>();
-        for (const x of layoutOf(a).images) imgs.set(x.key, (imgs.get(x.key) || 0) + 1);
+        const ikey = (x: { box: Box }) => x.box.map((v) => Math.round(v)).join(',');
+        for (const x of layoutOf(a).images) imgs.set(ikey(x), (imgs.get(ikey(x)) || 0) + 1);
         for (const x of layoutOf(b).images) {
-          const n = imgs.get(x.key) || 0;
-          if (n > 0) { imgs.set(x.key, n - 1); continue; }
+          const n = imgs.get(ikey(x)) || 0;
+          if (n > 0) { imgs.set(ikey(x), n - 1); continue; }
           const w = x.box[2] - x.box[0], h = x.box[3] - x.box[1];
           if (w * h > area * 0.9) continue; // full-page scan
           region(b, pg, x.box, 'drawing_added', 'warning', `Image added in version ${r.index}`, 'Stamps and logos look like this; so does a pasted-in value');
@@ -1188,7 +1345,7 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
     flags: flags.sort((a, b) => b.pts - a.pts),
     normal,
     revisions: revisions.length ? revisions : undefined,
-    regions: regions.length ? regions : undefined,
+    regions: regions.length ? dedupeRegions(regions) : undefined,
     fileSha256: sha(buffer),
     summary,
     score,
