@@ -89,6 +89,8 @@ export type CarrierReport = {
     isMailbox?: boolean;
     mailboxProvider?: string;
     isResidence?: boolean;
+    addressMatched?: boolean;
+    nameMatches?: boolean;
     error?: string;
   };
   webPresence?: {
@@ -99,6 +101,13 @@ export type CarrierReport = {
     title?: string;
     snippet?: string;
     nameMatch?: boolean;
+    // Accepted as the company's own site only with name + address/phone
+    // evidence (see assessWebsiteOwnership). Missing on older saved reports.
+    verified?: boolean;
+    verifiedBy?: 'address' | 'phone' | 'name-only' | 'none';
+    addressMatch?: boolean;
+    phoneMatch?: boolean;
+    source?: string;
     domainAgeDays?: number | null;
     hasMx?: boolean;
     hasSpf?: boolean;

@@ -1340,44 +1340,45 @@ function HeroDashboardMockup() {
 // actually caught a fraud signal.
 function isSourceSpooky(key: string, carrier: any | null | undefined): boolean {
   if (!carrier) return false;
+  // "Caught" only when the source produced a flag that actually counts
+  // toward the score (pts > 0). Informational findings stay green.
   const flagsMatch = (re: RegExp) =>
-    Array.isArray(carrier.flags) && carrier.flags.some((f: any) => re.test(String(f?.title || '')));
+    Array.isArray(carrier.flags) && carrier.flags.some((f: any) => (Number(f?.pts) || 0) > 0 && re.test(String(f?.title || '')));
   switch (key) {
     case 'fmcsa':
       // SAFER subset: authority status, OOS, MCS-150 freshness.
-      return flagsMatch(/operating authority is not active|out of service|MCS-150|reactivated/i);
+      return flagsMatch(/no active operating authority|operating authority is not active|out of service|MCS-150|reactivated|authority age under/i);
     case 'fmcsa-li':
-      // L&I subset: liability insurance and surety bond.
-      return flagsMatch(/no liability insurance|no surety bond|insurance.*cancelled/i);
+      // L&I subset: liability / cargo insurance and broker bond.
+      return flagsMatch(/liability insurance|no cargo insurance|surety bond|insurance.*cancelled/i);
     case 'fmcsa-name':
       // Name → MC/DOT resolution. No spooky outcome on its own.
       return false;
     case 'places':
-      return flagsMatch(/address resolves to a different business|address is a mail-forwarding|business at this address is closed/i);
+      return flagsMatch(/address resolves to a different business|address is a mail-forwarding|business at this address is closed|address could not be verified/i);
     case 'gsb':
       // Google Safe Browsing flags malicious domains. No emitter today, so this stays green unless we add one.
       return flagsMatch(/safe browsing|known malicious|phishing/i);
     case 'web':
-      return flagsMatch(/website domain doesn|carrier has no public website/i);
+      return flagsMatch(/no website found/i);
     case 'domain':
-      return flagsMatch(/no email server|domain registered.*days ago|domain registered less than|no MX|no SPF/i);
+      return flagsMatch(/email server|website domain registered|no MX/i);
     case 'social':
       // Empty social isn't necessarily spooky for small carriers — keep green.
       return false;
     case 'lookalike':
       return Boolean(carrier.lookalikeMatch);
     case 'chameleon':
-      return Array.isArray(carrier.chameleonLinks) && carrier.chameleonLinks.length > 0;
+      return flagsMatch(/shares a phone|shares an address|cross-reference|chameleon/i);
     case 'reputation':
-      return Array.isArray(carrier?.webReputation?.hits) && carrier.webReputation.hits.length > 0;
+      return flagsMatch(/^web reputation/i);
     case 'entities':
-      return Array.isArray(carrier.linkedEntities) && carrier.linkedEntities.length > 0;
+      return flagsMatch(/other companies named in coverage/i);
     case 'sms':
-      // SMS is "spooky" when FMCSA itself has flagged a BASIC alert.
-      return carrier?.sms?.fetched && Object.values(carrier.sms.basics || {}).some((b: any) => b?.alert);
+      return flagsMatch(/BASIC alert/i);
     case 'archive':
-      // Day-1 archive flags carriers that share email with other MCs (a fraud-network signal).
-      return Array.isArray(carrier?.legacyReference?.emailMatches) && carrier.legacyReference.emailMatches.length > 0;
+      // Reference only — the ~5-year-old archive never affects the score.
+      return false;
   }
   return false;
 }
@@ -7979,12 +7980,64 @@ function UsageMiniCard({ label, value, limit }: any) {
   );
 }
 
+// "Which company?" — shown when /api/verify answers 409: a bare number that
+// is an MC for one company and a DOT for another (`ambiguous_number`), or a
+// name that matches several companies / none closely enough
+// (`ambiguous_name`). Picking one re-runs the lookup with its MC-/DOT-
+// query (plus `searched` for names, so the report says what was typed).
+type CompanyChoiceSet = {
+  code: 'ambiguous_number' | 'ambiguous_name';
+  searched?: string;
+  candidates: any[];
+  total?: number;
+  exactMatchFound?: boolean;
+  needsConfirmation?: boolean;
+};
+
+function CompanyChoices({ set, onPick, compact = false }: { set: CompanyChoiceSet; onPick: (query: string, searched?: string) => void; compact?: boolean }) {
+  const isName = set.code === 'ambiguous_name';
+  const heading = !isName
+    ? 'This number belongs to two different companies. Which one?'
+    : set.exactMatchFound === false || set.needsConfirmation
+      ? `No registered company is named exactly “${set.searched}”. Is it one of these?`
+      : `${set.total && set.total > set.candidates.length ? `${set.total} companies` : 'Several companies'} match “${set.searched}”. Which one?`;
+  const matchLabel: Record<string, string> = { exact: 'Exact name', strong: 'Close match', partial: 'Partial match', unrelated: 'Linked by web results' };
+  return (
+    <div className={compact ? '' : 'mt-4 p-4 bg-[#F5F3EE] border border-[#0B1E3F]/15 rounded-xl'}>
+      <div className={`${compact ? 'px-2 pt-1 pb-2 text-xs' : 'text-sm font-semibold mb-3'} text-[#0B1E3F]/75`}>{heading}</div>
+      <div className="space-y-1">
+        {set.candidates.map((c: any) => (
+          <button
+            key={c.query}
+            type="button"
+            onClick={() => onPick(c.query, isName ? set.searched : undefined)}
+            className={`w-full flex items-start gap-2 ${compact ? 'px-2 py-2 rounded-md' : 'px-3 py-2.5 rounded-lg bg-white border border-[#0B1E3F]/10'} text-left text-sm text-[#0B1E3F] hover:bg-[#0B1E3F]/5 transition`}
+          >
+            <span className="mono text-[11px] px-1.5 py-0.5 rounded bg-[#0B1E3F]/5 flex-shrink-0 mt-0.5">{c.kind === 'mc' ? `MC ${c.mc || c.value}` : `DOT ${c.dot || c.value}`}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{c.name}{c.dba ? <span className="text-[#0B1E3F]/55 font-normal"> · DBA {c.dba}</span> : null}</span>
+              {isName && (
+                <span className="block text-xs text-[#0B1E3F]/55 truncate">
+                  {[c.city && c.state ? `${c.city}, ${c.state}` : c.state, c.status, matchLabel[c.match]].filter(Boolean).join(' · ')}
+                </span>
+              )}
+            </span>
+          </button>
+        ))}
+      </div>
+      {isName && set.candidates.length > 0 && (
+        <div className={`${compact ? 'px-2 pt-2' : 'mt-3'} text-[11px] text-[#0B1E3F]/50`}>Not listed? Search by the MC or DOT number from the rate con instead.</div>
+      )}
+    </div>
+  );
+}
+
 function HeaderSearch({ navigate }: { navigate: any }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Bare number that matches an MC and a USDOT for two different companies.
-  const [choices, setChoices] = useState<{ query: string; name: string; kind: 'mc' | 'dot' }[] | null>(null);
+  // Number or name that matches more than one company.
+  const [choices, setChoices] = useState<CompanyChoiceSet | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -7999,15 +8052,15 @@ function HeaderSearch({ navigate }: { navigate: any }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const run = async (q: string) => {
+  const run = async (q: string, searched?: string) => {
     if (!q) return;
     setLoading(true); setError(null); setChoices(null);
     try {
-      const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}${searched ? `&searched=${encodeURIComponent(searched)}` : ''}`);
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 409 && Array.isArray(data?.candidates)) {
-          setChoices(data.candidates);
+          setChoices({ code: data.code === 'ambiguous_name' ? 'ambiguous_name' : 'ambiguous_number', searched: data.searched || q, candidates: data.candidates, total: data.total, exactMatchFound: data.exactMatchFound, needsConfirmation: data.needsConfirmation });
           return;
         }
         if (res.status === 402) throw new Error(data?.error || 'Monthly lookup limit reached.');
@@ -8063,19 +8116,8 @@ function HeaderSearch({ navigate }: { navigate: any }) {
         </div>
       )}
       {choices && (
-        <div className="absolute left-0 right-0 top-full mt-1 p-2 bg-white border border-[#0B1E3F]/15 rounded-lg shadow-md z-30">
-          <div className="px-2 pt-1 pb-2 text-xs text-[#0B1E3F]/60">This number belongs to two different companies. Which one?</div>
-          {choices.map((c) => (
-            <button
-              key={c.query}
-              type="button"
-              onClick={() => { setInput(c.query); run(c.query); }}
-              className="w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm text-[#0B1E3F] hover:bg-[#0B1E3F]/5"
-            >
-              <span className="mono text-xs px-1.5 py-0.5 rounded bg-[#0B1E3F]/5">{c.kind === 'mc' ? 'MC' : 'USDOT'}</span>
-              <span className="truncate">{c.name}</span>
-            </button>
-          ))}
+        <div className="absolute left-0 right-0 top-full mt-1 p-2 bg-white border border-[#0B1E3F]/15 rounded-lg shadow-md z-30 max-h-[70vh] overflow-y-auto">
+          <CompanyChoices compact set={choices} onPick={(query, searched) => { setInput(query); run(query, searched); }} />
         </div>
       )}
     </form>
@@ -8635,6 +8677,8 @@ function VerifyTool({ navigate }: any) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorSuggestions, setErrorSuggestions] = useState<string[] | null>(null);
+  // Name or number that matches more than one company — the user picks.
+  const [choices, setChoices] = useState<CompanyChoiceSet | null>(null);
   // When the API resolves we hold the result for a brief reveal moment so
   // the scanner can paint red on whichever sources caught something spooky
   // before we navigate to the full report.
@@ -8713,7 +8757,7 @@ function VerifyTool({ navigate }: any) {
     return q;
   };
 
-  const runLookup = async (override?: string, emailOverride?: string) => {
+  const runLookup = async (override?: string, emailOverride?: string, searched?: string) => {
     const raw = (override ?? input).trim();
     const e = (emailOverride ?? emailInput).trim();
     if (!raw) { setError('Enter an MC number, DOT number, or company name.'); return; }
@@ -8728,18 +8772,24 @@ function VerifyTool({ navigate }: any) {
       return;
     }
     const q = applyKind(raw);
-    setLoading(true); setError(null); setErrorSuggestions(null);
+    setLoading(true); setError(null); setErrorSuggestions(null); setChoices(null);
     try {
       // Pass the email field through to the verify route so it can run
-      // lookalike-domain detection against the carrier's real FMCSA-listed
-      // website — catches typosquats / homograph spoofs the eye misses.
-      const verifyUrl = `/api/verify?q=${encodeURIComponent(q)}${e ? `&email=${encodeURIComponent(e)}` : ''}`;
+      // lookalike-domain detection against the company's confirmed website
+      // — catches typosquats / homograph spoofs the eye misses. `searched`
+      // is the name the user typed when they picked a company from a list.
+      const verifyUrl = `/api/verify?q=${encodeURIComponent(q)}${e ? `&email=${encodeURIComponent(e)}` : ''}${searched ? `&searched=${encodeURIComponent(searched)}` : ''}`;
       const promises: Promise<any>[] = [
         fetch(verifyUrl).then(async (r) => {
           const j = await r.json();
           if (!r.ok) {
             if (r.status === 402) throw new Error(j?.error || 'Monthly lookup limit reached. Upgrade your plan for more.');
             if (r.status === 429) throw new Error(j?.error || 'Too many lookups — slow down and try again shortly.');
+            if (r.status === 409 && Array.isArray(j?.candidates)) {
+              throw Object.assign(new Error('choose'), {
+                choices: { code: j.code === 'ambiguous_name' ? 'ambiguous_name' : 'ambiguous_number', searched: j.searched || q, candidates: j.candidates, total: j.total, exactMatchFound: j.exactMatchFound, needsConfirmation: j.needsConfirmation },
+              });
+            }
             // Both 404 (name not found) and 503 (upstream down) now carry
             // an actionable `suggestions` array — surface either.
             if ((r.status === 404 || r.status === 503) && Array.isArray(j?.suggestions)) {
@@ -8791,7 +8841,8 @@ function VerifyTool({ navigate }: any) {
       navigate('report', merged);
       setScanResult(null);
     } catch (err: any) {
-      setError(err?.message || 'Lookup failed');
+      if (err?.choices) setChoices(err.choices);
+      else setError(err?.message || 'Lookup failed');
     } finally {
       setLoading(false);
     }
@@ -8943,6 +8994,9 @@ function VerifyTool({ navigate }: any) {
               ))}
             </div>
           </div>
+          {choices && (
+            <CompanyChoices set={choices} onPick={(query, searched) => { setInput(query); setChoices(null); runLookup(query, undefined, searched); }} />
+          )}
           {error && (
             <div className="mt-4 p-4 bg-[#DC2626]/5 border border-[#DC2626]/25 rounded-xl">
               <div className="flex items-start gap-2 mb-2">
@@ -9641,6 +9695,42 @@ function CarrierReport({ report, navigate }: any) {
                 <span>{badge.icon}</span>{badge.label}
               </span>
             </div>
+            {/* How this company was found — so a name search that landed on a
+                differently-named company is obvious, not silent. */}
+            {(() => {
+              const id = r.mc ? `MC-${r.mc}` : r.dot ? `DOT-${r.dot}` : '';
+              const typed = String(r.searchedFor || '').trim();
+              if (r.matchedBy === 'name' || r.matchedBy === 'name-choice') {
+                const sameName = typed && r.name && typed.toLowerCase() === String(r.name).toLowerCase();
+                return (
+                  <div className="mt-2 text-sm text-[#0B1E3F]/65">
+                    {typed && !sameName ? <>You searched <strong className="text-[#0B1E3F]">“{typed}”</strong> → </> : null}
+                    matched {r.name}{id ? ` (${id})` : ''} {r.matchedBy === 'name-choice' ? 'from the list you picked' : 'by name'}.
+                    {typed && !sameName && <span className="text-[#0B1E3F]/50"> Make sure this is the company on your rate con.</span>}
+                  </div>
+                );
+              }
+              if (r.matchedBy === 'mc' || r.matchedBy === 'dot') {
+                return <div className="mt-2 text-sm text-[#0B1E3F]/55">Found by {r.matchedBy === 'mc' ? 'MC' : 'USDOT'} number.</div>;
+              }
+              return null;
+            })()}
+            {/* Data that didn't come from FMCSA's live service is labelled
+                with its real date, never passed off as current. */}
+            {r.dataSource && r.dataSource !== 'fmcsa-live' && r.source !== 'mock' && (
+              <div className="mt-3 p-3 bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-xl text-sm text-[#0B1E3F]/80 max-w-2xl">
+                <strong className="text-[#0B1E3F]">FMCSA&apos;s live service didn&apos;t respond.</strong>{' '}
+                {r.dataSource === 'archive'
+                  ? 'This report uses our FMCSA archive snapshot, which can be years old.'
+                  : `This report uses FMCSA data from ${r.dataAsOf ? new Date(r.dataAsOf).toLocaleDateString() : 'an earlier date'}${r.dataSource === 'socrata' ? ' (FMCSA’s public dataset)' : ''}.`}{' '}
+                Run <strong>Scan again</strong> for live data before you book or tender.
+              </div>
+            )}
+            {Array.isArray(r.backfilled) && r.backfilled.length > 0 && (
+              <div className="mt-2 text-xs text-[#0B1E3F]/50">
+                From an earlier FMCSA record: {r.backfilled.map((b: any) => `${({ phone: 'phone', operation: 'operation type', powerUnits: 'fleet size', drivers: 'driver count' } as Record<string, string>)[b.field] || b.field} (${new Date(b.asOf).toLocaleDateString()})`).join(', ')}.
+              </div>
+            )}
             {r.source === 'mock' && (() => {
               const fmcsaDown = (r.flags || []).some((f: any) => /FMCSA (lookup failed|temporarily)/i.test(f.title));
               const hasMcOrDot = Boolean(r.mc || r.dot);
@@ -9735,7 +9825,9 @@ function CarrierReport({ report, navigate }: any) {
           { icon: MapPin, label: 'Physical address', val: r.address || '—' },
           { icon: Phone, label: 'Phone', val: r.phone || '— (not in FMCSA)' },
           { icon: Mail, label: 'Email domain', val: r.emailDomain || '— (requires enrichment)' },
-          { icon: Clock, label: 'Authority age', val: r.authorityAge || '—', warn: r.authorityAge && /reactivated/i.test(r.authorityAge) },
+          // FMCSA's carrier lookup doesn't return a grant date; age comes from
+          // its authority-history data and can be unavailable.
+          { icon: Clock, label: 'Authority age', val: r.authorityAge || 'Unavailable', warn: r.authorityAge && /reactivated/i.test(r.authorityAge) },
         ]} />
         <DetailPanel title="FMCSA authority & insurance" items={[
           // Carrier authority (common or contract) and broker authority are
@@ -9754,7 +9846,8 @@ function CarrierReport({ report, navigate }: any) {
           { label: 'Safety rating', val: r.safetyRating || 'Not rated' },
           { label: 'Out-of-service', val: r.outOfService ? 'Yes' : 'No', good: r.outOfService === false, warn: r.outOfService === true },
           { label: 'Insurance on file', val: r.insuranceSummary || '—', warn: r.bipdOnFile === 0 || (r.cargoRequired && r.cargoOnFile === 0), good: r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.cargoRequired && r.cargoOnFile === 0) },
-          { label: 'MCS-150', val: r.mcs150Date || (r.mcs150Outdated ? 'Overdue' : 'Current'), warn: r.mcs150Outdated },
+          // Only claim a status FMCSA actually gave us: a date, or its overdue flag.
+          { label: 'MCS-150', val: r.mcs150Outdated === true ? (r.mcs150Date ? `Overdue (${r.mcs150Date})` : 'Overdue') : r.mcs150Date || (r.mcs150Outdated === false ? 'Not overdue' : '—'), warn: r.mcs150Outdated === true },
         ]} />
       </div>
       <div className="grid md:grid-cols-2 gap-6">
@@ -10295,7 +10388,7 @@ function CarrierReport({ report, navigate }: any) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-base font-semibold text-[#0B1E3F]">Watch this {entityBadge(r).label.toLowerCase().includes('broker') ? 'broker' : 'carrier'}?</div>
-              <div className="text-xs text-[#0B1E3F]/60 mt-0.5">We&rsquo;ll alert you if anything changes — authority status, insurance, OOS, or new web-reputation hits.</div>
+              <div className="text-xs text-[#0B1E3F]/60 mt-0.5">We&rsquo;ll email you when FMCSA&rsquo;s record changes: authority, insurance, bond, out-of-service status, safety rating, address or phone.</div>
             </div>
             <button onClick={() => watching !== 'saving' && setWatchOpen(false)} className="text-[#0B1E3F]/40 hover:text-[#0B1E3F] -mt-1 -mr-1 p-1" aria-label="Close">
               <XCircle className="w-5 h-5" />
@@ -10624,7 +10717,7 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
           const pctOverThreshold =
             !federalAlert &&
             b.percentile != null && (
-              (k === 'hazmat' || k === 'driverFitness' || k === 'controlledSubstances')
+              (k === 'hazmat' || k === 'driverFitness' || k === 'controlledSubstances' || k === 'vehicleMaintenance')
                 ? b.percentile >= 80
                 : b.percentile >= 65
             );
@@ -10643,7 +10736,7 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
           // exact threshold lets the user see how close to the line a
           // percentile is, instead of guessing why we lit something red.
           const threshold =
-            (k === 'hazmat' || k === 'driverFitness' || k === 'controlledSubstances') ? 80 : 65;
+            (k === 'hazmat' || k === 'driverFitness' || k === 'controlledSubstances' || k === 'vehicleMaintenance') ? 80 : 65;
           // Prefer percentile for the headline value when we have it —
           // it is the headline metric brokers and DOT auditors care about.
           // Fall back to the raw measure otherwise.
@@ -10660,8 +10753,13 @@ function FmcsaSmsPanel({ sms, dot, carrier }: { sms: any; dot?: string; carrier?
           // Caption explaining the alert. Wording differs by alert type so
           // the reader knows whether this BASIC is scored against the
           // carrier or just a heads-up.
+          // FMCSA alerts on the percentile OR on acute/critical violations
+          // found in an investigation — so a percentile under the line can
+          // still carry an alert. Never claim "above" when it isn't.
           const alertReason = federalAlert && b.percentile != null
-            ? `FMCSA marked this BASIC for federal intervention. ${b.percentile}% percentile is ${b.percentile === threshold ? 'at' : 'above'} the ${threshold}% threshold. Adds +30 to the Haulock risk score.`
+            ? (b.percentile >= threshold
+              ? `FMCSA marked this BASIC for federal intervention. ${b.percentile}% percentile is ${b.percentile === threshold ? 'at' : 'above'} the ${threshold}% threshold. Adds +30 to the Haulock risk score.`
+              : `FMCSA marked this BASIC for federal intervention. The ${b.percentile}% percentile is under the ${threshold}% threshold, so the alert likely comes from acute or critical violations found in an investigation. Adds +30 to the Haulock risk score.`)
             : federalAlert
               ? `FMCSA marked this BASIC for federal intervention. Adds +30 to the Haulock risk score.`
               : pctOverThreshold && b.percentile != null

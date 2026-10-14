@@ -3,7 +3,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { checkAddress } from '@/lib/places';
-import { findCarrierWebsite, nameMatchesDomain } from '@/lib/website-finder';
+import { findCarrierWebsite, assessWebsiteOwnership } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
 
@@ -171,20 +171,22 @@ export async function GET() {
     if (ac.configured) carrier.addressCheck = ac;
   }
   try {
-    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address });
+    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address, phone: carrier.phone });
+    // Same rule as /api/verify: domain checks only for a site confirmed as theirs.
+    const ownership = web.found && web.domain ? assessWebsiteOwnership(web, { name: carrier.name, address: carrier.address, phone: carrier.phone }) : undefined;
     if (web.configured) {
       let domainAgeDays: number | null | undefined;
       let hasMx: boolean | undefined;
       let hasSpf: boolean | undefined;
       let socials: { platform: string; url: string }[] | undefined;
-      if (web.found && web.domain) {
+      if (ownership?.verified && web.domain) {
         const [dc, sc] = await Promise.all([
           checkDomain(web.domain).catch(() => null),
           web.url ? findSocialLinks(web.url).catch(() => []) : Promise.resolve([]),
         ]);
         if (dc) {
           domainAgeDays = dc.whois.ageDays ?? null;
-          hasMx = dc.mx.hasMx;
+          hasMx = dc.mx.error ? undefined : dc.mx.hasMx;
           hasSpf = dc.spf.hasSpf;
         }
         if (sc && sc.length) socials = sc;
@@ -196,7 +198,11 @@ export async function GET() {
         url: web.url,
         title: web.title,
         snippet: web.snippet,
-        nameMatch: web.found && web.domain ? nameMatchesDomain(carrier.name, web.domain) : undefined,
+        nameMatch: ownership?.nameMatch,
+        verified: ownership?.verified,
+        verifiedBy: ownership?.verifiedBy,
+        addressMatch: ownership?.addressMatch,
+        phoneMatch: ownership?.phoneMatch,
         domainAgeDays,
         hasMx,
         hasSpf,

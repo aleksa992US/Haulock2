@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage } from '@/lib/fmcsa';
+import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, AmbiguousNameError, NotFoundByNameError } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { monthStart } from '@/lib/plans';
 import { checkAddress } from '@/lib/places';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
-import { findCarrierWebsite, nameMatchesDomain } from '@/lib/website-finder';
+import { findCarrierWebsite, assessWebsiteOwnership } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
 import { extractBearer, resolveApiKey } from '@/lib/api-keys';
@@ -83,16 +83,21 @@ export async function GET(req: Request) {
   }
 
   // Cache hit: most recent saved lookup for this MC/DOT — no credit spent.
-  if (!force && parsed.kind !== 'name') {
+  // Same rules as the app: only rows from the last 7 days, never when a
+  // sender email is given, and never a report built from fallback data.
+  const emailParam = (new URL(req.url).searchParams.get('email') || '').trim();
+  if (!force && !emailParam && parsed.kind !== 'name') {
     const col = parsed.kind === 'mc' ? 'mc' : 'dot';
     const { data: cached } = await svc
       .from('lookups')
       .select('*')
       .eq('user_id', user.id)
       .eq(col, parsed.value)
+      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(1);
-    if (cached && cached[0]) {
+    const cachedData: any = cached?.[0]?.data;
+    if (cached && cached[0] && (!cachedData?.dataSource || cachedData.dataSource === 'fmcsa-live')) {
       return NextResponse.json(
         { ...cached[0].data, cached: true, cachedAt: cached[0].created_at },
         { headers: corsHeaders() },
@@ -145,6 +150,17 @@ export async function GET(req: Request) {
   try {
     carrier = await lookupCarrier(parsed);
   } catch (err: any) {
+    // A name that matches several companies (or none closely enough) is a
+    // 409 with candidates, same shape as the app — not an outage.
+    if (err instanceof AmbiguousNameError || err?.code === 'ambiguous_name') {
+      return NextResponse.json(
+        { error: err.message, code: 'ambiguous_name', searched: err.searched, candidates: err.candidates ?? [], total: err.total ?? 0, needsConfirmation: Boolean(err.needsConfirmation) },
+        { status: 409, headers: corsHeaders() },
+      );
+    }
+    if (err instanceof NotFoundByNameError || err?.code === 'name_not_found') {
+      return NextResponse.json({ error: err.message, code: 'name_not_found' }, { status: 404, headers: corsHeaders() });
+    }
     return NextResponse.json(
       {
         error: 'FMCSA is temporarily unavailable. Please try again in a minute.',
@@ -160,20 +176,23 @@ export async function GET(req: Request) {
   }
 
   try {
-    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address });
+    const web = await findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address, phone: carrier.phone });
+    // Only a site confirmed as theirs (name + address/phone) gets the
+    // domain-age / email checks — same rule as the app.
+    const ownership = web.found && web.domain ? assessWebsiteOwnership(web, { name: carrier.name, address: carrier.address, phone: carrier.phone }) : undefined;
     if (web.configured) {
       let domainAgeDays: number | null | undefined;
       let hasMx: boolean | undefined;
       let hasSpf: boolean | undefined;
       let socials: { platform: string; url: string }[] | undefined;
-      if (web.found && web.domain) {
+      if (ownership?.verified && web.domain) {
         const [dc, sc] = await Promise.all([
           checkDomain(web.domain).catch(() => null),
           web.url ? findSocialLinks(web.url).catch(() => []) : Promise.resolve([]),
         ]);
         if (dc) {
           domainAgeDays = dc.whois.ageDays ?? null;
-          hasMx = dc.mx.hasMx;
+          hasMx = dc.mx.error ? undefined : dc.mx.hasMx;
           hasSpf = dc.spf.hasSpf;
         }
         if (sc && sc.length) socials = sc;
@@ -185,7 +204,11 @@ export async function GET(req: Request) {
         url: web.url,
         title: web.title,
         snippet: web.snippet,
-        nameMatch: web.found && web.domain ? nameMatchesDomain(carrier.name, web.domain) : undefined,
+        nameMatch: ownership?.nameMatch,
+        verified: ownership?.verified,
+        verifiedBy: ownership?.verifiedBy,
+        addressMatch: ownership?.addressMatch,
+        phoneMatch: ownership?.phoneMatch,
         domainAgeDays,
         hasMx,
         hasSpf,

@@ -551,13 +551,13 @@ export async function GET(req: Request) {
         {
           sev: 'critical',
           title: `${alertedBasics.length} FMCSA BASIC alert${alertedBasics.length === 1 ? '' : 's'} active`,
-          desc: `FMCSA Safety Measurement System has flagged this carrier for prioritized intervention in: ${top.join(', ')}${alertedBasics.length > 3 ? ` (+${alertedBasics.length - 3} more)` : ''}. BASIC alerts mean the carrier exceeds federal thresholds for these categories — strong safety-history signal.`,
+          desc: `FMCSA's Safety Measurement System shows an alert for this carrier in: ${top.join(', ')}${alertedBasics.length > 3 ? ` (+${alertedBasics.length - 3} more)` : ''}. An alert means the carrier is above FMCSA's intervention threshold in that category, or an investigation found acute or critical violations.`,
           pts: 30,
           metrics: alertedBasics.slice(0, 5).map((b) => ({
             label: labelMap[b.key] || b.key,
             value: `measure ${b.measure} · ${b.inspections} inspections`,
           })),
-          recommendation: 'Pull the carrier\'s SMS Overview directly at ai.fmcsa.dot.gov/SMS/Carrier/<DOT>/Overview.aspx and read the full inspection history before booking.',
+          recommendation: 'Pull the carrier\'s SMS Overview directly at ai.fmcsa.dot.gov/SMS/Carrier/<DOT>/Overview.aspx and read the full inspection history before you tender a load.',
         },
       ];
     }

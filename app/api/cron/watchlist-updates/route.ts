@@ -24,6 +24,8 @@ export const maxDuration = 300;
 // snapshot is updated after each check, so the same change isn't re-sent.
 
 type FmcsaWatchSnapshot = {
+  // When a real FMCSA change was last found (the weekly digest counts these).
+  lastChangeAt?: string;
   name?: string;
   dba?: string;
   address?: string;
@@ -208,7 +210,7 @@ async function run(req: Request) {
       ...(prevSnap.phone ? [prevSnap.phone] : []),
       ...(freshSnap.phone ? [freshSnap.phone] : []),
     ].map((ph) => String(ph)))).slice(-5);
-    const nextSnap: FmcsaWatchSnapshot = { ...prevSnap, ...freshSnap, seenPhones, checkedAt };
+    const nextSnap: FmcsaWatchSnapshot = { ...prevSnap, ...freshSnap, seenPhones, checkedAt, lastChangeAt: changes.length > 0 ? checkedAt : prevSnap.lastChangeAt };
     const saveSnapshot = async () => {
       if (dryRun) return;
       // Only data.fmcsaWatch and last_checked change; the saved full report,

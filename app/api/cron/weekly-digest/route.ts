@@ -57,10 +57,13 @@ async function run(req: Request) {
       svc.from('watchlist')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', u.id),
+      // Real changes only: the daily watchlist job stamps lastChangeAt when
+      // FMCSA's record actually changed. last_checked moves every day for
+      // every row, so counting it reported every watched company as changed.
       svc.from('watchlist')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', u.id)
-        .gte('last_checked', since),
+        .gte('data->fmcsaWatch->>lastChangeAt', since),
     ]);
 
     const all = lookups || [];

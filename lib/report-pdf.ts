@@ -193,15 +193,23 @@ function drawWebPresence(ctx: DrawCtx, r: Carrier) {
   drawSectionTitle(ctx, 'Web presence');
   const w = r.webPresence;
   const found = !!w.found;
+  // Same rule as the report page: a site is only "theirs" when its name
+  // matches AND its listing has the FMCSA address or phone. Age and email
+  // setup describe the site's owner, so they're shown only for a confirmed site.
+  const confirmed = found && w.verified === true;
   const items: Array<{ label: string; value: string }> = [
-    { label: 'Website', value: found ? (w.domain || w.url || '—') : 'Not found via Google' },
-    { label: 'Name match', value: found ? (w.nameMatch ? 'Yes — domain matches name' : 'No — possible mismatch') : '—' },
-    { label: 'Domain age', value: w.domainAgeDays != null
-        ? (w.domainAgeDays < 365 ? `${w.domainAgeDays} days` : `${(w.domainAgeDays / 365).toFixed(1)} years`)
-        : '—' },
-    { label: 'Email infra', value: [w.hasMx ? 'MX' : null, w.hasSpf ? 'SPF' : null].filter(Boolean).join(' · ') || '—' },
+    { label: 'Website', value: found ? (w.domain || w.url || '-') : 'None found' },
+    { label: 'Ownership', value: !found ? '-' : confirmed
+        ? `Confirmed (${w.verifiedBy === 'phone' ? 'phone matches FMCSA' : 'address matches FMCSA'})`
+        : 'Not confirmed as theirs' },
   ];
-  if (Array.isArray(w.socials) && w.socials.length) {
+  if (confirmed) {
+    items.push({ label: 'Domain age', value: w.domainAgeDays != null
+        ? (w.domainAgeDays < 365 ? `${w.domainAgeDays} days` : `${(w.domainAgeDays / 365).toFixed(1)} years`)
+        : '-' });
+    items.push({ label: 'Email setup', value: w.hasMx == null ? "Couldn't check" : [w.hasMx ? 'MX' : 'No MX', w.hasSpf ? 'SPF' : null].filter(Boolean).join(' · ') });
+  }
+  if (confirmed && Array.isArray(w.socials) && w.socials.length) {
     items.push({ label: 'Social profiles', value: w.socials.map((s: any) => s.platform).join(' · ') });
   }
   drawDetailRows(ctx, items);
