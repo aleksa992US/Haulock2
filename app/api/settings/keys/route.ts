@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { resolveTeamContext } from '@/lib/teams';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { generateKey } from '@/lib/api-keys';
 import { isAdmin } from '@/lib/admin';
 
@@ -36,7 +38,7 @@ export async function POST(req: Request) {
 
   // Plan gate: Free users cannot create keys. Admins bypass for testing.
   // Team members get the team's plan, like every other limit check.
-  const planId = (await resolveTeamContext(user.id, user.user_metadata?.plan)).effectivePlan.id;
+  const planId = (await resolveTeamContext(user.id, enforcedPlanId(user))).effectivePlan.id;
   if (!PAID_PLANS_FOR_API.has(planId) && !(await isAdmin(user.email))) {
     return NextResponse.json({
       error: 'API access requires the Carrier plan or higher.',
@@ -51,7 +53,7 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateKey();
 
-  const { data, error } = await supabase
+  const { data, error } = await (getServiceSupabase() || supabase)
     .from('api_keys')
     .insert({ user_id: user.id, name, prefix, key_hash: hash })
     .select('id,name,prefix,created_at,last_used_at,revoked_at')
@@ -73,7 +75,7 @@ export async function DELETE(req: Request) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-  const { error } = await supabase
+  const { error } = await (getServiceSupabase() || supabase)
     .from('api_keys')
     .update({ revoked_at: new Date().toISOString() })
     .eq('id', id)

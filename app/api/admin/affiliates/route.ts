@@ -30,7 +30,9 @@ export async function GET() {
   // small (operator-curated set), so a list-and-filter is fine.
   const { data: usersList, error: usersErr } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
-  const affiliates = (usersList?.users || []).filter((u: any) => u?.user_metadata?.role === 'affiliate');
+  // Affiliate settings live in app_metadata: only the server can write it.
+  // (They used to be in user_metadata, which the user can edit themselves.)
+  const affiliates = (usersList?.users || []).filter((u: any) => u?.app_metadata?.role === 'affiliate');
 
   // Pull every payout row in one shot, group by user. Cheaper than N queries.
   const { data: allPayouts } = await svc
@@ -66,7 +68,7 @@ export async function GET() {
   };
   const rows: Row[] = [];
   for (const u of affiliates as any[]) {
-    const meta = u.user_metadata || {};
+    const meta = u.app_metadata || {};
     const code: string = meta.affiliate_code || '';
     const spec = specFromMetadata(meta);
     let redemptions = 0;
@@ -138,7 +140,11 @@ export async function POST(req: Request) {
   if (fetchErr || !target?.user) {
     return NextResponse.json({ error: fetchErr?.message || 'User not found' }, { status: 404 });
   }
-  const meta: any = { ...(target.user.user_metadata || {}) };
+  const meta: any = { ...(target.user.app_metadata || {}) };
+  // Old copies in user_metadata are dropped on every write so nothing reads
+  // a value the user could have set themselves.
+  const userMeta: any = { ...(target.user.user_metadata || {}) };
+  for (const k of ['role', 'affiliate_code', 'affiliate_commission_mode', 'affiliate_commission_type', 'affiliate_commission_value', 'affiliate_commission_by_plan', 'affiliate_assigned_at']) delete userMeta[k];
 
   if (body.action === 'unassign') {
     delete meta.role;
@@ -148,7 +154,7 @@ export async function POST(req: Request) {
     delete meta.affiliate_commission_value;
     delete meta.affiliate_commission_by_plan;
     delete meta.affiliate_assigned_at;
-    const { error } = await svc.auth.admin.updateUserById(body.userId, { user_metadata: meta });
+    const { error } = await svc.auth.admin.updateUserById(body.userId, { app_metadata: meta, user_metadata: userMeta });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, role: null });
   }
@@ -213,7 +219,7 @@ export async function POST(req: Request) {
   meta.affiliate_commission_mode = mode;
   meta.affiliate_assigned_at = new Date().toISOString();
 
-  const { error } = await svc.auth.admin.updateUserById(body.userId, { user_metadata: meta });
+  const { error } = await svc.auth.admin.updateUserById(body.userId, { app_metadata: meta, user_metadata: userMeta });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, role: 'affiliate' });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, NotFoundByNameError, AmbiguousNameError } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServerSupabase } from '@/lib/supabase/server';
@@ -138,7 +139,7 @@ export async function GET(req: Request) {
 
   // Enforce plan limit on FMCSA calls (admins bypass all limits).
   if (supabase && user && !(await isAdmin(user.email))) {
-    const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+    const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
     const plan = ctx.effectivePlan;
     const cap = plan.limits.fmcsaLookups;
     if (cap != null) {

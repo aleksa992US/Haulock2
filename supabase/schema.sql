@@ -149,8 +149,8 @@ drop policy if exists "api_keys_insert_own" on public.api_keys;
 drop policy if exists "api_keys_update_own" on public.api_keys;
 drop policy if exists "api_keys_delete_own" on public.api_keys;
 create policy "api_keys_select_own" on public.api_keys for select using (auth.uid() = user_id);
-create policy "api_keys_insert_own" on public.api_keys for insert with check (auth.uid() = user_id);
-create policy "api_keys_update_own" on public.api_keys for update using (auth.uid() = user_id);
+-- Keys are created and revoked through /api/settings/keys (service role),
+-- which checks the plan first.
 create policy "api_keys_delete_own" on public.api_keys for delete using (auth.uid() = user_id);
 
 create index if not exists lookups_user_created_idx on public.lookups(user_id, created_at desc);
@@ -163,9 +163,8 @@ drop policy if exists "lookups_insert_own" on public.lookups;
 drop policy if exists "lookups_update_own" on public.lookups;
 drop policy if exists "lookups_delete_own" on public.lookups;
 create policy "lookups_select_own" on public.lookups for select using (auth.uid() = user_id);
-create policy "lookups_insert_own" on public.lookups for insert with check (auth.uid() = user_id);
-create policy "lookups_update_own" on public.lookups for update using (auth.uid() = user_id);
-create policy "lookups_delete_own" on public.lookups for delete using (auth.uid() = user_id);
+-- Writes go through the API with the service role: users must not insert,
+-- edit or delete usage rows themselves (monthly limits count them).
 
 create table if not exists public.watchlist (
   id uuid primary key default gen_random_uuid(),
@@ -191,8 +190,8 @@ drop policy if exists "watchlist_insert_own" on public.watchlist;
 drop policy if exists "watchlist_update_own" on public.watchlist;
 drop policy if exists "watchlist_delete_own" on public.watchlist;
 create policy "watchlist_select_own" on public.watchlist for select using (auth.uid() = user_id);
-create policy "watchlist_insert_own" on public.watchlist for insert with check (auth.uid() = user_id);
-create policy "watchlist_update_own" on public.watchlist for update using (auth.uid() = user_id);
+-- Adds and edits go through /api/watchlist (service role), which enforces
+-- the plan's watchlist limit.
 create policy "watchlist_delete_own" on public.watchlist for delete using (auth.uid() = user_id);
 
 -- Community fraud reports — visible to all authenticated users.
@@ -217,9 +216,7 @@ alter table public.fraud_reports enable row level security;
 drop policy if exists "fraud_reports_select_authed" on public.fraud_reports;
 drop policy if exists "fraud_reports_insert_own" on public.fraud_reports;
 drop policy if exists "fraud_reports_delete_own" on public.fraud_reports;
-create policy "fraud_reports_select_authed" on public.fraud_reports for select using (auth.uid() is not null);
-create policy "fraud_reports_insert_own" on public.fraud_reports for insert with check (auth.uid() = reporter_user_id);
-create policy "fraud_reports_delete_own" on public.fraud_reports for delete using (auth.uid() = reporter_user_id);
+-- Community reports are retired (the API returns 410): no user access.
 
 -- Admins — email-based allow list. Managed server-side only via service role.
 create table if not exists public.admins (
@@ -419,7 +416,8 @@ alter table public.affiliate_payouts enable row level security;
 drop policy if exists "affiliate_payouts_select_own" on public.affiliate_payouts;
 drop policy if exists "affiliate_payouts_insert_own" on public.affiliate_payouts;
 create policy "affiliate_payouts_select_own" on public.affiliate_payouts for select using (auth.uid() = user_id);
-create policy "affiliate_payouts_insert_own" on public.affiliate_payouts for insert with check (auth.uid() = user_id);
+-- Payout requests are inserted by /api/affiliate/payouts (service role)
+-- after it recomputes the available balance.
 -- Updates / admin queries go through the service role and bypass RLS.
 
 -- Forward-to-scan (scan@haulock.com): one row per received email. Used to

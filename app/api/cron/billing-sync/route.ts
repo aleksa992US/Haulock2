@@ -71,7 +71,7 @@ export async function GET(req: Request) {
   const users: SyncUser[] = authUsers.map((u) => ({
     id: u.id,
     email: u.email || null,
-    metaPlan: u.user_metadata?.plan || null,
+    metaPlan: u.app_metadata?.plan || null,
     stripeCustomerId: u.user_metadata?.stripe_customer_id || null,
     manualPlan: u.app_metadata?.manual_plan || null,
     team: teamByUser.get(u.id) || null,

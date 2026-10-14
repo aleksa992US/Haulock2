@@ -3,7 +3,7 @@ import type Stripe from 'stripe';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
-import { getPlan, monthStart } from '@/lib/plans';
+import { getPlan, monthStart, enforcedPlanId } from '@/lib/plans';
 import { getStripe } from '@/lib/stripe';
 import { lifetimeBySubscription, listHaulockSubscriptions, paidSubscriptionIds, summarizeBilling, type UserBilling } from '@/lib/billing';
 import { groupSubscriptionsByUser } from '@/lib/billing-sync';
@@ -111,11 +111,12 @@ export async function GET() {
 
   const users = authUsers.map((u: any) => {
     const meta = u.user_metadata || {};
+    const app = u.app_metadata || {};
     const l = lookupsByUser.get(u.id) || { total: 0, quickMonth: 0, scanMonth: 0, lastAt: null };
     const team = teamByUser.get(u.id) || null;
     const userIsAdmin = adminSet.has(String(u.email || '').toLowerCase());
     // The plan whose limits the app enforces for this user right now.
-    const plan = getPlan(team ? team.plan : meta.plan);
+    const plan = getPlan(team ? team.plan : enforcedPlanId(u));
     // The plan Stripe says they've paid for. Members inherit the owner's.
     const expected = team?.role === 'member' ? expectedPlanOf(team.ownerUserId) : expectedPlanOf(u.id);
     // An admin granted exactly this plan by hand, so it isn't "unpaid".
@@ -135,12 +136,13 @@ export async function GET() {
       planMismatch: expected != null && !userIsAdmin && !manual && plan.id !== expected,
       team: team ? { role: team.role } : null,
       isAdmin: userIsAdmin,
-      role: meta.role || null,
-      affiliateCode: meta.affiliate_code || null,
-      affiliateCommissionMode: meta.affiliate_commission_mode === 'per_plan' ? 'per_plan' : 'uniform',
-      affiliateCommissionType: meta.affiliate_commission_type || null,
-      affiliateCommissionValue: typeof meta.affiliate_commission_value === 'number' ? meta.affiliate_commission_value : null,
-      affiliateCommissionByPlan: (meta.affiliate_commission_by_plan && typeof meta.affiliate_commission_by_plan === 'object') ? meta.affiliate_commission_by_plan : null,
+      // Affiliate settings are server-written (app_metadata).
+      role: app.role || null,
+      affiliateCode: app.affiliate_code || null,
+      affiliateCommissionMode: app.affiliate_commission_mode === 'per_plan' ? 'per_plan' : 'uniform',
+      affiliateCommissionType: app.affiliate_commission_type || null,
+      affiliateCommissionValue: typeof app.affiliate_commission_value === 'number' ? app.affiliate_commission_value : null,
+      affiliateCommissionByPlan: (app.affiliate_commission_by_plan && typeof app.affiliate_commission_by_plan === 'object') ? app.affiliate_commission_by_plan : null,
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at,
       confirmedAt: u.email_confirmed_at,

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getPlan, monthStart } from './plans';
+import { getPlan, monthStart, enforcedPlanId } from './plans';
 
 // Shared by the admin Sales API routes: who every user is in the funnel,
 // what their own recent lookups were, and how merge tags resolve for them.
@@ -131,7 +131,7 @@ export async function loadSalesLeads(svc: SupabaseClient): Promise<{ leads: Sale
     .filter((u: any) => u.email && !adminSet.has(String(u.email).toLowerCase()))
     .map((u: any) => {
       const meta = u.user_metadata || {};
-      const plan = getPlan(teamPlanByUser.get(u.id) || meta.plan);
+      const plan = getPlan(teamPlanByUser.get(u.id) || enforcedPlanId(u));
       const email = String(u.email).toLowerCase();
       const l = lookupsByUser.get(u.id) || { total: 0, month: 0, lastAt: null };
       const checkout = checkoutBy.get(u.id) || checkoutBy.get(email) || null;
@@ -157,7 +157,7 @@ export async function loadSalesLeads(svc: SupabaseClient): Promise<{ leads: Sale
         company: meta.company || '',
         mc: meta.mc || '',
         dot: meta.dot || '',
-        role: meta.role || null,
+        role: u.app_metadata?.role || null,
         plan: plan.id,
         planLabel: plan.label,
         segment,

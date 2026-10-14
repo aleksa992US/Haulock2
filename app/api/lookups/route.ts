@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
     data: body,
   };
 
-  const { data, error } = await supabase.from('lookups').insert(row).select().single();
+  const { data, error } = await (getServiceSupabase() || supabase).from('lookups').insert(row).select().single();
   if (error) {
     console.error('[api/lookups POST] Supabase insert failed:', { code: error.code, message: error.message, details: error.details, hint: error.hint });
     return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 500 });
@@ -83,7 +84,7 @@ export async function DELETE(req: Request) {
     const verdicts = (searchParams.get('verdicts') || '').split(',').map((v) => v.trim()).filter(Boolean);
     const sinceDays = Number(searchParams.get('sinceDays')) || 0;
 
-    let q = supabase
+    let q = (getServiceSupabase() || supabase)
       .from('lookups')
       .update({ hidden_at: new Date().toISOString() }, { count: 'exact' })
       .eq('user_id', user.id)
@@ -107,7 +108,7 @@ export async function DELETE(req: Request) {
   if (idsParam) {
     const ids = idsParam.split(',').map((s) => s.trim()).filter(Boolean);
     if (ids.length === 0) return NextResponse.json({ error: 'Missing ids' }, { status: 400 });
-    const { count, error } = await supabase
+    const { count, error } = await (getServiceSupabase() || supabase)
       .from('lookups')
       .update({ hidden_at: new Date().toISOString() }, { count: 'exact' })
       .in('id', ids)
@@ -121,7 +122,7 @@ export async function DELETE(req: Request) {
 
   if (!id) return NextResponse.json({ error: 'Missing id (or pass ?ids=… / ?all=1)' }, { status: 400 });
 
-  const { error } = await supabase
+  const { error } = await (getServiceSupabase() || supabase)
     .from('lookups')
     .update({ hidden_at: new Date().toISOString() })
     .eq('id', id)

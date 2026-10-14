@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { resolveTeamContext } from '@/lib/teams';
 import { countMonthlyLookups } from '@/lib/usage';
 import { isDocAiConfigured } from '@/lib/google-docai';
@@ -22,7 +24,7 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   // Enforce plan limit (admins bypass; team plan + team-wide usage)
-  const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const plan = ctx.effectivePlan;
   const cap = plan.limits.rateConScans;
   if (cap != null && !(await isAdmin(user.email))) {
@@ -78,7 +80,7 @@ export async function POST(req: Request) {
     source: 'ratecon' as const,
     data: merged,
   };
-  try { await supabase.from('lookups').insert(row); } catch {}
+  try { await (getServiceSupabase() || supabase).from('lookups').insert(row); } catch {}
 
   return NextResponse.json(merged);
 }

@@ -124,6 +124,10 @@ function consumeFreshLogin(): boolean {
 function userFromSession(u: any): any {
   if (!u) return null;
   const meta = u.user_metadata || {};
+  // Plan and affiliate settings are written by the server into app_metadata
+  // (what it enforces). user_metadata copies are only a fallback for a
+  // session token issued before the move.
+  const app = u.app_metadata || {};
   return {
     id: u.id,
     email: u.email,
@@ -134,7 +138,7 @@ function userFromSession(u: any): any {
     // Default empty/missing plan to 'free' for the UI. The async
     // ensureDefaultPlan() effect persists the same value to user_metadata
     // so server-side reads (usage limits, billing) stay consistent.
-    plan: meta.plan || 'free',
+    plan: app.plan || meta.plan || 'free',
     planChangedAt: meta.plan_changed_at || null,
     stripeCustomerId: meta.stripe_customer_id || null,
     fleet_size: meta.fleet_size || 1,
@@ -144,12 +148,12 @@ function userFromSession(u: any): any {
     notifyWatchlist: meta.notify_watchlist !== false,
     notifyWeeklyDigest: meta.notify_weekly_digest !== false,
     notifyFraudTrends: meta.notify_fraud_trends !== false,
-    role: (meta.role || null) as null | 'affiliate',
-    affiliateCode: meta.affiliate_code || null,
-    affiliateCommissionMode: (meta.affiliate_commission_mode === 'per_plan' ? 'per_plan' : 'uniform') as 'uniform' | 'per_plan',
-    affiliateCommissionType: (meta.affiliate_commission_type || null) as null | 'flat' | 'percent',
-    affiliateCommissionValue: typeof meta.affiliate_commission_value === 'number' ? meta.affiliate_commission_value : null,
-    affiliateCommissionByPlan: (meta.affiliate_commission_by_plan && typeof meta.affiliate_commission_by_plan === 'object') ? meta.affiliate_commission_by_plan : null,
+    role: (app.role || meta.role || null) as null | 'affiliate',
+    affiliateCode: app.affiliate_code || meta.affiliate_code || null,
+    affiliateCommissionMode: ((app.affiliate_commission_mode || meta.affiliate_commission_mode) === 'per_plan' ? 'per_plan' : 'uniform') as 'uniform' | 'per_plan',
+    affiliateCommissionType: (app.affiliate_commission_type || meta.affiliate_commission_type || null) as null | 'flat' | 'percent',
+    affiliateCommissionValue: typeof (app.affiliate_commission_value ?? meta.affiliate_commission_value) === 'number' ? (app.affiliate_commission_value ?? meta.affiliate_commission_value) : null,
+    affiliateCommissionByPlan: ((app.affiliate_commission_by_plan || meta.affiliate_commission_by_plan) && typeof (app.affiliate_commission_by_plan || meta.affiliate_commission_by_plan) === 'object') ? (app.affiliate_commission_by_plan || meta.affiliate_commission_by_plan) : null,
   };
 }
 
@@ -320,14 +324,19 @@ export default function Haulock() {
   const setPlan = async (plan: string) => {
     const sb = getSupabase();
     if (sb) {
-      const { data, error } = await sb.auth.updateUser({ data: { plan, plan_changed_at: new Date().toISOString() } });
-      if (!error && data.user) setUser(userFromSession(data.user));
-      // Mirror the plan to the team (auto-creates a team for the owner if missing).
-      fetch('/api/team/sync-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan }),
-      }).then(() => invalidateCache('usage', 'team')).catch(() => {});
+      // Only the server can change the enforced plan (app_metadata); this
+      // path is used for switching to Free. Refresh the session afterwards
+      // so the token carries the new plan right away.
+      try {
+        await fetch('/api/team/sync-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan }),
+        });
+        const { data } = await sb.auth.refreshSession();
+        if (data?.user) setUser(userFromSession(data.user));
+      } catch { /* the dashboard re-reads usage below */ }
+      invalidateCache('usage', 'team');
     } else {
       setUser((u: any) => u ? { ...u, plan } : u);
     }
@@ -2678,7 +2687,7 @@ function Login({ navigate, loginAs }: any) {
       navigate(pathToRoute(redirect));
       return;
     }
-    const plan = data.user?.user_metadata?.plan;
+    const plan = data.user?.app_metadata?.plan || data.user?.user_metadata?.plan;
     navigate(plan ? 'dashboard' : 'plan');
   };
 

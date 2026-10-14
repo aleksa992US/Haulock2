@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
   existingQuery = body.dot ? existingQuery.eq('dot', body.dot) : existingQuery.is('dot', null);
   const { data: existing } = await existingQuery.maybeSingle();
 
-  const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const plan = ctx.effectivePlan;
   const cap = plan.limits.watchlist;
   if (cap != null && !(await isAdmin(user.email))) {
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
     data: { ...body, own: (existing as any)?.own === true ? true : undefined },
   };
 
-  const { data, error } = await supabase
+  const { data, error } = await (getServiceSupabase() || supabase)
     .from('watchlist')
     .upsert(row, { onConflict: 'user_id,mc,dot' })
     .select()
@@ -112,7 +113,7 @@ export async function DELETE(req: Request) {
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-  const { error } = await supabase.from('watchlist').delete().eq('id', id).eq('user_id', user.id);
+  const { error } = await (getServiceSupabase() || supabase).from('watchlist').delete().eq('id', id).eq('user_id', user.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

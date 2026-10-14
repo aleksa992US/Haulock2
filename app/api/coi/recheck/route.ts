@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { buildCoiReport } from '@/lib/coi-check';
 import { checkSimpleRateLimit } from '@/lib/rate-limit';
 
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
   }
   report.recheckedAt = new Date().toISOString();
 
-  await supabase.from('lookups').update({
+  await (getServiceSupabase() || supabase).from('lookups').update({
     name: report.name,
     mc: report.mc || null,
     dot: report.dot || null,

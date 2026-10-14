@@ -3,6 +3,8 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe, planFromPriceId } from '@/lib/stripe';
 import { ownedCustomerId, pickLiveSubscription, subscriptionPlan } from '@/lib/billing';
+import { applyUserPlan } from '@/lib/teams';
+import { enforcedPlanId } from '@/lib/plans';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,19 +67,14 @@ export async function GET() {
   const currency = (active.items.data[0]?.price?.currency || 'usd').toUpperCase();
   const interval = active.items.data[0]?.price?.recurring?.interval ?? null;
 
-  // Sync user_metadata to match reality. An unrecognised price/plan is
-  // left alone rather than written as the user's plan.
+  // Sync the enforced plan (and the team's) to match what they pay for. An
+  // unrecognised price/plan is left alone rather than written as the plan.
   const resolvedPlan = subscriptionPlan(active);
-  if (svc && resolvedPlan && me.user_metadata?.plan !== resolvedPlan) {
-    await svc.auth.admin.updateUserById(me.id, {
-      user_metadata: {
-        ...(me.user_metadata || {}),
-        plan: resolvedPlan,
-        plan_changed_at: new Date().toISOString(),
-        stripe_customer_id: customerId,
-      },
-    });
-    await svc.from('teams').update({ plan: resolvedPlan }).eq('owner_user_id', me.id);
+  if (svc && resolvedPlan && enforcedPlanId(me) !== resolvedPlan) {
+    await applyUserPlan(me.id, resolvedPlan);
+  }
+  if (svc && me.user_metadata?.stripe_customer_id !== customerId) {
+    await svc.auth.admin.updateUserById(me.id, { user_metadata: { ...(me.user_metadata || {}), stripe_customer_id: customerId } });
   }
 
   const periodEnd = (active as any).current_period_end ?? null;

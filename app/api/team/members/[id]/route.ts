@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { resolveTeamContext } from '@/lib/teams';
@@ -13,7 +14,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
   const me = userData?.user;
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const ctx = await resolveTeamContext(me.id, me.user_metadata?.plan);
+  const ctx = await resolveTeamContext(me.id, enforcedPlanId(me));
   if (!ctx.team) return NextResponse.json({ error: 'Not on a team' }, { status: 400 });
 
   const targetUserId = params.id;

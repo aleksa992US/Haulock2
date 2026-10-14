@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { monthStart } from '@/lib/plans';
+import { monthStart, enforcedPlanId } from '@/lib/plans';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
 
@@ -15,7 +15,7 @@ export async function GET() {
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const plan = ctx.effectivePlan;
   const since = monthStart().toISOString();
 

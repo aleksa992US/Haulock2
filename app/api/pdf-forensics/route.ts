@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { analyzePdfForensics } from '@/lib/pdf-forensics';
-import { monthStart } from '@/lib/plans';
+import { monthStart, enforcedPlanId } from '@/lib/plans';
 import { resolveTeamContext } from '@/lib/teams';
 import { isAdmin } from '@/lib/admin';
 
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
 
   // Plan-based quota (admins bypass). Free = 3/mo, paid tiers = unlimited.
   if (!(await isAdmin(user.email))) {
-    const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+    const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
     const plan = ctx.effectivePlan;
     const cap = plan.limits.pdfForensics;
     if (cap != null) {
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     // Record usage against monthly quota. Reuses the `lookups` table with
     // source='forensics' so usage stats naturally fold into existing counters.
     try {
-      await supabase.from('lookups').insert({
+      await (getServiceSupabase() || supabase).from('lookups').insert({
         user_id: user.id,
         query: file.name || 'pdf-forensics',
         name: 'PDF forensic scan',

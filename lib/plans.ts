@@ -131,3 +131,12 @@ export function monthStart(now: Date = new Date()): Date {
 export function formatLimit(n: number | null): string {
   return n == null ? 'Unlimited' : n.toLocaleString();
 }
+
+// The plan the server enforces for a user (before team plans, which
+// resolveTeamContext applies). It lives in app_metadata, which only the
+// server can write. user_metadata.plan is editable by the user from the
+// browser, so it is kept for display only and never trusted.
+export function enforcedPlanId(user: { app_metadata?: any } | null | undefined): string {
+  const p = user?.app_metadata?.plan;
+  return typeof p === 'string' && p ? p : 'free';
+}

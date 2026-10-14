@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe } from '@/lib/stripe';
 import { computeAffiliateEarnings, specFromMetadata, PAYOUT_MIN_CENTS } from '@/lib/affiliate-earnings';
 import { sendEmail, payoutRequestedTemplate, isResendConfigured, getEmailSiteUrl } from '@/lib/email';
@@ -19,7 +20,8 @@ export async function POST() {
   const me = userData?.user;
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const meta: any = me.user_metadata || {};
+  // Server-written only (app_metadata); user_metadata is user-editable.
+  const meta: any = me.app_metadata || {};
   if (meta.role !== 'affiliate') {
     return NextResponse.json({ error: 'Affiliate access only' }, { status: 403 });
   }
@@ -62,10 +64,11 @@ export async function POST() {
     }, { status: 400 });
   }
 
-  // Insert via the user-scoped client so RLS confirms ownership. The
-  // affiliate_code + redemptions_count snapshot makes the row auditable
-  // even if the user's commission or assigned code changes later.
-  const { data: insertRow, error: insertErr } = await supabase
+  // Inserted by the server (service role) for this user only; users can't
+  // insert payout rows themselves. The affiliate_code + redemptions_count
+  // snapshot makes the row auditable even if the user's commission or
+  // assigned code changes later.
+  const { data: insertRow, error: insertErr } = await (getServiceSupabase() || supabase)
     .from('affiliate_payouts')
     .insert({
       user_id: me.id,

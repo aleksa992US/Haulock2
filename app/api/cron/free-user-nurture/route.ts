@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { sendEmail, nurtureFreeUserTemplate, isResendConfigured, getEmailSiteUrl } from '@/lib/email';
@@ -95,7 +96,7 @@ async function run(req: Request) {
     if (!u?.email) { skip('no-email'); continue; }
     const email = String(u.email).toLowerCase();
     const meta = u.user_metadata || {};
-    const plan = teamPlanByUser.get(u.id) || meta.plan || 'free';
+    const plan = teamPlanByUser.get(u.id) || enforcedPlanId(u);
 
     if (plan !== 'free') { skip('paid-plan'); continue; }
     if (!u.email_confirmed_at) { skip('email-not-confirmed'); continue; }
