@@ -30,19 +30,15 @@ set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || jsonb_strip_
 where raw_user_meta_data->>'role' = 'affiliate'
   and raw_app_meta_data->>'role' is null;
 
--- 3) Paid plans with no Stripe customer (granted by hand). Decide per
---    account, then run ONE of these for the emails you list:
+-- 3) Paid plans with no Stripe customer were granted by hand. Keep them as
+--    comps: manual_plan marks the plan as granted, so the admin Users tab
+--    doesn't flag it as unpaid and billing sync leaves it alone. List the
+--    accounts by email (kept out of the repo):
 --
---    Keep the plan and mark it as a comp (the admin page stops flagging it):
 --      update auth.users
 --      set raw_app_meta_data = raw_app_meta_data || jsonb_build_object('manual_plan', raw_app_meta_data->>'plan')
---      where email in ('...');
---
---    Or move them to Free:
---      update auth.users
---      set raw_app_meta_data = raw_app_meta_data || '{"plan":"free"}'::jsonb,
---          raw_user_meta_data = raw_user_meta_data || '{"plan":"free"}'::jsonb
---      where email in ('...');
+--      where email in ('...')
+--        and raw_app_meta_data->>'plan' in ('carrier', 'team', 'fleet');
 
 -- Check: every account should now have app_metadata.plan.
 select
@@ -51,3 +47,12 @@ select
   count(*) filter (where raw_app_meta_data->>'plan' in ('carrier', 'team', 'fleet')) as paid,
   count(*) filter (where raw_app_meta_data->>'role' = 'affiliate') as affiliates
 from auth.users;
+
+-- Check: paid accounts with neither a Stripe customer nor a comp flag. After
+-- step 3 this should return no rows; any row here wasn't paid for in Stripe
+-- or granted by an admin.
+select email, raw_app_meta_data->>'plan' as plan
+from auth.users
+where raw_app_meta_data->>'plan' in ('carrier', 'team', 'fleet')
+  and raw_app_meta_data->>'manual_plan' is null
+  and raw_user_meta_data->>'stripe_customer_id' is null;
