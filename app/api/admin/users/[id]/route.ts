@@ -106,7 +106,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
     await svc.from('lookups').delete().eq('user_id', params.id);
     await svc.from('watchlist').delete().eq('user_id', params.id);
     await svc.from('team_members').delete().eq('user_id', params.id);
-    await svc.from('teams').delete().eq('owner_id', params.id);
+    await svc.from('teams').delete().eq('owner_user_id', params.id);
     await svc.from('api_keys').delete().eq('user_id', params.id);
   } catch { /* non-fatal */ }
 
