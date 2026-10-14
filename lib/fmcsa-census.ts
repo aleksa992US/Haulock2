@@ -77,3 +77,27 @@ export async function fetchCensusContact(dot: string | null | undefined): Promis
     clearTimeout(timer);
   }
 }
+
+// USDOT number for an MC, from FMCSA's public registry ("Carrier - All With
+// History") — the census is keyed by USDOT only.
+export async function dotForMc(mc: string | null | undefined): Promise<string | null> {
+  const digits = String(mc ?? '').replace(/\D/g, '').replace(/^0+/, '');
+  if (!digits) return null;
+  const registry = process.env.FMCSA_REGISTRY_DATASET_ID || '6eyk-hxee';
+  const params = new URLSearchParams({ $where: `docket_number = 'MC${digits}'`, $limit: '1', $select: 'dot_number' });
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (process.env.SOCRATA_APP_TOKEN) headers['X-App-Token'] = process.env.SOCRATA_APP_TOKEN;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE}/${registry}.json?${params.toString()}`, { headers, signal: controller.signal, cache: 'no-store' });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    const dot = String(rows?.[0]?.dot_number || '').replace(/\D/g, '').replace(/^0+/, '');
+    return dot || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

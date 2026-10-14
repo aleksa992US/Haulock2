@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
+import { fetchCensusContact } from '@/lib/fmcsa-census';
 import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
 import { sendEmail, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange, type WatchlistFieldChange } from '@/lib/email';
 
@@ -38,6 +39,10 @@ type FmcsaWatchSnapshot = {
   bondOnFile?: number;
   outOfService?: boolean;
   safetyRating?: string;
+  // From the MCS-150 filing (FMCSA census): who runs the company and the
+  // email of record. Changes here are how carrier identities get hijacked.
+  officers?: string;
+  fmcsaEmail?: string;
   // Every phone FMCSA has returned for this row. QCMobile alternates between
   // phone fields from one response to the next, so a number we've already
   // seen isn't reported as a change.
@@ -45,12 +50,13 @@ type FmcsaWatchSnapshot = {
   checkedAt?: string;
 };
 
-const WATCH_KEYS = ['name', 'dba', 'address', 'phone', 'commonAuthority', 'contractAuthority', 'brokerAuthority', 'bipdOnFile', 'cargoOnFile', 'bondOnFile', 'outOfService', 'safetyRating'] as const;
+const WATCH_KEYS = ['name', 'dba', 'address', 'phone', 'commonAuthority', 'contractAuthority', 'brokerAuthority', 'bipdOnFile', 'cargoOnFile', 'bondOnFile', 'outOfService', 'safetyRating', 'officers', 'fmcsaEmail'] as const;
 
 function snapshotOf(c: any): FmcsaWatchSnapshot {
   const out: FmcsaWatchSnapshot = {};
   for (const k of WATCH_KEYS) {
-    const v = c?.[k];
+    let v = c?.[k];
+    if (k === 'officers' && Array.isArray(v)) v = v.join(', ');
     if (v === undefined || v === null || v === '') continue;
     (out as any)[k] = v;
   }
@@ -122,6 +128,14 @@ function diffSnapshots(prev: FmcsaWatchSnapshot, next: FmcsaWatchSnapshot, opts:
 
   // "Not rated" also shows up when a fallback source has no rating at all,
   // so a rating disappearing isn't reported; a new or different one is.
+  // MCS-150 contact details. Only compared when both checks got them.
+  if (has(prev.officers) && has(next.officers) && textKey(prev.officers) !== textKey(next.officers)) {
+    out.push({ field: 'officers', label: 'Company officers on FMCSA filing', from: String(prev.officers), to: String(next.officers), concern: true });
+  }
+  if (has(prev.fmcsaEmail) && has(next.fmcsaEmail) && String(prev.fmcsaEmail).toLowerCase() !== String(next.fmcsaEmail).toLowerCase()) {
+    out.push({ field: 'fmcsaEmail', label: 'Email on FMCSA filing', from: String(prev.fmcsaEmail), to: String(next.fmcsaEmail), concern: true });
+  }
+
   const ra = String(prev.safetyRating ?? '');
   const rb = String(next.safetyRating ?? '');
   if (!UNRATED.test(rb) && textKey(ra) !== textKey(rb)) {
@@ -194,6 +208,13 @@ async function run(req: Request) {
       results.push({ id: row.id, status: 'no-live-data' });
       continue;
     }
+    // MCS-150 officers + email of record (FMCSA census). A failed fetch just
+    // leaves them out of this check — never reported as a change.
+    const census = fresh.dot ? await fetchCensusContact(fresh.dot).catch(() => null) : null;
+    if (census) {
+      if (census.officers.length) fresh.officers = census.officers;
+      if (census.email) fresh.fmcsaEmail = census.email;
+    }
 
     const saved = (row.data || {}) as any;
     // Baseline: the FMCSA snapshot from the last daily check, or — the first
@@ -237,6 +258,7 @@ async function run(req: Request) {
           change,
           recipientEmail: toAddress,
           siteUrl,
+          own: saved.own === true,
         });
         await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
         sent += 1;

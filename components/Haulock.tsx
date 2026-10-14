@@ -863,6 +863,56 @@ function Landing({ navigate, user }: any) {
         </section>
       )}
 
+      {/* Your own company: check counts + daily FMCSA monitoring (paid).
+          The example chart is fixed demo data — marketing surfaces never show
+          real searches. */}
+      <section id="your-company" className="py-24 px-6 bg-white border-t border-[#0B1E3F]/10 text-[#0B1E3F] scroll-mt-20">
+        <div className="max-w-7xl mx-auto">
+          <div className="mb-12 max-w-3xl">
+            <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— For your own company</div>
+            <h2 className="text-4xl md:text-6xl leading-[1.05] mb-6">
+              Know who&apos;s checking you. <span className="serif italic text-[#FF6B35]">Know the second your FMCSA record changes.</span>
+            </h2>
+            <p className="text-[#0B1E3F]/70 text-lg max-w-2xl">
+              Brokers and shippers check carriers before every load, and fraudsters hijack carrier identities by quietly changing FMCSA records. Haulock watches your side too.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="p-8 rounded-3xl border border-[#0B1E3F]/10 bg-[#F5F3EE]">
+              <div className="w-11 h-11 rounded-xl bg-[#0B1E3F] flex items-center justify-center mb-5"><Eye className="w-5 h-5 text-white" /></div>
+              <h3 className="text-2xl font-semibold mb-3">See how often you&apos;re checked</h3>
+              <p className="text-[#0B1E3F]/70 leading-relaxed">Every time a broker, carrier or shipper checks your MC on Haulock, it counts. See checks per week and how many different companies looked you up.</p>
+              <div className="mt-6 p-4 bg-white rounded-2xl border border-[#0B1E3F]/10">
+                <div className="flex items-baseline gap-2"><span className="text-3xl font-semibold">23</span><span className="text-sm text-[#0B1E3F]/60">checks in the last 30 days · by 9 accounts</span></div>
+                <div className="flex items-end h-12 mt-3" style={{ gap: 2 }} aria-hidden="true">
+                  {[2, 1, 3, 0, 2, 4, 3, 5, 2, 6, 4, 7].map((n, i) => (
+                    <div key={i} className="flex-1 rounded-t" style={{ height: `${n ? Math.max(10, (n / 7) * 100) : 6}%`, background: n ? (i === 11 ? '#FF6B35' : '#0B1E3F') : 'rgba(11,30,63,0.12)' }} />
+                  ))}
+                </div>
+                <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45 mt-2">Example · last 12 weeks</div>
+              </div>
+              <p className="mt-4 text-xs text-[#0B1E3F]/55">Counts only: we never reveal who searched. Searches on FMCSA&apos;s own site aren&apos;t visible to anyone.</p>
+            </div>
+            <div className="p-8 rounded-3xl border border-[#0B1E3F]/10 bg-[#F5F3EE]">
+              <div className="w-11 h-11 rounded-xl bg-[#FF6B35] flex items-center justify-center mb-5"><Bell className="w-5 h-5 text-white" /></div>
+              <h3 className="text-2xl font-semibold mb-3">Live FMCSA monitoring of your company</h3>
+              <p className="text-[#0B1E3F]/70 leading-relaxed">We check your FMCSA record every day: insurance, authority, address, phone, email of record and company officers. If anything changes, you get an email right away.</p>
+              <div className="mt-6 p-4 bg-white rounded-2xl border border-[#0B1E3F]/10 text-sm">
+                <div className="text-[10px] mono uppercase tracking-wider text-[#DC2626] mb-2">Example alert · Your FMCSA record changed</div>
+                <div className="flex justify-between gap-3 py-1.5 border-b border-[#0B1E3F]/5"><span className="text-[#0B1E3F]/60">Email on FMCSA filing</span><span><span className="text-[#0B1E3F]/45 line-through">dispatch@yourco.com</span> → <strong className="text-[#DC2626]">ops@yourco-freight.net</strong></span></div>
+                <div className="flex justify-between gap-3 py-1.5"><span className="text-[#0B1E3F]/60">Liability insurance</span><span><span className="text-[#0B1E3F]/45 line-through">$1,000,000</span> → <strong className="text-[#DC2626]">$0</strong></span></div>
+              </div>
+              <p className="mt-4 text-xs text-[#0B1E3F]/55">The fastest way to catch a hijacked identity or a lapsed policy before a customer does.</p>
+            </div>
+          </div>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <span className="px-3 py-1 rounded-full bg-[#0B1E3F]/5 text-xs mono uppercase tracking-wider text-[#0B1E3F]/70">Included on paid plans</span>
+            <button onClick={() => navigate('signup')} className="px-6 py-3 bg-[#0B1E3F] text-white rounded-full font-medium hover:bg-[#0B1E3F]/90 transition inline-flex items-center gap-2">Start free <ArrowRight className="w-4 h-4" /></button>
+            <button onClick={() => navigate('pricing')} className="px-6 py-3 border border-[#0B1E3F]/15 rounded-full font-medium hover:bg-[#0B1E3F]/5 transition">See plans</button>
+          </div>
+        </div>
+      </section>
+
       <section className="py-24 px-6 bg-[#0B1E3F] relative overflow-hidden">
         <div className="absolute inset-0 grid-bg-dark opacity-40" />
         <div className="relative max-w-7xl mx-auto">
@@ -993,6 +1043,7 @@ function Landing({ navigate, user }: any) {
               { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, and any web-reputation hits from trusted sources. Second, the PDF forensics: drop the rate confirmation and we read the hidden metadata to flag if it was edited after the broker sent it. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
               { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
+              { q: 'Can I see who is checking my company?', a: 'On paid plans you can see how often your company is checked on Haulock: checks per week, and how many different accounts looked you up. We never show who searched, and nobody can see lookups made on FMCSA\u2019s own site, because FMCSA doesn\u2019t publish them. To protect other users, these counts unlock only after you verify the company is yours: your login email has to match the email on your FMCSA filing. Paid plans also monitor your own FMCSA record every day and email you if anything changes.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
               { q: 'Is the data legal for me to use?', a: 'Yes. FMCSA data is public and provided by the U.S. Department of Transportation. WHOIS, DNS, and the public web are public. Google Places and Brave Search are commercial APIs we license for this purpose. Our Terms of Use and Privacy Policy spell out exactly how we collect and display this information.' },
@@ -8658,6 +8709,134 @@ function AppShell({ user, route, navigate, logout, children }: any) {
   );
 }
 
+// "Your company" — paid accounts: how often other Haulock users checked the
+// company (verified owners only, counts never identities), and daily
+// monitoring of its FMCSA record with an email on any change.
+function YourCompanyCard({ navigate }: { navigate: any }) {
+  const res = useCachedFetch<any>('own-company', '/api/profile/company');
+  const [data, setData] = useState<any>(null);
+  const [busy, setBusy] = useState<'verify' | 'monitor' | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
+  useEffect(() => { if (res.data) setData(res.data); }, [res.data]);
+  const d = data || res.data;
+  if (!d) return null;
+
+  const reload = async () => {
+    const r = await fetch('/api/profile/company', { cache: 'no-store' });
+    if (r.ok) setData(await r.json());
+    invalidateCache('own-company');
+  };
+  const act = async (body: any, kind: 'verify' | 'monitor') => {
+    setBusy(kind); setMessage(null);
+    try {
+      const r = await fetch('/api/profile/company', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok || j.ok === false) throw new Error(j.error || 'Something went wrong');
+      if (kind === 'verify') setMessage({ tone: 'ok', text: 'Verified — your login email matches your company’s FMCSA filing.' });
+      await reload();
+    } catch (e: any) {
+      setMessage({ tone: 'err', text: e?.message || 'Something went wrong' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const shell = (children: React.ReactNode) => (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-6 card-shadow text-[#0B1E3F]">
+      <div className="flex items-center gap-2 mb-1">
+        <Building2 className="w-4 h-4 text-[#0B1E3F]/60" />
+        <h2 className="text-lg font-semibold">Your company</h2>
+        {d.mc || d.dot ? <span className="text-xs mono text-[#0B1E3F]/50">{[d.mc && `MC-${d.mc}`, d.dot && `DOT-${d.dot}`].filter(Boolean).join(' · ')}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+
+  if (!d.hasCompany) {
+    return shell(
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mt-2">
+        <p className="text-sm text-[#0B1E3F]/65">Add your MC or DOT to see how often your company is checked on Haulock, and to get an email the moment your FMCSA record changes.</p>
+        <button onClick={() => navigate('settings', { tab: 'profile' })} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium whitespace-nowrap">Set your MC/DOT</button>
+      </div>,
+    );
+  }
+  if (!d.paid) {
+    return shell(
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mt-2">
+        <p className="text-sm text-[#0B1E3F]/65"><Lock className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />See how often brokers and carriers check your company on Haulock, and get an email the moment anything changes on your FMCSA record (insurance, authority, address, phone, email, officers). Included on paid plans.</p>
+        <button onClick={() => navigate('plan')} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium whitespace-nowrap">See plans</button>
+      </div>,
+    );
+  }
+
+  const c = d.checks;
+  const max = c ? Math.max(1, ...c.weeks.map((w: any) => w.count)) : 1;
+  const fmtWeek = (iso: string) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return shell(
+    <div className="grid md:grid-cols-2 gap-6 mt-4">
+      {/* Checked on Haulock */}
+      <div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Checked on Haulock</div>
+        {!d.verified ? (
+          <div className="space-y-3">
+            <p className="text-sm text-[#0B1E3F]/70">To see how often your company is checked, confirm it&apos;s yours. We match your login email with the email on your company&apos;s FMCSA filing (MCS-150).</p>
+            <button onClick={() => act({ action: 'verify' }, 'verify')} disabled={busy !== null} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-60">{busy === 'verify' ? 'Checking FMCSA…' : 'Verify my company'}</button>
+          </div>
+        ) : c ? (
+          <div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-4xl font-semibold">{c.last30}</span>
+              <span className="text-sm text-[#0B1E3F]/60">{c.last30 === 1 ? 'check' : 'checks'} in the last 30 days{c.distinctAccounts30 ? ` · by ${c.distinctAccounts30} account${c.distinctAccounts30 === 1 ? '' : 's'}` : ''}</span>
+            </div>
+            {/* 12 weekly bars, oldest → newest; whole column is the hover target. */}
+            <div className="mt-3 relative" role="img" aria-label={`Checks per week for the last 12 weeks: ${c.weeks.map((w: any) => w.count).join(', ')}`}>
+              <div className="flex items-end h-16" style={{ gap: 2 }}>
+                {c.weeks.map((w: any, i: number) => (
+                  <div key={w.weekStart} className="flex-1 h-full flex items-end cursor-default" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                    <div className="w-full rounded-t" style={{ height: `${w.count ? Math.max(8, (w.count / max) * 100) : 4}%`, background: w.count ? (hover === i ? '#FF6B35' : '#0B1E3F') : 'rgba(11,30,63,0.12)' }} />
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between text-[10px] mono text-[#0B1E3F]/45 mt-1">
+                <span>{fmtWeek(c.weeks[0].weekStart)}</span>
+                <span>{hover != null ? `Week of ${fmtWeek(c.weeks[hover].weekStart)}: ${c.weeks[hover].count} ${c.weeks[hover].count === 1 ? 'check' : 'checks'}` : 'This week'}</span>
+              </div>
+            </div>
+            <div className="mt-3 text-xs text-[#0B1E3F]/60">
+              {c.lastCheckedDaysAgo == null ? 'Not checked in the last 12 weeks.' : `Last checked ${c.lastCheckedDaysAgo === 0 ? 'today' : c.lastCheckedDaysAgo === 1 ? 'yesterday' : `${c.lastCheckedDaysAgo} days ago`}.`}
+              {c.last30 > 0 && ` ${c.byKind30.lookups} lookup${c.byKind30.lookups === 1 ? '' : 's'}, ${c.byKind30.rateCons} on a rate con, ${c.byKind30.cois} COI check${c.byKind30.cois === 1 ? '' : 's'}.`}
+            </div>
+            <div className="mt-1 text-[11px] text-[#0B1E3F]/45">We show how often, never who. Checks on FMCSA&apos;s own site aren&apos;t visible to anyone.</div>
+          </div>
+        ) : null}
+      </div>
+
+      {/* FMCSA monitoring */}
+      <div>
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">FMCSA monitoring</div>
+        {d.monitoring?.on ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-[#16A34A]"><span className="w-2 h-2 rounded-full bg-[#16A34A]" /> On</div>
+            <p className="text-sm text-[#0B1E3F]/70">We check your FMCSA record every day and email you the moment anything changes: insurance, authority, address, phone, email or officers. A change you didn&apos;t make is the first sign of a hijacked identity.</p>
+            <div className="text-xs text-[#0B1E3F]/55">
+              {d.monitoring.lastChecked ? `Last checked ${timeAgo(d.monitoring.lastChecked)}` : 'First check runs tonight'}
+              {d.monitoring.lastChangeAt ? ` · last change found ${timeAgo(d.monitoring.lastChangeAt)}` : ' · no changes found yet'}
+            </div>
+            <button onClick={() => act({ action: 'monitor', on: false }, 'monitor')} disabled={busy !== null} className="text-xs underline text-[#0B1E3F]/55 hover:text-[#0B1E3F]">Turn off</button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-[#0B1E3F]/70">Get an email the moment your FMCSA record changes (insurance, authority, address, phone, email or officers), so you hear about it before your customers do.</p>
+            <button onClick={() => act({ action: 'monitor', on: true }, 'monitor')} disabled={busy !== null} className="px-4 py-2 bg-[#0B1E3F] text-white rounded-full text-sm font-medium disabled:opacity-60">{busy === 'monitor' ? 'Turning on…' : 'Turn on monitoring'}</button>
+          </div>
+        )}
+      </div>
+      {message && <div className={`md:col-span-2 text-sm ${message.tone === 'ok' ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{message.text}</div>}
+    </div>,
+  );
+}
+
 function Dashboard({ navigate, user }: any) {
   const lookupsRes = useCachedFetch<{ lookups: any[] }>('lookups:200', '/api/lookups?limit=200');
   const usageRes = useCachedFetch<any>('usage', '/api/usage');
@@ -8686,6 +8865,7 @@ function Dashboard({ navigate, user }: any) {
         <UsageCard label="Watchlist" value={u.watchlist} limit={usage?.isAdmin ? null : plan.limits.watchlist} icon={Eye} color="#0B1E3F" />
         <StatCard label="High-risk flagged" value={lookups == null ? '—' : String(highCount)} trend="" sub="in your history" icon={Shield} color="#DC2626" danger />
       </div>
+      <YourCompanyCard navigate={navigate} />
       {plan.id === 'free' && (
         <div className="flex items-center justify-between gap-4 p-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-xl">
           <div className="text-sm text-[#0B1E3F]">

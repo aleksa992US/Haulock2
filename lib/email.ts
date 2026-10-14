@@ -660,13 +660,17 @@ export function watchlistUpdateTemplate(args: {
   change: WatchlistChange;
   recipientEmail: string;
   siteUrl: string;
+  // The user's own company (daily monitoring), not someone they watch.
+  own?: boolean;
 }): { subject: string; html: string } {
   const idLine = [args.carrier.mc && `MC-${args.carrier.mc}`, args.carrier.dot && `DOT-${args.carrier.dot}`].filter(Boolean).join(' · ') || 'No ID';
   const changes = args.change.changes;
   const concerns = changes.filter((c) => c.concern);
-  const badge = concerns.length > 0
-    ? { text: `Watchlist · ${concerns.length} change${concerns.length === 1 ? '' : 's'} to review`, color: '#DC2626', bg: 'rgba(220,38,38,0.08)' }
-    : { text: 'Watchlist · FMCSA record changed', color: '#0B1E3F', bg: 'rgba(11,30,63,0.06)' };
+  const badge = args.own
+    ? { text: 'Your company · FMCSA record changed', color: '#DC2626', bg: 'rgba(220,38,38,0.08)' }
+    : concerns.length > 0
+      ? { text: `Watchlist · ${concerns.length} change${concerns.length === 1 ? '' : 's'} to review`, color: '#DC2626', bg: 'rgba(220,38,38,0.08)' }
+      : { text: 'Watchlist · FMCSA record changed', color: '#0B1E3F', bg: 'rgba(11,30,63,0.06)' };
   const rows = changes.map((c) => `
     <tr>
       <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);font-size:13px;color:rgba(11,30,63,0.6);vertical-align:top;width:38%;">${escapeHtml(c.label)}</td>
@@ -679,16 +683,20 @@ export function watchlistUpdateTemplate(args: {
     : `${changes.length} FMCSA fields changed: ${changes.slice(0, 3).map((c) => c.label.toLowerCase()).join(', ')}${changes.length > 3 ? ', and more' : ''}.`;
   const body = `
 <div style="display:inline-block;padding:4px 10px;background:${badge.bg};color:${badge.color};border-radius:999px;font-size:11px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">${escapeHtml(badge.text)}</div>
-${h1(`FMCSA record changed for ${italicAccent(escapeHtml(args.carrier.name))}`)}
+${h1(args.own ? `Your FMCSA record ${italicAccent('just changed')}` : `FMCSA record changed for ${italicAccent(escapeHtml(args.carrier.name))}`)}
 <div style="background:#F5F3EE;border-radius:12px;padding:20px;margin:0 0 24px 0;">
   <div style="font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;color:rgba(11,30,63,0.55);margin-bottom:8px;">${escapeHtml(idLine)}</div>
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">${rows}</table>
 </div>
-${p('Our daily check compares the FMCSA registry record with the last one we saw. It doesn&rsquo;t re-run the web, address or safety checks, so your saved risk score hasn&rsquo;t been recalculated. Run a new scan for the full picture.')}
-${button(args.siteUrl + '/watchlist', 'Open watchlist →')}
+${args.own
+  ? p('<strong style="color:#0B1E3F;">If you or your team didn&rsquo;t make this change, act now.</strong> Changes to a carrier&rsquo;s phone, email, address or officers are how identities get hijacked. Log in to your FMCSA portal, check your MCS-150, and call FMCSA if anything looks wrong.')
+  : p('Our daily check compares the FMCSA registry record with the last one we saw. It doesn&rsquo;t re-run the web, address or safety checks, so your saved risk score hasn&rsquo;t been recalculated. Run a new scan for the full picture.')}
+${args.own ? button(args.siteUrl + '/dashboard', 'Open your dashboard →') : button(args.siteUrl + '/watchlist', 'Open watchlist →')}
 <div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Manage which watchlist updates you receive in <a href="${args.siteUrl}/settings" style="color:#0B1E3F;text-decoration:underline;">Settings &rarr; Notifications</a>.</div>`;
   return {
-    subject: `Watchlist: ${args.carrier.name}: ${changes.length === 1 ? `${changes[0].label.toLowerCase()} changed` : `${changes.length} FMCSA changes`}`,
+    subject: args.own
+      ? `Your FMCSA record changed: ${changes.length === 1 ? changes[0].label.toLowerCase() : `${changes.length} fields`}`
+      : `Watchlist: ${args.carrier.name}: ${changes.length === 1 ? `${changes[0].label.toLowerCase()} changed` : `${changes.length} FMCSA changes`}`,
     html: baseLayout({ preview: `${args.carrier.name}: ${summary}`, body, unsubEmail: args.recipientEmail }),
   };
 }

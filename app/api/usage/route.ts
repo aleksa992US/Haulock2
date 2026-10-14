@@ -34,7 +34,8 @@ export async function GET() {
     supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'ratecon').gte('created_at', since),
     supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'forensics').gte('created_at', since),
     supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'coi').gte('created_at', since),
-    supabase.from('watchlist').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds),
+    // Own-company monitoring (data.own) isn't part of the watchlist limit.
+    supabase.from('watchlist').select('id, own:data->own').in('user_id', countableUserIds),
   ]);
 
   return NextResponse.json({
@@ -46,7 +47,7 @@ export async function GET() {
       rateConScans: scans.count ?? 0,
       pdfForensics: forensics.count ?? 0,
       coiChecks: coi.count ?? 0,
-      watchlist: watchlist.count ?? 0,
+      watchlist: ((watchlist as any).data || []).filter((w: any) => w.own !== true).length,
     },
     periodStart: since,
   });

@@ -20,7 +20,10 @@ export async function GET() {
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ watchlist: data || [] });
+  // A monitoring-only row for the user's own company (data.own, no saved
+  // report) lives on the dashboard's "Your company" card, not this list.
+  const rows = (data || []).filter((w: any) => !(w.data?.own === true && !Array.isArray(w.data?.flags)));
+  return NextResponse.json({ watchlist: rows });
 }
 
 export async function POST(req: Request) {
@@ -47,10 +50,13 @@ export async function POST(req: Request) {
         countableIds = (members || []).map((m: any) => m.user_id);
       }
     }
-    const { count } = await supabase
+    // The user's own company (daily FMCSA monitoring, data.own) doesn't
+    // count toward the watchlist limit.
+    const { data: watchRows } = await supabase
       .from('watchlist')
-      .select('id', { count: 'exact', head: true })
+      .select('id, own:data->own')
       .in('user_id', countableIds);
+    const count = (watchRows || []).filter((w: any) => w.own !== true).length;
     // Allow re-upserting an existing entry even if at cap; only block NEW entries.
     const { data: existing } = await supabase
       .from('watchlist')
