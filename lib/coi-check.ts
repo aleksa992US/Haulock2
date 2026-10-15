@@ -245,8 +245,11 @@ export function sanitizeCoiExtraction(ex: CoiExtraction): CoiExtraction {
   };
 }
 
+// Today's date in US Pacific time. UTC rolled over during US evenings, so
+// a policy expiring today showed as already expired from 5–8 pm on. Pacific
+// is the latest US date, so nothing reads as expired early.
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
 }
 
 // FMCSA's dataset carries some placeholder dates years in the future; only
@@ -562,6 +565,10 @@ export function compareCoi(
         `FMCSA lists no active or pending liability (BIPD) filing for ${carrierLabel}${carrier.bipdOnFile != null ? ` and shows ${fmtUsd(carrier.bipdOnFile * 1000)} on file` : ''}. A newly written policy can take a few business days to appear — confirm with the insurer.`,
         FMCSA_SRC);
     }
+    // A certificate often lists a second auto policy (excess, hired/non-owned)
+    // that FMCSA never sees. Once one auto policy matches a filing, an extra
+    // unmatched one is worth confirming, not a mismatch.
+    const anyAutoMatched = autoPolicies.some((p) => bipdFilings.some((f) => policyNumbersMatch(p.policy_number, f.policyNumber)));
     for (const p of autoPolicies) {
       if (bipdFilings.length === 0) break;
       const matched = bipdFilings.find((f) => policyNumbersMatch(p.policy_number, f.policyNumber));
@@ -597,6 +604,10 @@ export function compareCoi(
         if (pendingCancellation(f)) {
           add('fail', 'Cancellation pending on FMCSA', `FMCSA shows ${f.insurer}${f.policyNumber ? ` policy ${f.policyNumber}` : ''} with a cancellation effective ${fmtDate(f.cancelEffectiveDate)}. Confirm the policy is still in force before dispatching.`, FMCSA_SRC);
         }
+      } else if (anyAutoMatched) {
+        add('warn', 'Another auto policy isn’t on FMCSA',
+          `The certificate also lists ${p.insurer_name || 'an insurer'} policy ${p.policy_number || '(no number shown)'}, which isn't among FMCSA's filings. Usually an excess or hired/non-owned auto policy, which FMCSA doesn't track — the main policy above matched. Confirm with the insurer if this one matters for the load.`,
+          FMCSA_SRC);
       } else {
         add('fail', 'Auto liability policy not found in FMCSA filings',
           `The certificate lists ${p.insurer_name || 'an insurer'} policy ${p.policy_number || '(no number shown)'}, which isn't among the filings FMCSA lists for ${carrierLabel}. FMCSA shows: ${fmcsaListing(bipdFilings) || 'no matching policies'}.`,
