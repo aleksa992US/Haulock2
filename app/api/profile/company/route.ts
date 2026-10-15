@@ -159,7 +159,14 @@ export async function POST(req: Request) {
   if (b?.action === 'monitor') {
     const existing = await ownWatchRow(svc, user.id);
     if (b.on === false) {
-      if (existing) await svc.from('watchlist').delete().eq('id', existing.id).eq('user_id', user.id);
+      if (existing?.data?.ownAdopted) {
+        // The company was on the regular watchlist before monitoring was
+        // turned on: keep that entry, just stop the own-company monitoring.
+        const { own, ownAdopted, safetyWatch, ...rest } = existing.data || {};
+        await svc.from('watchlist').update({ data: rest }).eq('id', existing.id).eq('user_id', user.id);
+      } else if (existing) {
+        await svc.from('watchlist').delete().eq('id', existing.id).eq('user_id', user.id);
+      }
       return NextResponse.json({ ok: true, monitoring: { on: false } });
     }
     if (existing) return NextResponse.json({ ok: true, monitoring: { on: true } });
@@ -177,7 +184,8 @@ export async function POST(req: Request) {
       // Same company already on the regular watchlist: mark that row as own.
       const { data: rows } = await svc.from('watchlist').select('id, data').eq('user_id', user.id).or([mc ? `mc.eq.${mc}` : null, usdot ? `dot.eq.${usdot}` : null].filter(Boolean).join(','));
       if (rows && rows[0]) {
-        await svc.from('watchlist').update({ data: { ...(rows[0].data || {}), own: true } }).eq('id', rows[0].id);
+        // ownAdopted: turning monitoring off later keeps this entry.
+        await svc.from('watchlist').update({ data: { ...(rows[0].data || {}), own: true, ownAdopted: true } }).eq('id', rows[0].id);
       } else {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
