@@ -3,6 +3,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
+import { enforcedPlanId } from '@/lib/plans';
 import { checkVerificationCode, companyCheckStats, createVerificationCode, currentVerification, ownIds, resolveOwnDot, verifyCompanyOwnership } from '@/lib/company-profile';
 import { companyVerificationCodeTemplate, getEmailSiteUrl, sendEmail } from '@/lib/email';
 
@@ -23,7 +24,7 @@ async function context() {
   const svc = getServiceSupabase();
   if (!svc) return { error: NextResponse.json({ error: 'Service role not configured' }, { status: 500 }) };
   const admin = await isAdmin(user.email);
-  const ctx = await resolveTeamContext(user.id, (user.user_metadata as any)?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const paid = admin || ctx.effectivePlan.id !== 'free';
   return { user, svc, paid, ctx };
 }

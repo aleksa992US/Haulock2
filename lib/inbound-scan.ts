@@ -9,7 +9,7 @@ import {
 import { getServiceSupabase } from './supabase/service';
 import { resolveTeamContext, type TeamContext } from './teams';
 import { countMonthlyLookups } from './usage';
-import { monthStart, type Plan } from './plans';
+import { monthStart, type Plan, enforcedPlanId } from './plans';
 import { isAdmin } from './admin';
 import { ocrForScan, analyzeRateConText, PipelineError } from './rate-con-pipeline';
 import { runCoiCheckFromText, type CoiReport } from './coi-check';
@@ -69,7 +69,7 @@ async function findUserByEmail(addr: string): Promise<{ id: string; email: strin
     const users = data?.users || [];
     const u = users.find((x: any) => String(x.email || '').toLowerCase() === addr);
     if (u) {
-      const found = { id: u.id, email: addr, plan: (u.user_metadata as any)?.plan, at: Date.now() };
+      const found = { id: u.id, email: addr, plan: enforcedPlanId(u), at: Date.now() };
       userCache.set(addr, found);
       return found;
     }
