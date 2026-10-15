@@ -137,7 +137,11 @@ function mergeByDot(registry: CompanySuggestion[], census: CompanySuggestion[]):
 }
 
 async function byMc(digits: string): Promise<CompanySuggestion[]> {
-  const rows = await soql(`starts_with(docket_number, 'MC${digits}')`, 'docket_number');
+  // The registry zero-pads dockets to 6 digits ("MC012345"), so a short MC
+  // also needs its padded form, which a prefix search can't reach.
+  const d = digits.replace(/^0+/, '') || digits;
+  const padded = d.length < 6 ? ` OR docket_number = 'MC${d.padStart(6, '0')}'` : '';
+  const rows = await soql(`starts_with(docket_number, 'MC${d}')${padded}`, 'docket_number');
   return rows.map((r) => toSuggestion(r, 'mc')).filter(Boolean) as CompanySuggestion[];
 }
 
@@ -240,8 +244,11 @@ export async function suggestCompanies(rawQuery: string, kind: SuggestKind = 'au
   let mode: 'mc' | 'dot' | 'both' | 'name';
   let digits = '';
   if (pinned) {
+    // FF (freight forwarder) and MX dockets aren't MC numbers; searching
+    // them as MC suggested unrelated MC companies with the same digits.
+    if (/^(FF|MX)$/i.test(pinned[1])) return [];
     mode = /DOT/i.test(pinned[1]) ? 'dot' : 'mc';
-    digits = pinned[2];
+    digits = pinned[2].replace(/^0+/, '') || pinned[2];
   } else if (digitsOnly) {
     digits = digitsOnly;
     mode = kind === 'mc' ? 'mc' : kind === 'dot' ? 'dot' : 'both';

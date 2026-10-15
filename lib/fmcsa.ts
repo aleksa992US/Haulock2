@@ -263,12 +263,16 @@ export function parseQuery(raw: string): ParsedQuery | null {
   const q = raw.trim();
   if (!q) return null;
   const upper = q.toUpperCase().replace(/\s+/g, '');
+  // Leading zeros dropped: "MC-012345" and "MC-12345" are the same company
+  // and must share a cache key, history entry and watchlist row.
+  const noZeros = (d: string) => d.replace(/^0+/, '') || d;
   const mcMatch = upper.match(/^MC[-#]?(\d{3,8})$/);
-  if (mcMatch) return { kind: 'mc', value: mcMatch[1] };
+  if (mcMatch) return { kind: 'mc', value: noZeros(mcMatch[1]) };
   const dotMatch = upper.match(/^(?:DOT|USDOT)[-#]?(\d{3,9})$/);
-  if (dotMatch) return { kind: 'dot', value: dotMatch[1] };
+  if (dotMatch) return { kind: 'dot', value: noZeros(dotMatch[1]) };
   if (/^\d{3,9}$/.test(q)) {
-    return q.length >= 7 ? { kind: 'dot', value: q, ambiguous: true } : { kind: 'mc', value: q, ambiguous: true };
+    const v = noZeros(q);
+    return v.length >= 7 ? { kind: 'dot', value: v, ambiguous: true } : { kind: 'mc', value: v, ambiguous: true };
   }
   return { kind: 'name', value: q };
 }

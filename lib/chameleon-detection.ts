@@ -111,7 +111,7 @@ async function queryFmcsaByFingerprint(
     // Other FMCSA records on this phone (the carrier itself excluded).
     const others = rows.filter((r) => {
       const linkedDot = stripDigits(r.dot_number);
-      const linkedMc = stripDigits(r.docket_number);
+      const linkedMc = mcDocket(r.docket_number);
       if (linkedDot && self.dot && linkedDot === self.dot) return false;
       if (linkedMc && self.mc && linkedMc === self.mc) return false;
       return normalizePhone(r.bus_telno) === phone;
@@ -123,7 +123,7 @@ async function queryFmcsaByFingerprint(
     return others
       .map((r): ChameleonLink | null => {
         const linkedDot = stripDigits(r.dot_number);
-        const linkedMc = stripDigits(r.docket_number);
+        const linkedMc = mcDocket(r.docket_number);
 
         const flags: string[] = [];
         const stats = [r.common_stat, r.contract_stat, r.broker_stat].map((s) => String(s || ''));
@@ -233,6 +233,12 @@ function normalizeAddress(input: any): string | undefined {
     .replace(/[^A-Z0-9 ]/g, '')
     .replace(/\s+/g, ' ')
     .trim() || undefined;
+}
+
+// The MC number of a registry docket, or undefined for FF / MX dockets
+// (they were shown as "MC-…" before).
+function mcDocket(v: any): string | undefined {
+  return /^\s*MC/i.test(String(v ?? '')) ? stripDigits(v) : undefined;
 }
 
 function stripDigits(v: any): string | undefined {
