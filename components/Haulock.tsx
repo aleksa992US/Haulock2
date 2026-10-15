@@ -10086,7 +10086,9 @@ function LoadPlanner({ navigate }: { navigate: any }) {
           <p className="text-[#0B1E3F]/60 mt-2 text-sm max-w-2xl">Empty miles from the truck, loaded miles, drive time with required breaks, and fuel at this week&apos;s diesel price.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <span className="px-3 py-1.5 rounded-full bg-white border border-[#0B1E3F]/10 text-xs flex items-center gap-1.5"><RouteIcon className="w-3.5 h-3.5 text-[#FF6B35]" /> Truck routes</span>
+          {/* Says what the last plan actually used: long trips without an
+              OpenRouteService key fall back to a general road route. */}
+          <span className="px-3 py-1.5 rounded-full bg-white border border-[#0B1E3F]/10 text-xs flex items-center gap-1.5"><RouteIcon className="w-3.5 h-3.5 text-[#FF6B35]" /> {!plan || plan.routingSource === 'ors' || plan.routingSource === 'valhalla' ? 'Truck routes' : plan.routingSource === 'osrm' ? 'Road route (not truck-specific)' : 'Estimated distance'}</span>
           <span className="px-3 py-1.5 rounded-full bg-white border border-[#0B1E3F]/10 text-xs flex items-center gap-1.5"><Fuel className="w-3.5 h-3.5 text-[#F59E0B]" /> This week&apos;s diesel</span>
           <span className="px-3 py-1.5 rounded-full bg-white border border-[#0B1E3F]/10 text-xs flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-[#16A34A]" /> US only</span>
         </div>
