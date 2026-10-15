@@ -177,6 +177,7 @@ function normalizeAddress(address: string): string {
 
 async function searchPlaces(textQuery: string, key: string): Promise<any[]> {
   const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    signal: AbortSignal.timeout(8_000),
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
