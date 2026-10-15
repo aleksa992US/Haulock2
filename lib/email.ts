@@ -40,27 +40,41 @@ export function getEmailSiteUrl(): string {
 
 // HMAC-signed unsubscribe URL. We don't store per-recipient tokens — the
 // signature alone proves "this URL came from us" so Gmail/Outlook clicks
-// and human clicks both verify the same way. Falls back to RESEND_API_KEY
-// as the secret so it works out of the box; set EMAIL_UNSUB_SECRET to
-// rotate without invalidating Resend keys.
+// and human clicks both verify the same way.
+//
+// New links are signed with EMAIL_UNSUB_SECRET (falling back to
+// RESEND_API_KEY). Links already in people's inboxes must keep working, so
+// verification accepts any configured secret: EMAIL_UNSUB_SECRET,
+// EMAIL_UNSUB_SECRET_PREVIOUS and RESEND_API_KEY. Without that, replacing
+// the Resend key broke every unsubscribe link sent before it.
 function unsubSecret(): string {
   return process.env.EMAIL_UNSUB_SECRET || process.env.RESEND_API_KEY || 'haulock-unsub-fallback';
 }
+function unsubVerifySecrets(): string[] {
+  const configured = [process.env.EMAIL_UNSUB_SECRET, process.env.EMAIL_UNSUB_SECRET_PREVIOUS, process.env.RESEND_API_KEY]
+    .filter((x): x is string => Boolean(x));
+  // The built-in fallback is public (it's in the source), so it only counts
+  // when nothing is configured.
+  return configured.length ? Array.from(new Set(configured)) : ['haulock-unsub-fallback'];
+}
+
+function signUnsubscribe(email: string, secret: string): string {
+  return createHmac('sha256', secret).update(email.trim().toLowerCase()).digest('hex').slice(0, 32);
+}
 
 export function buildUnsubscribeToken(email: string): string {
-  return createHmac('sha256', unsubSecret())
-    .update(email.trim().toLowerCase())
-    .digest('hex')
-    .slice(0, 32);
+  return signUnsubscribe(email, unsubSecret());
 }
 
 export function verifyUnsubscribeToken(email: string, token: string): boolean {
-  const expected = buildUnsubscribeToken(email);
-  // Constant-ish-time compare — both are 32-char hex.
-  if (token.length !== expected.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ token.charCodeAt(i);
-  return diff === 0;
+  return unsubVerifySecrets().some((secret) => {
+    const expected = signUnsubscribe(email, secret);
+    if (token.length !== expected.length) return false;
+    // Constant-time compare — both are 32-char hex.
+    let diff = 0;
+    for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ token.charCodeAt(i);
+    return diff === 0;
+  });
 }
 
 export function unsubscribeUrl(email: string): string {

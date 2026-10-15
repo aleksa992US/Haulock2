@@ -56,13 +56,19 @@ async function unsubscribe(email: string): Promise<{ ok: boolean; error?: string
   return { ok: true };
 }
 
-function htmlPage({ ok, email, error }: { ok: boolean; email: string; error?: string }): string {
-  const heading = ok ? 'You&rsquo;re unsubscribed.' : 'Could not unsubscribe.';
-  const body = ok
+function htmlPage({ ok, email, error, confirmQuery }: { ok: boolean; email: string; error?: string; confirmQuery?: string }): string {
+  const heading = confirmQuery ? 'Unsubscribe from Haulock emails?' : ok ? 'You&rsquo;re unsubscribed.' : 'Could not unsubscribe.';
+  const body = confirmQuery
+    ? `<p style="margin:0 0 20px 0;">Stop the newsletter, weekly summary and offers for <strong>${escape(email)}</strong>.</p>
+       <form method="POST" action="?${escape(confirmQuery)}" style="margin:0;">
+         <input type="hidden" name="confirm" value="1">
+         <button type="submit" style="background:#0B1E3F;color:#fff;border:0;border-radius:999px;padding:12px 22px;font-size:15px;font-weight:600;cursor:pointer;">Unsubscribe</button>
+       </form>`
+    : ok
     ? `<p style="margin:0 0 16px 0;">We&rsquo;ve removed <strong>${escape(email)}</strong> from the Haulock fraud briefing. You&rsquo;ll stop receiving our newsletter, weekly summary and offers immediately.</p>
        <p style="margin:0 0 0 0;">Account-related emails (login alerts, billing receipts, high-risk lookups you triggered) are not affected. You can manage all email preferences from <a href="https://haulock.com/settings" style="color:#0B1E3F;text-decoration:underline;">your account settings</a>.</p>`
     : `<p style="margin:0 0 16px 0;">${escape(error || 'The link is invalid or has expired.')}</p>
-       <p style="margin:0;">If you think this is a mistake, reply to any Haulock email and we&rsquo;ll sort it out by hand.</p>`;
+       <p style="margin:0;">You can also turn these emails off in <a href="https://haulock.com/settings" style="color:#0B1E3F;text-decoration:underline;">Settings → Notifications</a>, or reply &ldquo;unsubscribe&rdquo; to any Haulock email and we&rsquo;ll take you off by hand.</p>`;
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -97,28 +103,35 @@ export async function GET(req: Request) {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
   }
-  const r = await unsubscribe(email);
-  if (!r.ok) {
-    return new NextResponse(htmlPage({ ok: false, email, error: r.error || 'Could not update your subscription right now.' }), {
-      status: 500,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
-  }
-  return new NextResponse(htmlPage({ ok: true, email }), {
+  // Opening the link only asks: corporate mail scanners (Safe Links,
+  // Mimecast) fetch every link in an email, and a GET that unsubscribed
+  // took people off the list without them clicking anything.
+  return new NextResponse(htmlPage({ ok: true, email, confirmQuery: searchParams.toString() }), {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
 
 export async function POST(req: Request) {
-  // Gmail/Outlook one-click POST. Same auth check, JSON response so the
-  // mail client can record the result.
+  // Two callers: Gmail/Outlook one-click (RFC 8058, body
+  // "List-Unsubscribe=One-Click") gets JSON; the confirm button on the
+  // page above (body "confirm=1") gets the HTML result page.
   const { searchParams } = new URL(req.url);
   const email = (searchParams.get('email') || '').trim().toLowerCase();
   const token = (searchParams.get('t') || '').trim();
+  const form = await req.formData().catch(() => null);
+  const fromPage = form?.get('confirm') === '1';
+  const html = (page: string, status = 200) => new NextResponse(page, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
   if (!email || !token || !verifyUnsubscribeToken(email, token)) {
-    return NextResponse.json({ error: 'invalid-token' }, { status: 400 });
+    return fromPage
+      ? html(htmlPage({ ok: false, email: email || 'this email', error: 'The unsubscribe link is invalid or has expired.' }), 400)
+      : NextResponse.json({ error: 'invalid-token' }, { status: 400 });
   }
   const r = await unsubscribe(email);
+  if (fromPage) {
+    return r.ok
+      ? html(htmlPage({ ok: true, email }))
+      : html(htmlPage({ ok: false, email, error: r.error || 'Could not update your subscription right now.' }), 500);
+  }
   if (!r.ok) return NextResponse.json({ error: r.error || 'unsubscribe-failed' }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
