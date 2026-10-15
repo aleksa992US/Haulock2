@@ -39,6 +39,9 @@ export type RevisionInfo = {
   textChanges: { page: number; before: string; after: string }[]; // readable text that changed
   pagesGraphicsOnly: number[]; // drawing changed, text identical
   pagesTagsOnly: number[];     // only accessibility tags / structure markers
+  pagesRemoved?: number;       // pages dropped since the previous version
+  // Filled-in form values changed in this save (not first-time filling).
+  fieldEdits?: { field: string; page: number | null; before: string; after: string }[];
   kind: 'original' | 'content' | 'graphics' | 'structure' | 'markup' | 'form' | 'signature' | 'metadata' | 'unknown';
   summary: string;
 };
@@ -182,10 +185,45 @@ type RawScan = {
   genAbove0: number;
   signatures: { coveredEnd: number }[];
   hasJavaScript: boolean;
+  // Every script is a fillable form's built-in formatting call (AFNumber_
+  // Format, AFDate_FormatEx…), which Acrobat writes into ordinary forms.
+  formScriptsOnly: boolean;
   encrypted: boolean;
   touchUpRaw: boolean;
   xmpPackets: string[];
 };
+
+// The literal strings after each /JS key (a script's source). PDF allows
+// balanced parentheses inside a literal unescaped, as Acrobat writes
+// "AFNumber_Format(2, 0, 0, 0, "", true);", so this counts nesting.
+// `other`: a script given as a hex string or an indirect object, which
+// isn't readable here.
+function jsLiteralBodies(s: string, max = 200): { bodies: string[]; other: boolean } {
+  const bodies: string[] = [];
+  let other = false;
+  let at = s.indexOf('/JS');
+  while (at !== -1 && bodies.length < max) {
+    let i = at + 3;
+    if (/[A-Za-z0-9]/.test(s[i] || '')) { at = s.indexOf('/JS', i); continue; } // a longer name
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (s[i] === '(') {
+      let depth = 0;
+      let out = '';
+      for (let j = i; j < s.length && j < i + 4000; j++) {
+        const c = s[j];
+        if (c === '\\') { const n = s[j + 1] || ''; out += n === 'n' || n === 'r' || n === 't' ? ' ' : n; j++; continue; }
+        if (c === '(') { depth += 1; if (depth === 1) continue; }
+        else if (c === ')') { depth -= 1; if (depth === 0) break; }
+        out += c;
+      }
+      bodies.push(out);
+    } else {
+      other = true;
+    }
+    at = s.indexOf('/JS', i);
+  }
+  return { bodies, other };
+}
 
 function scanRaw(buf: Buffer): RawScan {
   const s = buf.toString('latin1');
@@ -202,7 +240,11 @@ function scanRaw(buf: Buffer): RawScan {
     .map((m) => ({ coveredEnd: Number(m[3]) + Number(m[4]) }))
     .filter((x) => x.coveredEnd > 0);
   const xmpPackets = Array.from(s.matchAll(/<x:xmpmeta[\s\S]*?<\/x:xmpmeta>/g)).map((m) => m[0]);
+  const js = jsLiteralBodies(s);
+  const formScriptsOnly = js.bodies.length > 0 && !js.other && js.bodies.every((body) =>
+    body.split(';').map((t) => t.trim()).filter(Boolean).every((stmt) => /^AF[A-Za-z]+_[A-Za-z]+\s*\([\s\S]*\)$/.test(stmt)));
   return {
+    formScriptsOnly,
     eofEnds,
     linearized: /\/Linearized\s/.test(s.slice(0, 2048)),
     objCounts,
@@ -268,6 +310,11 @@ type PageScan = {
   type0Fonts: Set<string>;     // font resource names that use 2-byte codes
   toUnicode: Map<string, Map<number, string>>; // font resource name → code → text
   hasImage: boolean;
+  // Form XObjects the page draws (flattened fields, stamps, reused blocks):
+  // their own content streams, which the page stream only references.
+  xobjSig: string;
+  xobjTextSig: string;
+  xobjText: string;
   fonts: string[];             // BaseFont names
   width: number;
   height: number;
@@ -325,6 +372,8 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
   const toUnicode = new Map<string, Map<number, string>>();
   let hasImage = false;
   const fonts: string[] = [];
+  const formStreams: string[] = [];
+  let formBytes = 0;
   try {
     const arr = page.node.Annots();
     for (const ref of arr ? arr.asArray() : []) {
@@ -350,7 +399,13 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
       for (const [, v] of xo.entries()) {
         const o = v instanceof PDFRef ? doc.context.lookup(v) : v;
         const dict = o instanceof PDFStream ? o.dict : null;
-        if (dict && nameOf(dict.get(PDFName.of('Subtype'))) === 'Image') hasImage = true;
+        const sub = dict ? nameOf(dict.get(PDFName.of('Subtype'))) : null;
+        if (sub === 'Image') hasImage = true;
+        // Edits inside a form XObject leave the page's own stream untouched.
+        if (sub === 'Form' && formBytes < 2_000_000) {
+          const bytes = decodeStream(o);
+          if (bytes) { formBytes += bytes.length; formStreams.push(latin1(bytes)); }
+        }
       }
     }
     const fd = res?.lookup(PDFName.of('Font'));
@@ -375,8 +430,13 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
   try { const sz = page.getSize(); width = sz.width; height = sz.height; } catch { /* default letter */ }
   const joined = streams.join('\n');
   const runs = textRuns(joined);
+  const formJoined = formStreams.join('\n');
+  const formRuns = formJoined ? textRuns(formJoined) : [];
   return {
     streams, hash: sha(joined),
+    xobjSig: formJoined ? sha(formJoined) : '',
+    xobjTextSig: formRuns.length ? sha(formRuns.map((r) => r.raw).join('\u0001')) : '',
+    xobjText: formRuns.map((r) => r.text).join(''),
     textSig: sha(runs.map((r) => r.raw).join('\u0001')),
     textBag: sha(runs.map((r) => r.raw).sort().join('\u0001')),
     text: runs.map((r) => r.text).join(''),
@@ -392,7 +452,7 @@ function scanPage(doc: PDFDocument, page: any): PageScan {
 
 type Mat = [number, number, number, number, number, number];
 type Box = [number, number, number, number];
-type LaidRun = { raw: string; text: string; box: Box; invisible: boolean; touchup: boolean };
+type LaidRun = { raw: string; text: string; box: Box; invisible: boolean; touchup: boolean; white?: boolean };
 type LaidRect = { key: string; box: Box; white: boolean; filled: boolean };
 type Layout = { runs: LaidRun[]; rects: LaidRect[]; images: { key: string; box: Box }[] };
 
@@ -459,7 +519,7 @@ function layoutOf(page: PageScan): Layout {
     const advance = n * (0.5 * gs.Tfs + gs.Tc) * gs.Th;
     const m = mul(Tm, gs.ctm);
     const box = boxOf(m, 0, gs.Trise - 0.22 * gs.Tfs, Math.max(advance, 0.3 * gs.Tfs), gs.Trise + 0.9 * gs.Tfs);
-    out.runs.push({ raw: tok.startsWith('<') ? `<${tok.slice(1, -1).replace(/\s+/g, '')}>` : tok, text, box, invisible: gs.Tr === 3 || gs.Tr === 7, touchup: touchupNext });
+    out.runs.push({ raw: tok.startsWith('<') ? `<${tok.slice(1, -1).replace(/\s+/g, '')}>` : tok, text, box, invisible: gs.Tr === 3 || gs.Tr === 7, touchup: touchupNext, white: gs.white });
     Tm = mul([1, 0, 0, 1, advance, 0], Tm);
   };
   const nextLine = (tx: number, ty: number) => { Tlm = mul([1, 0, 0, 1, tx, ty], Tlm); Tm = Tlm; };
@@ -818,8 +878,10 @@ type DocPrint = {
   pages: PageScan[];
   producer: string | null;
   modified: string | null;
-  formValues: Map<string, string>;
+  formValues: Map<string, FieldValue>;
 };
+
+type FieldValue = { raw: string; text: string; page: number | null };
 
 async function loadDoc(bytes: Uint8Array): Promise<PDFDocument | null> {
   try {
@@ -829,15 +891,44 @@ async function loadDoc(bytes: Uint8Array): Promise<PDFDocument | null> {
   }
 }
 
-function formValues(doc: PDFDocument): Map<string, string> {
-  const out = new Map<string, string>();
+function formValues(doc: PDFDocument): Map<string, FieldValue> {
+  const out = new Map<string, FieldValue>();
   try {
+    const pageIndex = new Map<string, number>();
+    doc.getPages().forEach((p, i) => pageIndex.set(String(p.ref), i + 1));
     for (const f of doc.getForm().getFields()) {
-      const v = (f as any).acroField?.dict?.get(PDFName.of('V'));
-      out.set(f.getName(), v ? String(v) : '');
+      const acro = (f as any).acroField;
+      const v = acro?.dict?.get(PDFName.of('V'));
+      let text = '';
+      try { text = v && typeof (v as any).decodeText === 'function' ? (v as any).decodeText() : v ? String(v).replace(/^\//, '') : ''; } catch { text = v ? String(v) : ''; }
+      let page: number | null = null;
+      try {
+        const w = acro?.getWidgets?.()[0];
+        const pref = w?.P?.();
+        if (pref) page = pageIndex.get(String(pref)) ?? null;
+      } catch { /* no page */ }
+      out.set(f.getName(), { raw: v ? String(v) : '', text: text.replace(/\s+/g, ' ').trim().slice(0, 80), page });
     }
   } catch { /* no form */ }
   return out;
+}
+
+// Same text, drawn the same way, but made invisible, turned white or moved:
+// the content stream changed while the text and drawing signatures didn't,
+// which otherwise reads as "accessibility tags only".
+function hiddenOrMoved(a: PageScan, b: PageScan): { before: string; after: string } | null {
+  let la: LaidRun[], lb: LaidRun[];
+  try { la = layoutOf(a).runs; lb = layoutOf(b).runs; } catch { return null; }
+  if (la.length !== lb.length) return null;
+  for (let k = 0; k < la.length; k++) {
+    const x = la[k], y = lb[k];
+    if (x.raw !== y.raw) return null; // not the same sequence; leave it to the other checks
+    const label = (x.text || y.text || 'text').replace(/\s+/g, ' ').trim().slice(0, 60) || 'text';
+    if (!x.invisible && y.invisible) return { before: label, after: `${label} (made invisible)` };
+    if (!x.white && y.white) return { before: label, after: `${label} (turned white)` };
+    if (Math.abs(x.box[0] - y.box[0]) > 3 || Math.abs(x.box[1] - y.box[1]) > 3) return { before: label, after: `${label} (moved)` };
+  }
+  return null;
 }
 
 function printDoc(doc: PDFDocument): DocPrint {
@@ -858,22 +949,32 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
   const shared = Math.min(prev.pages.length, next.pages.length);
   for (let i = 0; i < shared; i++) {
     const a = prev.pages[i], b = next.pages[i];
-    if (a.hash === b.hash) continue;
-    const lines = a.textSig !== b.textSig && a.textBag !== b.textBag ? lineDiffCached(a, b) : [];
-    if (lines.length) {
+    const formChanged = a.xobjSig !== b.xobjSig;
+    if (a.hash === b.hash && !formChanged) continue;
+    const lines = a.hash !== b.hash && a.textSig !== b.textSig && a.textBag !== b.textBag ? lineDiffCached(a, b) : [];
+    const formText = formChanged && a.xobjTextSig !== b.xobjTextSig ? textDelta(a.xobjText, b.xobjText) : null;
+    if (lines.length || formText) {
       pagesChanged.push(i + 1);
       // Changed lines first (that's the edit), then added, then removed.
       const order = { changed: 0, added: 1, removed: 2 } as const;
       for (const c of lines.slice().sort((x, y) => order[x.kind] - order[y.kind]).slice(0, 6)) {
         textChanges.push({ page: i + 1, before: c.before.slice(0, 80), after: c.after.slice(0, 80) });
       }
-    } else if (a.drawSig !== b.drawSig) {
-      pagesGraphicsOnly.push(i + 1);
+      if (formText) textChanges.push({ page: i + 1, before: formText.before, after: formText.after });
     } else {
-      pagesTagsOnly.push(i + 1);
+      const hidden = a.hash !== b.hash && a.textSig === b.textSig ? hiddenOrMoved(a, b) : null;
+      if (hidden) {
+        pagesChanged.push(i + 1);
+        textChanges.push({ page: i + 1, ...hidden });
+      } else if (a.drawSig !== b.drawSig || formChanged) {
+        pagesGraphicsOnly.push(i + 1);
+      } else {
+        pagesTagsOnly.push(i + 1);
+      }
     }
   }
   const pagesAdded = Math.max(0, next.pages.length - prev.pages.length);
+  const pagesRemoved = Math.max(0, prev.pages.length - next.pages.length);
   const count = (pages: PageScan[]) => {
     const m = new Map<string, number>();
     for (const p of pages) for (const a of p.annots) m.set(a, (m.get(a) || 0) + 1);
@@ -884,8 +985,20 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
   for (const [sub, n] of Array.from(count(next.pages).entries())) {
     for (let k = before.get(sub) || 0; k < n; k++) annotationsAdded.push(sub);
   }
+  // First-time filling is normal; changing a value that was already filled
+  // in (a limit, a date, a policy number) is reported with before/after.
   let formFieldsChanged = 0;
-  for (const [name, v] of Array.from(next.formValues.entries())) if (prev.formValues.get(name) !== v) formFieldsChanged += 1;
+  const fieldEdits: NonNullable<RevisionInfo['fieldEdits']> = [];
+  for (const [name, v] of Array.from(next.formValues.entries())) {
+    const was = prev.formValues.get(name);
+    if ((was?.raw ?? '') === v.raw) continue;
+    formFieldsChanged += 1;
+    if (was && was.text) fieldEdits.push({ field: name, page: v.page ?? was.page, before: was.text, after: v.text });
+  }
+  // Shown in the version timeline like other before/after changes.
+  if (!pagesChanged.length) {
+    for (const e of fieldEdits.slice(0, 6)) textChanges.push({ page: e.page ?? 1, before: `${e.field}: ${e.before}`, after: `${e.field}: ${e.after || '(blank)'}` });
+  }
   const markup = annotationsAdded.filter((a) => a !== 'Widget' && a !== 'Link');
   let kind: RevisionInfo['kind'];
   let summary: string;
@@ -896,6 +1009,9 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
     summary = shown
       ? `Changed the text on ${pageList(pagesChanged)}${by}: “${shown.before || '(nothing)'}” became “${shown.after || '(removed)'}”.`
       : `Changed the text on ${pageList(pagesChanged)}${by}.`;
+  } else if (pagesRemoved) {
+    kind = 'content';
+    summary = `Removed ${pagesRemoved} page${pagesRemoved === 1 ? '' : 's'}${by}.`;
   } else if (pagesGraphicsOnly.length) {
     kind = 'graphics';
     summary = `Changed the drawing on ${pageList(pagesGraphicsOnly)}${by}; the text is the same.`;
@@ -907,7 +1023,10 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
     summary = 'Added a digital signature. Normal for signed documents.';
   } else if (formFieldsChanged || annotationsAdded.includes('Widget')) {
     kind = 'form';
-    summary = `Filled in ${formFieldsChanged || 'some'} form field${formFieldsChanged === 1 ? '' : 's'}. Normal for fillable documents.`;
+    const e = fieldEdits[0];
+    summary = e
+      ? `Changed ${fieldEdits.length === 1 ? 'a filled-in form value' : `${fieldEdits.length} filled-in form values`}${by}: “${e.before}” became “${e.after || '(blank)'}”.`
+      : `Filled in ${formFieldsChanged || 'some'} form field${formFieldsChanged === 1 ? '' : 's'}. Normal for fillable documents.`;
   } else if (pagesAdded) {
     kind = 'content';
     summary = `Added ${pagesAdded} page${pagesAdded === 1 ? '' : 's'}${by}.`;
@@ -918,7 +1037,7 @@ function diffPrints(prev: DocPrint, next: DocPrint, signedHere: boolean, index: 
     kind = 'metadata';
     summary = 'Re-saved without changing the pages (metadata only).';
   }
-  return { index, producer: next.producer, modified: next.modified, pagesChanged, pagesAdded, annotationsAdded, formFieldsChanged, signed: signedHere, textChanges, pagesGraphicsOnly, pagesTagsOnly, kind, summary };
+  return { index, producer: next.producer, modified: next.modified, pagesChanged, pagesAdded, pagesRemoved, fieldEdits, annotationsAdded, formFieldsChanged, signed: signedHere, textChanges, pagesGraphicsOnly, pagesTagsOnly, kind, summary };
 }
 
 // ---------- main ----------
@@ -1082,7 +1201,9 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
         sev: 'critical', code: 'VERSION_CONTENT_CHANGED',
         title: shown
           ? `Text changed after it was created: “${shown.before || '(nothing)'}” → “${shown.after || '(removed)'}”`
-          : `Text changed after it was created (${pageList(r.pagesChanged)})`,
+          : !r.pagesChanged.length && r.pagesRemoved
+            ? `${r.pagesRemoved} page${r.pagesRemoved === 1 ? '' : 's'} removed after it was created`
+            : `Text changed after it was created (${pageList(r.pagesChanged)})`,
         desc: `The file still contains the earlier version. Version ${r.index}${r.modified ? ` (saved ${fmtDate(r.modified)})` : ''} ${r.summary.charAt(0).toLowerCase() + r.summary.slice(1)} Compare it with what the sender confirmed.`,
         pts: 45,
       });
@@ -1104,7 +1225,20 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
         pts: typed ? 25 : 10,
       });
     }
-    if (!content.length && !graphics.length && !markup.length && benign.length) {
+    // Filled-in values changed in a later save. Re-issuing a certificate
+    // (new holder or date) does this too, so it's a warning, with the values.
+    const valueEdits = revisions.flatMap((r) => (r.fieldEdits || []).map((e) => ({ ...e, index: r.index, modified: r.modified })));
+    if (valueEdits.length) {
+      const e = valueEdits[0];
+      const more = valueEdits.length > 1 ? ` (+${valueEdits.length - 1} more)` : '';
+      flag({
+        sev: 'warning', code: 'FORM_VALUES_CHANGED',
+        title: `A filled-in value was changed later: “${e.before}” → “${e.after || '(blank)'}”${more}`,
+        desc: `Version ${e.index}${e.modified ? ` (saved ${fmtDate(e.modified)})` : ''} changed form field values that were already filled in (${valueEdits.slice(0, 3).map((x) => `${x.field}: “${x.before}” → “${x.after || '(blank)'}”`).join('; ')}). Re-issuing a certificate to a new holder does this too; a changed amount, date or policy number is worth confirming with the sender or insurer.`,
+        pts: 25,
+      });
+    }
+    if (!content.length && !graphics.length && !markup.length && !valueEdits.length && benign.length) {
       ok('LATER_SAVES_BENIGN', `Saved ${benign.length + 1} times — only ${Array.from(new Set(benign.map((r) => r.kind === 'form' ? 'form filling' : r.kind === 'signature' ? 'signing' : r.kind === 'structure' ? 'accessibility tags' : 'metadata updates'))).join(' and ')}`,
         'The later saves didn’t change any visible text or drawing. Filling in form fields, signing, adding accessibility tags or re-saving is normal.');
     }
@@ -1266,8 +1400,14 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
     const diffMs = Date.parse(modificationDate) - Date.parse(creationDate);
     const days = diffMs / 86_400_000;
     const versionsExplain = revisions.length > 0;
-    if (days > 30 && !versionsExplain) {
-      flag({ sev: 'warning', code: 'EDITED_LONG_AFTER_CREATION', title: `Re-saved ${Math.floor(days)} days after it was created`, desc: 'The file was saved again weeks after it was made. Rate cons are rarely changed that long after.', pts: 20 });
+    // One save made from an older template (a fillable ACORD form, a
+    // company rate con template) keeps the template's creation date. Online
+    // editors are caught by their own checks above.
+    const fromTemplate = !editorHit(producer) && ((finalPrint?.formValues.size ?? 0) > 0 || isLegitProducer(producer));
+    if (days > 30 && !versionsExplain && fromTemplate) {
+      flag({ sev: 'info', code: 'MADE_FROM_TEMPLATE', title: `Created from a file made ${Math.floor(days)} days earlier`, desc: 'It was saved once, from a template or form created earlier. Normal for forms and company templates.', pts: 0 });
+    } else if (days > 30 && !versionsExplain) {
+      flag({ sev: 'warning', code: 'EDITED_LONG_AFTER_CREATION', title: `Re-saved ${Math.floor(days)} days after it was created`, desc: 'The file was saved again weeks after it was made. Documents like rate cons and certificates are rarely changed that long after.', pts: 20 });
     } else if (days > 1 && !versionsExplain) {
       flag({ sev: 'info', code: 'EDITED_AFTER_CREATION', title: `Re-saved ${Math.floor(days)} day${Math.floor(days) === 1 ? '' : 's'} after it was created`, desc: 'Could be a correction. Check the amounts match what you agreed.', pts: 8 });
     } else if (diffMs >= 0 && diffMs <= 60_000) {
@@ -1330,7 +1470,9 @@ export async function analyzePdfForensics(buffer: Buffer): Promise<PdfForensics>
   }
 
   // ---- 13. JavaScript ----
-  if (raw.hasJavaScript) {
+  if (raw.hasJavaScript && raw.formScriptsOnly) {
+    ok('FORM_SCRIPTS', 'Only form formatting scripts', 'Fillable forms carry small built-in scripts that format numbers and dates. Nothing else runs.');
+  } else if (raw.hasJavaScript) {
     flag({ sev: 'warning', code: 'JAVASCRIPT', title: 'Contains JavaScript', desc: 'Business documents like rate cons and certificates don’t need scripts. Don’t open it in a browser plugin you don’t trust.', pts: 15 });
   }
   if (encryptedContent && !laterSaves) {
