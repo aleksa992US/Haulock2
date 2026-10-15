@@ -16,7 +16,7 @@ export const POST_FRAME = 140;
 
 type Token = { text: string; accent?: boolean; color?: string };
 
-const Headline: React.FC<{ lines: Token[][]; top: number; size?: number; accentSize?: number }> = ({ lines, top, size = 92, accentSize = 128 }) => (
+export const Headline: React.FC<{ lines: Token[][]; top: number; size?: number; accentSize?: number }> = ({ lines, top, size = 92, accentSize = 128 }) => (
   <div style={{ position: 'absolute', left: 60, right: 60, top, textAlign: 'center' }}>
     {lines.map((line, i) => (
       <div key={i} style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'baseline', columnGap: 22 }}>
@@ -37,7 +37,7 @@ const Headline: React.FC<{ lines: Token[][]; top: number; size?: number; accentS
 );
 
 // Corner brackets + mono readouts, sized for 4:5.
-const PostFrame: React.FC<{ topLeft: string; topRight: string }> = ({ topLeft, topRight }) => {
+export const PostFrame: React.FC<{ topLeft: string; topRight: string }> = ({ topLeft, topRight }) => {
   const stroke = 'rgba(245,243,238,0.5)';
   const L = 56;
   const corner = (x: number, y: number, dx: number, dy: number) => (
@@ -62,7 +62,7 @@ const PostFrame: React.FC<{ topLeft: string; topRight: string }> = ({ topLeft, t
 };
 
 // Bottom strip: navy haulock.com pill (as on the end card) + the free-plan facts.
-const Cta: React.FC<{ label: string; facts: string[] }> = ({ label, facts }) => (
+export const Cta: React.FC<{ label: string; facts: string[] }> = ({ label, facts }) => (
   <div style={{ position: 'absolute', left: 0, right: 0, bottom: 74, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
       <div style={{ display: 'flex', alignItems: 'center', height: 78, padding: '0 28px', borderRadius: 999, backgroundColor: colors.cream, boxShadow: '0 16px 50px rgba(0,0,0,0.45)' }}>
@@ -97,7 +97,7 @@ const Cta: React.FC<{ label: string; facts: string[] }> = ({ label, facts }) => 
   </div>
 );
 
-const Post: React.FC<{ hud: [string, string]; children: React.ReactNode }> = ({ hud, children }) => (
+export const Post: React.FC<{ hud: [string, string]; children: React.ReactNode }> = ({ hud, children }) => (
   <AbsoluteFill style={{ backgroundColor: colors.void, fontFamily: fonts.sans, overflow: 'hidden' }}>
     <Background />
     {children}

@@ -1,0 +1,41 @@
+{
+  "fps": 30,
+  "frames": 405,
+  "size": {
+    "width": 1290,
+    "height": 2640,
+    "scale": 3
+  },
+  "marks": {
+    "search": {
+      "t": 0.705,
+      "rect": null
+    },
+    "searchShown": {
+      "t": 3.915,
+      "rect": null
+    },
+    "verdict": {
+      "t": 5.3,
+      "rect": {
+        "x": 24,
+        "y": 73.5,
+        "w": 382,
+        "h": 617
+      }
+    },
+    "identity": {
+      "t": 9.4,
+      "rect": {
+        "x": 24,
+        "y": 73.5,
+        "w": 382,
+        "h": 570
+      }
+    },
+    "end": {
+      "t": 13.5,
+      "rect": null
+    }
+  }
+}

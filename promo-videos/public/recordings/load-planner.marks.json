@@ -1,0 +1,59 @@
+{
+  "fps": 30,
+  "frames": 829,
+  "size": {
+    "width": 1290,
+    "height": 2640,
+    "scale": 3,
+    "diesel": "3.85"
+  },
+  "marks": {
+    "pickup": {
+      "t": 0.707,
+      "rect": null
+    },
+    "delivery": {
+      "t": 2.635,
+      "rect": null
+    },
+    "planning": {
+      "t": 4.066,
+      "rect": null
+    },
+    "planned": {
+      "t": 12.848,
+      "rect": null
+    },
+    "map": {
+      "t": 15.333,
+      "rect": {
+        "x": 25,
+        "y": 73.5,
+        "w": 380,
+        "h": 340
+      }
+    },
+    "profit": {
+      "t": 19.433,
+      "rect": {
+        "x": 24,
+        "y": 296.5,
+        "w": 382,
+        "h": 277
+      }
+    },
+    "stats": {
+      "t": 23.533,
+      "rect": {
+        "x": 24,
+        "y": 589.5,
+        "w": 382,
+        "h": 215
+      }
+    },
+    "end": {
+      "t": 27.633,
+      "rect": null
+    }
+  }
+}

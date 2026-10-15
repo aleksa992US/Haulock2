@@ -1121,6 +1121,104 @@ ${divider()}
   };
 }
 
+// "What's new" product update: three features with a screenshot (public/email/
+// whats-new/, served from the site, so deploy before sending) and five short rows.
+// Free/paid tags follow lib/plans.ts. Send as kind 'newsletter'.
+export function whatsNewTemplate(args: {
+  firstName?: string;
+  recipientEmail: string;
+  siteUrl: string;
+}): { subject: string; html: string } {
+  const site = args.siteUrl.replace(/\/$/, '');
+  const mono = "font-family:'SF Mono',Menlo,Consolas,monospace;";
+  const tag = (label: string, paid = false) =>
+    `<span style="display:inline-block;padding:3px 9px;border-radius:999px;font-size:10px;${mono}letter-spacing:0.12em;text-transform:uppercase;background:${paid ? 'rgba(255,107,53,0.12)' : 'rgba(22,163,74,0.1)'};color:${paid ? '#E8551F' : '#16A34A'};">${label}</span>`;
+  const link = (path: string, label: string) =>
+    `<a href="${site}${path}" style="display:inline-block;margin-top:12px;font-size:14px;font-weight:600;color:#0B1E3F;text-decoration:underline;">${label} &rarr;</a>`;
+
+  const featured = [
+    {
+      img: 'pdf-edits',
+      alt: 'Haulock PDF check: the line haul changed from $1,400.00 to $1,100.00',
+      tag: tag('Free · 3 a month'),
+      title: 'See exactly what changed on a rate con',
+      text: 'Upload the PDF. Haulock looks at every saved version of the file and shows each changed value before and after, plus white-out, hidden or moved text, removed pages and edits made after signing, boxed on the page.',
+      link: link('/verify', 'Check a PDF'),
+    },
+    {
+      img: 'inspections',
+      alt: 'Inspections per month and the latest roadside inspections',
+      tag: tag('Free · alerts on paid plans'),
+      title: 'Every roadside inspection and crash',
+      text: 'Reports now list the last 24 months of inspections and crashes: when, where and what the officer found. For your own company, we email you as soon as FMCSA posts a new inspection or crash on your DOT.',
+      link: link('/verify', 'Look up a carrier'),
+    },
+    {
+      img: 'coi-check',
+      alt: 'COI check: cancellation pending on FMCSA, effective Oct 27, 2026',
+      tag: tag('Paid plans', true),
+      title: 'Is that COI still active?',
+      text: 'Upload a certificate of insurance. Haulock checks it against the insurer&rsquo;s filings with FMCSA, flags pending cancellations, expired dates and low limits, and checks whether the PDF was edited. You get one answer: match, verify or mismatch.',
+      link: link('/verify', 'Check a COI'),
+    },
+  ];
+  const rows = [
+    { tag: tag('Free · 10 a month'), title: 'Load planner', text: 'Enter pickup and delivery to get the truck route, empty and loaded miles, drive time with 10-hour breaks, what&rsquo;s left after fuel and driver pay, and your break-even rate per mile.', link: link('/planner', 'Plan a load') },
+    { tag: tag('Free'), title: 'Officers, phone and email on record', text: 'Reports show the officers on the company&rsquo;s FMCSA filing and the phone and email on record. Call that number and ask for them by name.', link: '' },
+    { tag: tag('Free'), title: 'Authority history', text: 'We read the full authority history and flag an MC that was reactivated after a long gap, a common fraud pattern.', link: '' },
+    { tag: tag('Free'), title: 'Share a report as a PDF', text: 'Export any report as a clean PDF, or email it straight to dispatch (up to 10 people) with a note.', link: '' },
+    { tag: tag('Paid plans', true), title: 'See how often you&rsquo;re checked', text: 'Claim your company to see how many times your MC was checked on Haulock, week by week (counts only, never who), plus a daily watch on your own FMCSA record.', link: link('/dashboard', 'Open your company') },
+  ];
+
+  const featuredHtml = featured
+    .map(
+      (f) => `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;border:1px solid rgba(11,30,63,0.1);border-radius:14px;border-collapse:separate;overflow:hidden;">
+  <tr><td style="background:#F5F3EE;font-size:0;line-height:0;"><img src="${site}/email/whats-new/${f.img}.jpg" width="478" alt="${escapeHtml(f.alt)}" style="display:block;width:100%;max-width:478px;height:auto;border:0;"></td></tr>
+  <tr><td style="padding:18px 20px 20px;">
+    ${f.tag}
+    <div style="margin:10px 0 6px 0;font-size:19px;line-height:1.3;font-weight:600;color:#0B1E3F;">${f.title}</div>
+    <div style="font-size:15px;line-height:1.6;color:rgba(11,30,63,0.75);">${f.text}</div>
+    ${f.link}
+  </td></tr>
+</table>`
+    )
+    .join('');
+  const rowsHtml = rows
+    .map(
+      (r) => `
+<tr><td style="padding:16px 0;border-top:1px solid rgba(11,30,63,0.08);">
+  ${r.tag}
+  <div style="margin:8px 0 4px 0;font-size:16px;line-height:1.35;font-weight:600;color:#0B1E3F;">${r.title}</div>
+  <div style="font-size:14px;line-height:1.6;color:rgba(11,30,63,0.72);">${r.text}</div>
+  ${r.link}
+</td></tr>`
+    )
+    .join('');
+
+  const hello = args.firstName ? `Hi ${escapeHtml(args.firstName)}, here&rsquo;s` : 'Here&rsquo;s';
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:rgba(11,30,63,0.06);color:#0B1E3F;border-radius:999px;font-size:11px;${mono}letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px;">What&rsquo;s new · October 2026</div>
+${h1(`Eight new ways to check a load ${italicAccent('before you haul it.')}`)}
+${p(`${hello} what&rsquo;s new on Haulock. Most of it works on the free plan.`)}
+${featuredHtml}
+<div style="margin:8px 0 4px 0;font-size:11px;${mono}letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);">Also new</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0;">${rowsHtml}
+</table>
+${button(`${site}/dashboard`, 'Open Haulock →')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Free plan: 3 lookups, 3 PDF checks and 10 load plans a month, no credit card. Paid plans start at $49/month.</div>`;
+
+  return {
+    subject: 'New on Haulock: see exactly what changed on a rate con, and 7 more',
+    html: baseLayout({
+      preview: 'PDF edit check, inspection alerts, COI check, a load planner and more. Most of it works on the free plan.',
+      body,
+      unsubEmail: args.recipientEmail,
+    }),
+  };
+}
+
 // ---------- Sales emails (admin Sales tab) ----------
 // The operator writes plain text (blank line = new paragraph, **bold**,
 // bare https:// links) with merge tags already applied. Optionally shows
