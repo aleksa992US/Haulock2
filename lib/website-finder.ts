@@ -199,6 +199,7 @@ async function searchBrave(q: string): Promise<RawHit[] | { error: string }> {
   const key = process.env.BRAVE_SEARCH_API_KEY!;
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=10`;
   const res = await fetch(url, {
+    signal: AbortSignal.timeout(8_000),
     headers: { 'X-Subscription-Token': key, 'Accept': 'application/json' },
     cache: 'no-store',
   });
@@ -212,7 +213,7 @@ async function searchCse(q: string): Promise<RawHit[] | { error: string }> {
   const key = process.env.GOOGLE_CUSTOM_SEARCH_API_KEY!;
   const cx = process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID!;
   const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&num=10`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(8_000) });
   if (!res.ok) return { error: `Custom Search ${res.status}` };
   const data = await res.json();
   return Array.isArray(data?.items) ? data.items.map((it: any) => ({ link: it.link, title: it.title, snippet: it.snippet })) : [];
@@ -241,6 +242,7 @@ async function findPlacesWebsite(opts: { name: string; address?: string; phone?:
   for (const textQuery of queries) {
     try {
       const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        signal: AbortSignal.timeout(8_000),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -33,6 +33,11 @@ export async function GET(req: Request) {
   return NextResponse.json({ lookups: data || [] });
 }
 
+// Lookups are recorded by /api/verify when they run (that's what the plan
+// limits count). This only attaches what the browser adds afterwards — the
+// sender-email domain check — to that row. It used to insert whatever the
+// browser sent, so usage depended on the browser and anyone could add rows
+// with made-up names, scores and flags.
 export async function POST(req: Request) {
   const supabase = getServerSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
@@ -41,27 +46,28 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const body = await req.json().catch(() => null) as any;
-  if (!body || typeof body.name !== 'string') {
-    return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
-  }
+  const lookupId = typeof body?.lookupId === 'string' ? body.lookupId : '';
+  if (!lookupId) return NextResponse.json({ error: 'Missing lookupId' }, { status: 400 });
 
-  const row = {
-    user_id: user.id,
-    query: String(body.query || ''),
-    name: body.name,
-    mc: body.mc || null,
-    dot: body.dot || null,
-    score: typeof body.score === 'number' ? body.score : 0,
-    verdict: body.verdict || 'low',
-    email_query: body.queriedEmail || null,
-    source: body.source === 'ratecon' ? 'ratecon' : 'quick',
-    data: body,
-  };
+  const db = getServiceSupabase() || supabase;
+  const { data: row } = await db.from('lookups').select('id, data').eq('id', lookupId).eq('user_id', user.id).maybeSingle();
+  if (!row) return NextResponse.json({ error: 'Lookup not found' }, { status: 404 });
 
-  const { data, error } = await (getServiceSupabase() || supabase).from('lookups').insert(row).select().single();
+  const extra: Record<string, any> = {};
+  if (body.domain && typeof body.domain === 'object') extra.domain = body.domain;
+  if (typeof body.queriedEmail === 'string' && body.queriedEmail.trim()) extra.queriedEmail = body.queriedEmail.trim().slice(0, 254);
+  if (Object.keys(extra).length === 0) return NextResponse.json({ lookup: row });
+
+  const { data, error } = await db
+    .from('lookups')
+    .update({ data: { ...(row.data || {}), ...extra }, ...(extra.queriedEmail ? { email_query: extra.queriedEmail } : {}) })
+    .eq('id', lookupId)
+    .eq('user_id', user.id)
+    .select('id')
+    .single();
   if (error) {
-    console.error('[api/lookups POST] Supabase insert failed:', { code: error.code, message: error.message, details: error.details, hint: error.hint });
-    return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 500 });
+    console.error('[api/lookups POST] update failed:', { code: error.code, message: error.message });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
   return NextResponse.json({ lookup: data });
 }

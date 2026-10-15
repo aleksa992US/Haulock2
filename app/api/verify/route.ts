@@ -7,13 +7,14 @@ import { checkAddress } from '@/lib/places';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
 import { countMonthlyLookups } from '@/lib/usage';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { findCarrierWebsite, assessWebsiteOwnership } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
 import { checkUserRateLimit } from '@/lib/rate-limit';
 import { detectLookalike, describeLookalike, normalizeDomain } from '@/lib/lookalike-detection';
 import { findChameleonLinks } from '@/lib/chameleon-detection';
-import { checkWebReputation, isWebReputationConfigured } from '@/lib/web-reputation';
+import { checkWebReputation, isWebReputationConfigured, type WebReputationResult } from '@/lib/web-reputation';
 import { extractLinkedEntities } from '@/lib/linked-entity-extractor';
 import { findLegacyCrossReferences } from '@/lib/legacy-cross-reference';
 import { fetchSmsData } from '@/lib/fmcsa-sms';
@@ -22,6 +23,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+  const tRoute = Date.now();
   const { searchParams } = new URL(req.url);
   const q = searchParams.get('q') ?? '';
   const force = searchParams.get('force') === '1';
@@ -254,12 +256,24 @@ export async function GET(req: Request) {
   // can log "FMCSA SMS · 4200ms" and the operator can see which sources
   // are slow.
   const timings: Record<string, number> = {};
-  const timed = <T,>(name: string, p: Promise<T>): Promise<T> => {
+  // One deadline for every source (the route has 60s; the FMCSA lookup
+  // above may already have used some). A source that misses it is reported
+  // as unavailable instead of holding the report until the function is
+  // killed and the user gets no report at all.
+  const enrichBudgetMs = Math.max(5_000, Math.min(25_000, 50_000 - (Date.now() - tRoute)));
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => { deadlineTimer = setTimeout(resolve, enrichBudgetMs); });
+  const timed = <T,>(name: string, p: Promise<T>, fallback?: T): Promise<T> => {
     const t = Date.now();
-    return p.then(
+    const tracked = p.then(
       (r) => { timings[name] = Date.now() - t; return r; },
       (e) => { timings[name] = Date.now() - t; throw e; },
     );
+    if (fallback === undefined) return tracked;
+    return Promise.race([tracked, deadline.then(() => {
+      if (!(name in timings)) console.warn(`[verify] ${name} missed the ${enrichBudgetMs}ms deadline`);
+      return fallback;
+    })]);
   };
   // MCS-150 contact details (officers, email, phone) from FMCSA's census —
   // started now so it runs alongside the other sources.
@@ -274,12 +288,14 @@ export async function GET(req: Request) {
             return null;
           })
         : Promise.resolve(null),
+      null,
     ),
     timed('web',
       findCarrierWebsite({ name: carrier.name, mc: carrier.mc, dot: carrier.dot, address: carrier.address, phone: carrier.phone }).catch((e) => {
         console.error('[verify] website find FAILED', e?.message);
         return null;
       }),
+      null,
     ),
     // QCMobile rarely returns a phone; the census does. Wait for it so the
     // shared-phone match has a number to search on.
@@ -288,8 +304,9 @@ export async function GET(req: Request) {
         console.error('[verify] chameleon detection FAILED', e?.message);
         return [];
       }),
+      [],
     ),
-    timed('reputation',
+    timed<WebReputationResult>('reputation',
       isWebReputationConfigured()
         ? checkWebReputation(carrier.name, {
             // Pass the user's ORIGINAL query string as an alias seed — when
@@ -307,12 +324,14 @@ export async function GET(req: Request) {
             return { configured: true, ok: false, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0, error: e?.message };
           })
         : Promise.resolve({ configured: false, ok: false, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0 }),
+      { configured: true, ok: false, hits: [], reviewHits: [], extractionHits: [], queriesRun: 0, error: 'Search took too long' },
     ),
     timed('legacy',
       findLegacyCrossReferences(carrier).catch((e) => {
         console.error('[verify] legacy cross-reference FAILED', e?.message);
         return { rating: null, emailMatches: [] };
       }),
+      { rating: null, emailMatches: [] },
     ),
     // FMCSA Safety Measurement System — BASIC scores, inspection
     // breakdown, crash detail. Only call when we have a DOT (SMS is
@@ -324,11 +343,13 @@ export async function GET(req: Request) {
             return null;
           })
         : Promise.resolve(null),
+      null,
     ),
   ]);
   // Apply the MCS-150 contact details. The email of record is current
   // (filed with FMCSA), so it sets emailDomain before any snapshot backfill.
-  const census = await censusPromise;
+  const census = await Promise.race([censusPromise, deadline.then(() => null)]);
+  clearTimeout(deadlineTimer);
   if (census) {
     if (census.officers.length) carrier.officers = census.officers;
     if (census.email) {
@@ -953,5 +974,30 @@ export async function GET(req: Request) {
     }
   }
   console.log(''); // visual gap after each scan
+
+  // Usage is recorded here, not by the browser: the monthly limit and the
+  // per-minute rate limit count these rows, and a caller that skipped the
+  // browser's follow-up save used to get unlimited lookups. The browser
+  // only attaches its extras (the sender-email domain check) to this row
+  // via /api/lookups. Admin tools can pass record=0 (Sales re-scans run on
+  // other people's companies and shouldn't fill the admin's history).
+  const skipRecord = searchParams.get('record') === '0' && user && (await isAdmin(user.email));
+  if (user && !skipRecord) {
+    const email = queriedEmail.trim() || null;
+    const { data: saved, error: saveErr } = await (getServiceSupabase() || supabase)!.from('lookups').insert({
+      user_id: user.id,
+      query: q,
+      name: scored.name || '',
+      mc: scored.mc || null,
+      dot: scored.dot || null,
+      score: typeof scored.score === 'number' ? scored.score : 0,
+      verdict: scored.verdict || 'low',
+      email_query: email,
+      source: 'quick',
+      data: { ...scored, query: q, queriedEmail: email || undefined },
+    }).select('id').single();
+    if (saveErr) console.error('[verify] could not record lookup', saveErr.message);
+    else scored.lookupId = saved.id;
+  }
   return NextResponse.json(scored);
 }

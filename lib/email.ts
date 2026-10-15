@@ -80,8 +80,71 @@ export type SendArgs = {
   headers?: Record<string, string>;
   // `kind` tags the send so the admin newsletter dashboard can show counts
   // per type per recipient. Optional — old call sites stay legal.
-  kind?: 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'other';
+  kind?: EmailKind;
 };
+
+// weekly_digest / fraud_trends let those jobs skip people who already got
+// this week's issue (a re-run or retry used to send it again).
+export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'other';
+
+export type BatchEmail = { to: string; subject: string; html: string; kind?: EmailKind };
+
+// Sends many single-recipient emails through Resend's batch API (100 per
+// call, as the Sales tool does) and logs each to email_log. Bulk jobs sent
+// one email at a time with a pause between, so a few hundred recipients
+// took minutes and could hit the job's time limit halfway through.
+export async function sendEmailBatch(items: BatchEmail[]): Promise<{ sent: number; failed: number; errors: string[] }> {
+  const resend = getResend();
+  if (!resend) throw new Error('RESEND_API_KEY is not set');
+  const from = process.env.RESEND_FROM || 'Haulock <onboarding@resend.dev>';
+  const { getServiceSupabase } = await import('@/lib/supabase/service');
+  const svc = getServiceSupabase();
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (let i = 0; i < items.length; i += 100) {
+    const chunk = items.slice(i, i + 100);
+    const payload = chunk.map((m) => {
+      const unsub = unsubscribeUrl(m.to);
+      return {
+        from, to: m.to, subject: m.subject, html: m.html,
+        headers: { 'List-Unsubscribe': `<${unsub}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+      };
+    });
+    try {
+      const { data, error } = await resend.batch.send(payload as any);
+      if (error) throw new Error(error.message || 'Resend batch send failed');
+      sent += chunk.length;
+      const ids: any[] = (data as any)?.data || [];
+      const sentAt = new Date().toISOString();
+      if (svc) {
+        const { error: logErr } = await svc.from('email_log').insert(chunk.map((m, j) => ({
+          to_email: m.to.trim().toLowerCase(), subject: m.subject, kind: m.kind || 'other', resend_id: ids[j]?.id || null, sent_at: sentAt,
+        })));
+        if (logErr) console.warn('[email] email_log insert failed (non-fatal):', logErr.message);
+      }
+    } catch (err: any) {
+      failed += chunk.length;
+      errors.push(err?.message || 'send failed');
+    }
+    if (i + 100 < items.length) await new Promise((r) => setTimeout(r, 600));
+  }
+  return { sent, failed, errors };
+}
+
+// Lowercased addresses that got an email of this kind since `sinceIso`.
+export async function recentlySentTo(kind: EmailKind, sinceIso: string): Promise<Set<string>> {
+  const { getServiceSupabase } = await import('@/lib/supabase/service');
+  const svc = getServiceSupabase();
+  const out = new Set<string>();
+  if (!svc) return out;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await svc.from('email_log').select('id, to_email').eq('kind', kind).gte('sent_at', sinceIso).order('id').range(from, from + 999);
+    if (error) throw new Error(error.message);
+    for (const r of data || []) out.add(String(r.to_email).toLowerCase());
+    if (!data || data.length < 1000) return out;
+  }
+}
 
 export async function sendEmail({ to, subject, html, replyTo, attachments, headers: extraHeaders, kind }: SendArgs) {
   const resend = getResend();

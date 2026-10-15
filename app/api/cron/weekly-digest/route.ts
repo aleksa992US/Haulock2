@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { sendEmail, weeklyDigestTemplate, isResendConfigured, type DigestStats } from '@/lib/email';
+import { weeklyDigestTemplate, isResendConfigured, recentlySentTo, sendEmailBatch, type BatchEmail, type DigestStats } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -43,14 +43,21 @@ async function run(req: Request) {
     return u.email && meta.notify_weekly_digest !== false;
   });
 
-  let sent = 0;
   let skipped = 0;
+  let alreadySent = 0;
   const sample: any[] = [];
+  const outbox: BatchEmail[] = [];
+  // Anyone who got this week's digest already (a re-run or a retry).
+  const already = dryRun ? new Set<string>() : await recentlySentTo('weekly_digest', new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString());
 
-  for (const u of users) {
+  // Build each user's digest (10 users' queries at a time), then send them
+  // all through Resend's batch API. One send per user with a pause between
+  // took minutes and could run out of time partway through the list.
+  const buildDigest = async (u: any) => {
     const meta = (u.user_metadata || {}) as any;
     const toAddress = (typeof meta.notification_email === 'string' && meta.notification_email.trim()) ? meta.notification_email.trim() : u.email;
     const recipientName = String(meta.full_name || meta.name || '');
+    if (already.has(String(toAddress).toLowerCase())) { alreadySent += 1; return; }
 
     // Aggregate the week's activity for this user.
     // head:true counts come back as `count`; `data` is null.
@@ -101,28 +108,31 @@ async function run(req: Request) {
 
     if (skipQuiet && stats.lookups === 0 && stats.watchlistChanges === 0) {
       skipped += 1;
-      continue;
+      return;
     }
 
     if (dryRun) {
       sample.push({ to: toAddress, stats });
-      continue;
+      return;
     }
 
-    try {
-      const { subject, html } = weeklyDigestTemplate({
-        stats,
-        recipientEmail: toAddress,
-        recipientName,
-        siteUrl,
-      });
-      await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
-      sent += 1;
-      await new Promise((r) => setTimeout(r, 500));
-    } catch (err: any) {
-      console.warn('[cron/weekly-digest] send failed', { user: u.email, message: err?.message });
-    }
+    const { subject, html } = weeklyDigestTemplate({
+      stats,
+      recipientEmail: toAddress,
+      recipientName,
+      siteUrl,
+    });
+    outbox.push({ to: toAddress, subject, html, kind: 'weekly_digest' });
+  };
+
+  for (let i = 0; i < users.length; i += 10) {
+    await Promise.all(users.slice(i, i + 10).map((u) => buildDigest(u).catch((err: any) => {
+      console.warn('[cron/weekly-digest] could not build digest', { user: u.email, message: err?.message });
+    })));
   }
 
-  return NextResponse.json({ ok: true, sent, skipped, dryRun, totalUsers: users.length, sample: sample.slice(0, 5) });
+  const { sent, failed, errors } = outbox.length ? await sendEmailBatch(outbox) : { sent: 0, failed: 0, errors: [] as string[] };
+  if (errors.length) console.warn('[cron/weekly-digest] batch errors', errors.slice(0, 3));
+
+  return NextResponse.json({ ok: true, sent, failed, skipped, alreadySent, dryRun, totalUsers: users.length, sample: sample.slice(0, 5) });
 }

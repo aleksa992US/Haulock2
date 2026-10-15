@@ -3,6 +3,7 @@ import { parseQuery, lookupCarrier, type CarrierReport, type ParsedQuery } from 
 import {
   fetchInsuranceFilings,
   findFilingsByPolicyNumber,
+  samePolicyNumber,
   type InsuranceFiling,
   type InsuranceFilingsResult,
   type PolicyFilingMatch,
@@ -395,7 +396,9 @@ export async function buildCoiReport(
   rawEx: CoiExtraction,
   // `forensics`: the PDF metadata result saved with an earlier check, for a
   // re-check where the file itself is no longer available.
-  args: { bytes?: Buffer; mime?: string; filename?: string; mc?: string | null; dot?: string | null; forensics?: PdfForensics | null },
+  // `identifiedAs`: how an earlier check identified the carrier, for a
+  // re-check that passes the carrier back in by MC/DOT.
+  args: { bytes?: Buffer; mime?: string; filename?: string; mc?: string | null; dot?: string | null; forensics?: PdfForensics | null; identifiedAs?: CarrierIdentification['by'] | null },
   deps: Partial<CoiDeps> = {},
 ): Promise<CoiReport> {
   const d: CoiDeps = { ...DEFAULT_DEPS, ...deps };
@@ -409,12 +412,26 @@ export async function buildCoiReport(
   const insurance: InsuranceFilingsResult = carrier
     ? await d.fetchInsuranceFilings({ mc: carrier.mc, dot: carrier.dot })
     : { filings: [], asOf: null };
+  // A re-check finds the carrier by the MC/DOT saved from the first check,
+  // which reads as "override". Keep the original method instead: a
+  // certificate matched by its policy number (insured name misread) was
+  // otherwise re-judged as "insured company differs" → Doesn't match.
+  let identifiedBy = resolution.identifiedBy;
+  if (args.identifiedAs && args.identifiedAs !== 'override' && identifiedBy?.by === 'override') {
+    if (args.identifiedAs === 'policy') {
+      const policyNumber = ex.policies.find((p) => p.coverage === 'auto_liability' && p.policy_number)?.policy_number || '';
+      const filing = insurance.filings.find((f) => samePolicyNumber(policyNumber, f.policyNumber));
+      identifiedBy = { by: 'policy', policyNumber, filing };
+    } else {
+      identifiedBy = { by: args.identifiedAs };
+    }
+  }
   return compareCoi(ex, {
     carrier,
     insurance,
     forensics,
     filename: args.filename,
-    identifiedBy: resolution.identifiedBy,
+    identifiedBy,
     policyLookupTried: resolution.policyLookupTried,
   });
 }
