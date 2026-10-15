@@ -5,6 +5,7 @@ import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage } from 'pdf-lib';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { carrierAuthorityLabel, recommendationFor } from './recommendation';
+import { fetchSafetyActivity, type CrashEvent, type InspectionEvent, type SafetyActivity } from './fmcsa-inspections';
 
 // Standard PDF fonts only cover basic Latin (WinAnsi); swap typographic
 // punctuation, and replace anything else they can't encode — pdf-lib throws
@@ -45,6 +46,12 @@ type Carrier = any;
 
 export async function buildReportPdf(input: Carrier): Promise<Uint8Array> {
   const report = pdfSafeDeep(input);
+  // The 24-month inspections & crashes panel loads separately on the report
+  // page, so the saved report doesn't carry it. Fetch it here (cached by
+  // fetchSafetyActivity); a slow or failed fetch just says so in the PDF.
+  const activity = report.dot
+    ? pdfSafeDeep(await withTimeout(fetchSafetyActivity(report.dot).catch(() => null), 10_000))
+    : null;
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Haulock Risk Report — ${report.name || 'Carrier'}`);
   pdf.setAuthor('Haulock');
@@ -72,12 +79,17 @@ export async function buildReportPdf(input: Carrier): Promise<Uint8Array> {
   };
 
   drawHeader(ctx, report);
+  drawDataSourceNote(ctx, report);
   drawHero(ctx, report);
+  drawVerdictNotes(ctx, report);
   drawDetailGrid(ctx, 'Identity', identityItems(report));
   drawDetailGrid(ctx, 'FMCSA authority & insurance', fmcsaItems(report));
   drawDetailGrid(ctx, 'Operations & safety record', opsSafetyItems(report));
+  drawSafetyActivity(ctx, report, activity);
+  drawSmsScores(ctx, report);
   drawWebPresence(ctx, report);
   drawAddressCheck(ctx, report);
+  drawReputation(ctx, report);
   drawRedFlags(ctx, report);
 
   const total = pdf.getPageCount();
@@ -384,7 +396,7 @@ function identityItems(r: Carrier): Array<{ label: string; value: string }> {
     { label: 'Legal name', value: r.name || '—' },
     { label: 'DBA', value: r.dba || '—' },
     { label: 'Physical address', value: r.address || '—' },
-    { label: 'Phone', value: r.phone || '—' },
+    { label: 'Phone', value: r.phone ? fmtPhone(r.phone) : '—' },
     { label: (r.officers || []).length > 1 ? 'Company officers' : 'Company officer', value: (r.officers || []).length ? r.officers.join(', ') : '-' },
     { label: r.fmcsaEmail ? 'Email on FMCSA filing' : 'Email domain', value: r.fmcsaEmail || r.emailDomain || '-' },
     // QCMobile has no grant date; age comes from FMCSA's authority history
@@ -435,6 +447,195 @@ function opsSafetyItems(r: Carrier): Array<{ label: string; value: string }> {
     { label: 'Driver OOS rate', value: drvOos },
     { label: 'Vehicle OOS rate', value: vehOos },
   ];
+}
+
+// ----- sections that mirror the report page --------------------------------
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
+function fmtPhone(p: string): string {
+  return String(p).replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+}
+
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return '—';
+  const t = new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d);
+  return isNaN(t.getTime()) ? String(d) : t.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
+
+// A cream box with a small label and wrapped text.
+function drawNote(ctx: DrawCtx, label: string, text: string) {
+  const lines = wrap(text, ctx.helv, 9.5, CONTENT_W - 20);
+  const h = 22 + lines.length * 12;
+  ensureSpace(ctx, h + 8);
+  const top = ctx.y;
+  ctx.page.drawRectangle({ x: MARGIN_X, y: top - h, width: CONTENT_W, height: h, color: CREAM });
+  ctx.page.drawText(label.toUpperCase(), { x: MARGIN_X + 10, y: top - 12, size: 7, font: ctx.helvBold, color: MUTED });
+  let y = top - 25;
+  for (const ln of lines) {
+    ctx.page.drawText(ln, { x: MARGIN_X + 10, y, size: 9.5, font: ctx.helv, color: NAVY });
+    y -= 12;
+  }
+  ctx.y -= h + 8;
+}
+
+// Same wording as the report page's banner when FMCSA's live service
+// didn't answer and an older copy was used.
+function drawDataSourceNote(ctx: DrawCtx, r: Carrier) {
+  const src = r.dataSource;
+  if (!src || src === 'fmcsa-live') return;
+  const what = src === 'socrata' ? "FMCSA's daily public data file"
+    : src === 'cache' ? "Haulock's saved copy of FMCSA data"
+    : "FMCSA's archive, which can be years old";
+  drawNote(ctx, 'Data source', `FMCSA's live service didn't answer, so this report uses ${what}${r.dataAsOf ? ` from ${fmtDate(r.dataAsOf)}` : ''}.`);
+}
+
+// The "what checked out" list from the report page, with the same rule:
+// a chip is left out when a scored flag on the same topic contradicts it.
+function checkedOut(r: Carrier): string[] {
+  const scored = (r.flags || []).filter((f: any) => (Number(f?.pts) || 0) > 0);
+  const flagged = (re: RegExp) => scored.some((f: any) => re.test(String(f.title || '')));
+  const carrierActive = r.commonAuthority === 'Active' || r.contractAuthority === 'Active';
+  const brokerActive = r.brokerAuthority === 'Active';
+  const ok: string[] = [];
+  if (carrierActive || brokerActive) ok.push(`${carrierActive && brokerActive ? 'Carrier & broker' : carrierActive ? 'Carrier' : 'Broker'} authority active`);
+  if (r.authorityAge && !/reactivated/i.test(r.authorityAge) && !flagged(/^Authority (age under|recently reactivated)/)) ok.push(`${r.authorityAge} of authority`);
+  if (carrierActive && r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.bipdRequired != null && r.bipdOnFile < r.bipdRequired)) ok.push(`$${(r.bipdOnFile * 1000).toLocaleString('en-US')} liability on file`);
+  if (brokerActive && r.bondOnFile != null && r.bondOnFile >= 75) ok.push('Broker bond on file');
+  if (r.outOfService === false) ok.push('Not out of service');
+  if (r.addressCheck?.found && !r.addressCheck.isMailbox && !flagged(/^(Address |Business at this address)/)) ok.push('Address checks out');
+  if (r.webPresence?.verified) ok.push('Website confirmed');
+  if (r.webReputation?.ok && (r.webReputation.hits || []).length === 0) ok.push('No fraud reports online');
+  return ok;
+}
+
+function drawVerdictNotes(ctx: DrawCtx, r: Carrier) {
+  // An impersonator on a spoofed number usually can't name the officer.
+  const officers: string[] = (r.officers || []).filter(Boolean).slice(0, 2);
+  if (officers.length && r.phone) {
+    drawNote(ctx, 'Confirm who you are dealing with',
+      `Call ${fmtPhone(r.phone)} (the number on FMCSA's record) and ask for ${officers.join(' or ')}, ${officers.length > 1 ? 'the officers' : 'the officer'} on the company's FMCSA filing${r.censusAsOf ? ` (updated ${fmtDate(r.censusAsOf)})` : ''}.`);
+  }
+  const ok = checkedOut(r);
+  if (ok.length) drawNote(ctx, 'What checked out', ok.join('  ·  '));
+}
+
+function drawSubheading(ctx: DrawCtx, text: string) {
+  ensureSpace(ctx, 40);
+  ctx.page.drawText(text.toUpperCase(), { x: MARGIN_X, y: ctx.y - 10, size: 7.5, font: ctx.helvBold, color: MUTED });
+  ctx.y -= 16;
+}
+
+function inspectionLine(e: InspectionEvent): string {
+  const where = e.location || e.state || '';
+  const level = e.level ? `Level ${['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'][e.level] || e.level}` : '';
+  const oosParts = [e.vehicleOos ? `${e.vehicleOos} vehicle` : '', e.driverOos ? `${e.driverOos} driver` : ''].filter(Boolean).join(', ');
+  const result = e.oos > 0 ? `${e.oos} out of service${oosParts ? ` (${oosParts})` : ''}`
+    : e.violations > 0 ? plural(e.violations, 'violation') : 'Clean';
+  return [where, level, result].filter(Boolean).join(' · ');
+}
+
+function crashLine(e: CrashEvent): string {
+  const where = [e.city, e.state].filter(Boolean).join(', ') || e.location || '';
+  const outcome = [
+    e.fatalities ? `${e.fatalities} killed` : '',
+    e.injuries ? `${e.injuries} injured` : '',
+    e.towAway ? 'tow-away' : '',
+  ].filter(Boolean).join(', ') || 'Reported crash';
+  return [where, outcome].filter(Boolean).join(' · ');
+}
+
+function drawSafetyActivity(ctx: DrawCtx, r: Carrier, a: SafetyActivity | null) {
+  if (!r.dot) return;
+  ensureSpace(ctx, 90);
+  drawSectionTitle(ctx, 'Roadside inspections & crashes · last 24 months');
+  if (!a) {
+    drawDetailRows(ctx, [{ label: 'FMCSA inspection data', value: "Couldn't load right now - see the online report" }]);
+    return;
+  }
+  const i = a.inspections;
+  const c = a.crashes;
+  const pct = (n: number) => (i.total ? `${Math.round((n / i.total) * 100)}%` : '0%');
+  const items: Array<{ label: string; value: string }> = [
+    { label: 'Inspections', value: i.total ? `${i.total} · ${i.clean} clean (${pct(i.clean)}) · ${i.withViolations} with violations · ${i.oos} out of service` : 'None in 24 months' },
+  ];
+  if (i.oos) items.push({ label: 'Out-of-service orders', value: `${i.vehicleOos} vehicle · ${i.driverOos} driver` });
+  items.push({ label: 'Crashes', value: c.total ? `${c.total} · ${c.fatal} fatal · ${c.injury} injury · ${c.towAway} tow-away` : 'None in 24 months' });
+  items.push({ label: 'Last 30 days', value: `${plural(a.last30.inspections, 'inspection')} (${a.last30.oos} out of service) · ${plural(a.last30.crashes, 'crash', 'crashes')}` });
+  if (i.last) items.push({ label: 'Latest inspection', value: `${fmtDate(i.last.date)} · ${inspectionLine(i.last)}` });
+  if (c.last) items.push({ label: 'Latest crash', value: `${fmtDate(c.last.date)} · ${crashLine(c.last)}` });
+  drawDetailRows(ctx, items);
+
+  const oosRecent = (i.recent || []).filter((e) => e.oos > 0).slice(0, 6);
+  if (oosRecent.length) {
+    drawSubheading(ctx, 'Recent out-of-service inspections');
+    drawDetailRows(ctx, oosRecent.map((e) => ({ label: fmtDate(e.date), value: inspectionLine(e) })));
+  }
+  const crashesRecent = (c.recent || []).slice(0, 5);
+  if (crashesRecent.length) {
+    drawSubheading(ctx, 'Recent crashes');
+    drawDetailRows(ctx, crashesRecent.map((e) => ({ label: fmtDate(e.date), value: crashLine(e) })));
+  }
+}
+
+const BASIC_LABELS: Record<string, string> = {
+  unsafeDriving: 'Unsafe Driving',
+  hoursOfService: 'Hours-of-Service Compliance',
+  driverFitness: 'Driver Fitness',
+  controlledSubstances: 'Controlled Substances / Alcohol',
+  vehicleMaintenance: 'Vehicle Maintenance',
+  hazmat: 'Hazardous Materials Compliance',
+  crashIndicator: 'Crash Indicator',
+};
+
+function drawSmsScores(ctx: DrawCtx, r: Carrier) {
+  const s = r.sms;
+  if (!s?.fetched) return;
+  const rows: Array<{ label: string; value: string }> = [];
+  for (const key of Object.keys(BASIC_LABELS)) {
+    const b = s.basics?.[key];
+    if (!b) continue;
+    // Older saved reports carry FMCSA's threshold as a "percentile" on
+    // categories with no measure (same guard as the report page).
+    const percentile = b.percentile != null && b.measure > 0 ? b.percentile : null;
+    if (!(b.measure > 0) && percentile == null && !(b.inspections > 0)) continue;
+    const parts = [
+      percentile != null ? `${Math.round(percentile)}th percentile` : b.measure > 0 ? `Measure ${Number(b.measure).toFixed(2)}` : 'No violations scored',
+      b.inspections > 0 ? plural(b.inspections, 'inspection') : '',
+      b.alert ? 'FMCSA alert' : '',
+    ].filter(Boolean);
+    rows.push({ label: BASIC_LABELS[key], value: parts.join(' · ') });
+  }
+  if (!rows.length) return;
+  ensureSpace(ctx, 40 + rows.length * 22);
+  drawSectionTitle(ctx, 'FMCSA safety scores (SMS)');
+  drawDetailRows(ctx, rows);
+  ensureSpace(ctx, 20);
+  drawWrappedText(ctx.page, 'Percentiles compare the carrier with similar carriers; lower is better. FMCSA hides some scores and alert symbols from public view, so a missing score is not a clean bill of health.', ctx.helvObl, 8, MUTED, MARGIN_X, ctx.y - 6, CONTENT_W, 10);
+  ctx.y -= 28;
+}
+
+function drawReputation(ctx: DrawCtx, r: Carrier) {
+  const w = r.webReputation;
+  if (!w?.configured) return;
+  ensureSpace(ctx, 60);
+  drawSectionTitle(ctx, 'Online reputation');
+  if (!w.ok) {
+    drawDetailRows(ctx, [{ label: 'Web search', value: "Search didn't respond - see the online report" }]);
+    return;
+  }
+  const hits = Array.isArray(w.hits) ? w.hits : [];
+  const review = Array.isArray(w.reviewHits) ? w.reviewHits : [];
+  const items: Array<{ label: string; value: string }> = [
+    { label: 'Fraud reports found', value: hits.length ? plural(hits.length, 'page') : 'None on trusted sites' },
+  ];
+  for (const h of hits.slice(0, 5)) items.push({ label: truncate(h.domain || 'Page', 24), value: truncate(h.title || h.url || '', 64) });
+  if (review.length) items.push({ label: 'Other pages to review', value: `${review.length} (court cases or mentions, not scored)` });
+  drawDetailRows(ctx, items);
 }
 
 function truncate(s: string, max: number): string {

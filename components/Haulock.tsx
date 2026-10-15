@@ -9155,22 +9155,15 @@ function OwnScoreChip({ navigate }: { navigate: any }) {
   return (
     <>
       <div className="relative inline-flex">
+        {/* A steady ring (plus the NEW badge) marks an unseen change. It used
+            to have an endless animate-ping ring too: scaled to 2× at the
+            header's right edge, it pulsed over the page on every screen. */}
         {hasUnseenChange && (
-          <>
-            {/* Outer ping — radar-style expanding ring, pure CSS via animate-ping. */}
-            <span
-              className="absolute inset-0 rounded-full animate-ping pointer-events-none"
-              style={{ backgroundColor: pulseColor, opacity: 0.35 }}
-              aria-hidden="true"
-            />
-            {/* Always-visible solid ring so the chip stays clearly highlighted
-                between ping cycles. */}
-            <span
-              className="absolute -inset-0.5 rounded-full pointer-events-none"
-              style={{ boxShadow: `0 0 0 2px ${pulseColor}` }}
-              aria-hidden="true"
-            />
-          </>
+          <span
+            className="absolute -inset-0.5 rounded-full pointer-events-none"
+            style={{ boxShadow: `0 0 0 2px ${pulseColor}` }}
+            aria-hidden="true"
+          />
         )}
         <button
           onClick={onOpen}
