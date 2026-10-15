@@ -6,6 +6,8 @@ import { checkSimpleRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Building the PDF fetches FMCSA's 24-month inspection data (up to 10s).
+export const maxDuration = 30;
 
 // Loose RFC-5322-ish email validation. Good enough for a UI guard; the real
 // authority is the SMTP server.
