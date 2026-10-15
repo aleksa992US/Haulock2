@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { setSubscribed } from '@/lib/resend-audience';
 import { verifyUnsubscribeToken } from '@/lib/email';
+import { getServiceSupabase } from '@/lib/supabase/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,15 +11,43 @@ export const dynamic = 'force-dynamic';
 // uses; GET is what a human clicks from the email footer or the browser
 // when they visit the URL directly.
 
+// The Resend flag alone only stopped the newsletter and Sales: the weekly
+// digest, nurture and cart emails read the account's notify_* settings, and
+// saving Settings copied notify_fraud_trends (still on) back to Resend,
+// re-subscribing the person. So also turn those settings off on every
+// account using this address. Watchlist and safety alerts the user set up
+// stay on; they're managed in Settings.
 async function unsubscribe(email: string): Promise<{ ok: boolean; error?: string }> {
   const r = await setSubscribed(email, false);
+  if (!r.ok) return r;
+  const svc = getServiceSupabase();
+  if (!svc) return r;
+  try {
+    for (let page = 1; ; page += 1) {
+      const { data, error } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+      if (error) throw error;
+      const batch = data?.users || [];
+      for (const u of batch) {
+        const meta: any = u.user_metadata || {};
+        const notifyTo = typeof meta.notification_email === 'string' ? meta.notification_email.trim().toLowerCase() : '';
+        if ((u.email || '').toLowerCase() !== email && notifyTo !== email) continue;
+        if (meta.notify_fraud_trends === false && meta.notify_weekly_digest === false) continue;
+        await svc.auth.admin.updateUserById(u.id, {
+          user_metadata: { ...meta, notify_fraud_trends: false, notify_weekly_digest: false },
+        });
+      }
+      if (batch.length < 1000) break;
+    }
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not update your email settings right now.' };
+  }
   return r;
 }
 
 function htmlPage({ ok, email, error }: { ok: boolean; email: string; error?: string }): string {
   const heading = ok ? 'You&rsquo;re unsubscribed.' : 'Could not unsubscribe.';
   const body = ok
-    ? `<p style="margin:0 0 16px 0;">We&rsquo;ve removed <strong>${escape(email)}</strong> from the Haulock fraud briefing. You&rsquo;ll stop receiving the weekly newsletter immediately.</p>
+    ? `<p style="margin:0 0 16px 0;">We&rsquo;ve removed <strong>${escape(email)}</strong> from the Haulock fraud briefing. You&rsquo;ll stop receiving our newsletter, weekly summary and offers immediately.</p>
        <p style="margin:0 0 0 0;">Account-related emails (login alerts, billing receipts, high-risk lookups you triggered) are not affected. You can manage all email preferences from <a href="https://haulock.com/settings" style="color:#0B1E3F;text-decoration:underline;">your account settings</a>.</p>`
     : `<p style="margin:0 0 16px 0;">${escape(error || 'The link is invalid or has expired.')}</p>
        <p style="margin:0;">If you think this is a mistake, reply to any Haulock email and we&rsquo;ll sort it out by hand.</p>`;

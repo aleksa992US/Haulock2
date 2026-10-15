@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { checkAddress } from '@/lib/places';
@@ -234,7 +235,7 @@ export async function GET() {
   if (change) scored.autoChange = change;
 
   try {
-    await supabase.from('lookups').insert({
+    await (getServiceSupabase() || supabase).from('lookups').insert({
       user_id: me.id,
       query: queryStr,
       name: scored.name,

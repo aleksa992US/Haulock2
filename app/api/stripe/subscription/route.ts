@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe, planFromPriceId } from '@/lib/stripe';
+import { ownedCustomerId, pickLiveSubscription, subscriptionPlan } from '@/lib/billing';
+import { applyUserPlan } from '@/lib/teams';
+import { enforcedPlanId } from '@/lib/plans';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,11 +24,13 @@ export async function GET() {
 
   const svc = getServiceSupabase();
 
-  // Resolve customer id: prefer the one in metadata; otherwise look up by email.
-  let customerId: string | null = (me.user_metadata?.stripe_customer_id as string) || null;
+  // Resolve customer id: the stored one if it's really this user's;
+  // otherwise a Haulock customer with this email. The Stripe account is
+  // shared, so an email match alone could be another product's customer.
+  let customerId: string | null = await ownedCustomerId(stripe, me);
   if (!customerId) {
-    const match = await stripe.customers.list({ email: me.email, limit: 1 });
-    customerId = match.data[0]?.id || null;
+    const match = await stripe.customers.list({ email: me.email, limit: 10 });
+    customerId = match.data.find((c) => c.metadata?.product === 'haulock' && (!c.metadata?.user_id || c.metadata.user_id === me.id))?.id || null;
     if (customerId && svc) {
       await svc.auth.admin.updateUserById(me.id, {
         user_metadata: { ...(me.user_metadata || {}), stripe_customer_id: customerId },
@@ -43,8 +48,9 @@ export async function GET() {
   }
 
   // Pull all non-canceled subs for this customer.
-  const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 10, expand: ['data.latest_invoice'] });
-  const active = subs.data.find((s) => s.status === 'active' || s.status === 'trialing' || s.status === 'past_due');
+  // Haulock's own subscriptions only (the Stripe account is shared).
+  const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100, expand: ['data.latest_invoice'] });
+  const active = pickLiveSubscription(subs.data.filter((s) => s.metadata?.product === 'haulock'));
 
   if (!active) {
     return NextResponse.json({
@@ -60,20 +66,15 @@ export async function GET() {
   const amount = active.items.data[0]?.price?.unit_amount ?? null;
   const currency = (active.items.data[0]?.price?.currency || 'usd').toUpperCase();
   const interval = active.items.data[0]?.price?.recurring?.interval ?? null;
-  const metaPlan = active.metadata?.plan;
 
-  // Sync user_metadata to match reality.
-  const resolvedPlan = mapped?.plan || metaPlan || 'free';
-  if (svc && me.user_metadata?.plan !== resolvedPlan) {
-    await svc.auth.admin.updateUserById(me.id, {
-      user_metadata: {
-        ...(me.user_metadata || {}),
-        plan: resolvedPlan,
-        plan_changed_at: new Date().toISOString(),
-        stripe_customer_id: customerId,
-      },
-    });
-    await svc.from('teams').update({ plan: resolvedPlan }).eq('owner_user_id', me.id);
+  // Sync the enforced plan (and the team's) to match what they pay for. An
+  // unrecognised price/plan is left alone rather than written as the plan.
+  const resolvedPlan = subscriptionPlan(active);
+  if (svc && resolvedPlan && enforcedPlanId(me) !== resolvedPlan) {
+    await applyUserPlan(me.id, resolvedPlan);
+  }
+  if (svc && me.user_metadata?.stripe_customer_id !== customerId) {
+    await svc.auth.admin.updateUserById(me.id, { user_metadata: { ...(me.user_metadata || {}), stripe_customer_id: customerId } });
   }
 
   const periodEnd = (active as any).current_period_end ?? null;
@@ -102,7 +103,7 @@ export async function GET() {
     customerId,
     subscriptionId: active.id,
     status: active.status,
-    plan: resolvedPlan,
+    plan: resolvedPlan || 'free',
     billing: mapped?.billing || (interval === 'year' ? 'annual' : 'monthly'),
     amount,                 // list price (pre-discount), in cents
     lastPaidAmount,         // what the customer actually paid on last invoice, in cents

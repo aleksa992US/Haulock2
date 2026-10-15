@@ -89,6 +89,16 @@ async function run(req: Request) {
       : null;
     if (!email) { skipped += 1; results.push({ id: sub.id, status: 'no-email' }); continue; }
 
+    // Marketing email: honour an unsubscribe (which turns notify_fraud_trends
+    // off on the account) like the newsletter and nurture emails do.
+    const ownerId = sub.metadata?.user_id;
+    if (ownerId) {
+      const { data: owner } = await svc.auth.admin.getUserById(ownerId).catch(() => ({ data: null as any }));
+      if ((owner?.user?.user_metadata as any)?.notify_fraud_trends === false) {
+        skipped += 1; results.push({ id: sub.id, status: 'opted-out' }); continue;
+      }
+    }
+
     // Don't email if the customer already has another active Haulock
     // subscription — they got there by a different route.
     const customerId = typeof sub.customer === 'string' ? sub.customer : customer?.id;

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { monthStart } from '@/lib/plans';
+import { monthStart, enforcedPlanId } from '@/lib/plans';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
 
@@ -15,7 +15,7 @@ export async function GET() {
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const plan = ctx.effectivePlan;
   const since = monthStart().toISOString();
 
@@ -29,13 +29,16 @@ export async function GET() {
     }
   }
 
+  // Service-role reads: RLS on the user's client hides teammates' rows, so
+  // team usage showed only the caller's own share. Ids are limited above.
+  const db = getServiceSupabase() || supabase;
   const [quick, scans, forensics, coi, watchlist] = await Promise.all([
-    supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'quick').gte('created_at', since),
-    supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'ratecon').gte('created_at', since),
-    supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'forensics').gte('created_at', since),
-    supabase.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'coi').gte('created_at', since),
+    db.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'quick').gte('created_at', since),
+    db.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'ratecon').gte('created_at', since),
+    db.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'forensics').gte('created_at', since),
+    db.from('lookups').select('id', { count: 'exact', head: true }).in('user_id', countableUserIds).eq('source', 'coi').gte('created_at', since),
     // Own-company monitoring (data.own) isn't part of the watchlist limit.
-    supabase.from('watchlist').select('id, own:data->own').in('user_id', countableUserIds),
+    db.from('watchlist').select('id, own:data->own').in('user_id', countableUserIds),
   ]);
 
   return NextResponse.json({

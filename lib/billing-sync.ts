@@ -8,7 +8,7 @@ import { customerIdOf, isLiveSubscription, subscriptionPlan, summarizeBilling } 
 export type SyncUser = {
   id: string;
   email: string | null;
-  metaPlan: string | null;            // user_metadata.plan
+  metaPlan: string | null;            // app_metadata.plan (the plan the server enforces)
   stripeCustomerId: string | null;    // user_metadata.stripe_customer_id
   manualPlan: string | null;          // app_metadata.manual_plan (granted by an admin)
   team: { role: 'owner' | 'member'; plan: string } | null;

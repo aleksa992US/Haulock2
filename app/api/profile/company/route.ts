@@ -67,7 +67,8 @@ export async function GET() {
       const { data: members } = await svc.from('team_members').select('user_id').eq('team_id', ctx.team.id);
       exclude = Array.from(new Set([...exclude, ...(members || []).map((m: any) => m.user_id)]));
     }
-    body.checks = await companyCheckStats(svc, { mc, dot: verification.dot || dot }, exclude);
+    // Only the verified company's ids: the profile MC/DOT are user-editable.
+    body.checks = await companyCheckStats(svc, { mc: verification.mc, dot: verification.dot }, exclude);
   }
   return NextResponse.json(body);
 }

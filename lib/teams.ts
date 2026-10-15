@@ -1,5 +1,5 @@
 import { getServiceSupabase } from './supabase/service';
-import { getPlan, type Plan } from './plans';
+import { enforcedPlanId, getPlan, type Plan } from './plans';
 import { randomBytes } from 'crypto';
 
 export type TeamContext = {
@@ -11,7 +11,8 @@ export type TeamContext = {
 
 // For a given user, return the team they belong to (if any) plus their effective plan.
 // If user is on a team → use the team's plan.
-// Otherwise → use the user's user_metadata.plan.
+// Otherwise → the plan passed in, which callers read with enforcedPlanId()
+// (app_metadata, server-written) — never user_metadata.plan.
 export async function resolveTeamContext(userId: string, userMetaPlan?: string | null): Promise<TeamContext> {
   const svc = getServiceSupabase();
   if (!svc) {
@@ -35,13 +36,14 @@ export async function resolveTeamContext(userId: string, userMetaPlan?: string |
   return { team: null, role: null, ownerUserId: userId, effectivePlan: getPlan(userMetaPlan) };
 }
 
-// Writes a plan everywhere the app reads it: the user's own metadata and the
-// team they own (resolveTeamContext prefers the team's plan). Updating only
-// the metadata left canceled owners on paid limits through their team.
+// Writes a plan everywhere the app reads it: app_metadata.plan (what the
+// server enforces — only the service role can write it), user_metadata.plan
+// (display only; the user can edit it), and the team they own
+// (resolveTeamContext prefers the team's plan). Updating only the metadata
+// left canceled owners on paid limits through their team.
 //
 // `manual` marks a paid plan an admin granted without Stripe (a comp), so
-// the admin page doesn't flag it as unpaid. It lives in app_metadata, which
-// only the service role can write; user_metadata is editable by the user.
+// the admin page doesn't flag it as unpaid.
 export async function applyUserPlan(userId: string, plan: string, opts: { manual?: boolean } = {}): Promise<void> {
   const svc = getServiceSupabase();
   if (!svc) throw new Error('Service role not configured');
@@ -52,7 +54,7 @@ export async function applyUserPlan(userId: string, plan: string, opts: { manual
   const manualPlan = opts.manual && plan !== 'free' ? plan : null;
   const update: Record<string, any> = {};
   if (prev.plan !== plan) update.user_metadata = { ...prev, plan, plan_changed_at: new Date().toISOString() };
-  if ((prevApp.manual_plan ?? null) !== manualPlan) update.app_metadata = { ...prevApp, manual_plan: manualPlan };
+  if (prevApp.plan !== plan || (prevApp.manual_plan ?? null) !== manualPlan) update.app_metadata = { ...prevApp, plan, manual_plan: manualPlan };
   if (Object.keys(update).length) {
     const { error: updErr } = await svc.auth.admin.updateUserById(userId, update);
     if (updErr) throw new Error(updErr.message);
@@ -71,7 +73,7 @@ export async function currentPlansFor(userIds: string[]): Promise<Map<string, st
     svc.from('team_members').select('user_id, teams ( plan )').in('user_id', userIds),
     Promise.all(userIds.map((id) => svc.auth.admin.getUserById(id).then((r) => r.data?.user || null, () => null))),
   ]);
-  for (const u of users) if (u) out.set(u.id, getPlan(u.user_metadata?.plan).id);
+  for (const u of users) if (u) out.set(u.id, getPlan(enforcedPlanId(u)).id);
   for (const m of (members || []) as any[]) {
     const t = Array.isArray(m.teams) ? m.teams[0] : m.teams;
     if (t?.plan && out.has(m.user_id)) out.set(m.user_id, getPlan(t.plan).id);

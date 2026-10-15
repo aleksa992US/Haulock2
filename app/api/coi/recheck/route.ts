@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { buildCoiReport } from '@/lib/coi-check';
+import { checkSimpleRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,6 +18,9 @@ export async function POST(req: Request) {
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // Free of credits, but each run makes several FMCSA calls on our key.
+  const rl = checkSimpleRateLimit({ bucket: 'coi-recheck', identity: user.id, max: 20, windowMs: 60 * 60_000 });
+  if (!rl.ok) return NextResponse.json({ error: 'Too many re-checks — try again later.' }, { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } });
 
   const b = await req.json().catch(() => null) as { id?: string } | null;
   if (!b?.id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
@@ -46,7 +51,7 @@ export async function POST(req: Request) {
   }
   report.recheckedAt = new Date().toISOString();
 
-  await supabase.from('lookups').update({
+  await (getServiceSupabase() || supabase).from('lookups').update({
     name: report.name,
     mc: report.mc || null,
     dot: report.dot || null,

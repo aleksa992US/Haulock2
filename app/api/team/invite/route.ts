@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { resolveTeamContext, newInviteToken } from '@/lib/teams';
-import { getPlan } from '@/lib/plans';
+import { getPlan, enforcedPlanId } from '@/lib/plans';
 import { sendEmail, teamInviteTemplate, isResendConfigured } from '@/lib/email';
 
 export const runtime = 'nodejs';
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   const email = String(body?.email || '').trim().toLowerCase();
   if (!email || !isValidEmail(email)) return NextResponse.json({ error: 'Valid email required' }, { status: 400 });
 
-  const ctx = await resolveTeamContext(me.id, me.user_metadata?.plan);
+  const ctx = await resolveTeamContext(me.id, enforcedPlanId(me));
   if (!ctx.team || ctx.role !== 'owner') {
     return NextResponse.json({ error: 'Only the team owner can invite members' }, { status: 403 });
   }

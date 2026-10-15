@@ -15,7 +15,10 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
-  const next = url.searchParams.get('next') ?? '/';
+  // Same-site paths only: `//evil.com` or a full URL in ?next= would send
+  // the freshly signed-in user to another site.
+  const rawNext = url.searchParams.get('next') ?? '/';
+  const next = rawNext.startsWith('/') && !rawNext.startsWith('//') && !rawNext.includes('\\') ? rawNext : '/';
 
   // Some providers (and our own login form) redirect here on failure with
   // `?error=...&error_description=...`. Surface that immediately.

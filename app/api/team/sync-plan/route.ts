@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { ensureTeamForOwner } from '@/lib/teams';
-import { PLANS } from '@/lib/plans';
+import { applyUserPlan, ensureTeamForOwner } from '@/lib/teams';
+import { enforcedPlanId } from '@/lib/plans';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Called after a user picks a plan in the Plan picker.
-// Updates user_metadata.plan AND ensures the user has a team with that plan
-// (creates one if missing). Idempotent.
+// Two callers: switching to Free on the Plan page (body.plan = 'free'), and
+// "Set up team" on the Team tab, which creates the owner's team. The plan is
+// never taken from the request — it accepted any plan, so anyone could give
+// themselves Fleet. Paid plans are only set by Stripe (webhook / billing
+// sync) or an admin.
 export async function POST(req: Request) {
   const supabase = getServerSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
@@ -18,9 +20,6 @@ export async function POST(req: Request) {
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const body = await req.json().catch(() => null) as { plan?: string } | null;
-  const plan = body?.plan;
-  if (!plan || !(plan in PLANS)) return NextResponse.json({ error: 'Unknown plan' }, { status: 400 });
-
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
@@ -31,7 +30,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "You're a member of a team. Plan changes are managed by the team owner." }, { status: 403 });
   }
 
+  if (body?.plan === 'free') {
+    await applyUserPlan(me.id, 'free');
+    return NextResponse.json({ ok: true, plan: 'free' });
+  }
+
+  const plan = enforcedPlanId(me);
   const teamName = me.user_metadata?.company || me.user_metadata?.full_name || me.user_metadata?.name || me.email?.split('@')[0] || 'My team';
   const teamId = await ensureTeamForOwner({ userId: me.id, plan, name: teamName });
-  return NextResponse.json({ ok: true, teamId });
+  return NextResponse.json({ ok: true, teamId, plan });
 }

@@ -16,7 +16,8 @@ export async function GET() {
   const me = userData?.user;
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const meta: any = me.user_metadata || {};
+  // Server-written only (app_metadata); user_metadata is user-editable.
+  const meta: any = me.app_metadata || {};
   if (meta.role !== 'affiliate') {
     return NextResponse.json({ error: 'Affiliate access only' }, { status: 403 });
   }

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { getServerSupabase } from '@/lib/supabase/server';
-import { monthStart } from '@/lib/plans';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { resolveTeamContext } from '@/lib/teams';
-import { getServiceSupabase as getServiceSupabaseForLimits } from '@/lib/supabase/service';
+import { countMonthlyLookups } from '@/lib/usage';
 import { isDocAiConfigured } from '@/lib/google-docai';
 import { isAnthropicConfigured } from '@/lib/anthropic';
 import { analyzeRateConText, ocrForScan, PipelineError } from '@/lib/rate-con-pipeline';
@@ -23,25 +24,13 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   // Enforce plan limit (admins bypass; team plan + team-wide usage)
-  const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const plan = ctx.effectivePlan;
   const cap = plan.limits.rateConScans;
   if (cap != null && !(await isAdmin(user.email))) {
-    let countableIds: string[] = [user.id];
-    if (ctx.team) {
-      const svc2 = getServiceSupabaseForLimits();
-      if (svc2) {
-        const { data: members } = await svc2.from('team_members').select('user_id').eq('team_id', ctx.team.id);
-        countableIds = (members || []).map((m: any) => m.user_id);
-      }
-    }
-    const since = monthStart().toISOString();
-    const { count } = await supabase
-      .from('lookups')
-      .select('id', { count: 'exact', head: true })
-      .in('user_id', countableIds)
-      .eq('source', 'ratecon')
-      .gte('created_at', since);
+    // Service-role count: RLS hides teammates' rows from the user's
+    // client, which gave every team member the full team quota.
+    const count = await countMonthlyLookups(user.id, ctx, 'ratecon');
     if ((count ?? 0) >= cap) {
       return NextResponse.json({
         error: `Your ${ctx.team ? 'team' : 'account'} has used all ${cap} rate con scans on the ${plan.label} plan this month.`,
@@ -91,7 +80,7 @@ export async function POST(req: Request) {
     source: 'ratecon' as const,
     data: merged,
   };
-  try { await supabase.from('lookups').insert(row); } catch {}
+  try { await (getServiceSupabase() || supabase).from('lookups').insert(row); } catch {}
 
   return NextResponse.json(merged);
 }

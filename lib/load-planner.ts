@@ -392,7 +392,16 @@ export async function dieselPrices(): Promise<Record<string, DieselPrice>> {
   if (process.env.EIA_API_KEY) {
     try { prices = await dieselFromApi(process.env.EIA_API_KEY); if (!prices['U.S.']) prices = null; } catch { prices = null; }
   }
-  if (!prices) prices = await dieselFromWeb();
+  if (!prices) {
+    try {
+      prices = await dieselFromWeb();
+    } catch (err) {
+      // eia.gov's page doesn't always carry the table; last week's price on
+      // this instance beats counting fuel as $0.
+      if (dieselCache) return dieselCache.prices;
+      throw err;
+    }
+  }
   dieselCache = { at: Date.now(), prices };
   return prices;
 }

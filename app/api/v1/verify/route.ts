@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, AmbiguousNameError, NotFoundByNameError } from '@/lib/fmcsa';
 import { scoreCarrier } from '@/lib/risk';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { monthStart } from '@/lib/plans';
+import { monthStart, enforcedPlanId } from '@/lib/plans';
 import { checkAddress } from '@/lib/places';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
@@ -93,6 +93,11 @@ export async function GET(req: Request) {
       .select('*')
       .eq('user_id', user.id)
       .eq(col, parsed.value)
+      // Plain lookups only: a COI, PDF or rate con row for the same MC is a
+      // different payload, and a lookup run with a sender email carries
+      // that email's look-alike findings.
+      .eq('source', 'quick')
+      .is('email_query', null)
       .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(1);
@@ -118,7 +123,7 @@ export async function GET(req: Request) {
 
   // Enforce plan limit on FMCSA calls (admins bypass).
   if (!(await isAdmin(user.email))) {
-    const ctx = await resolveTeamContext(user.id, user.user_metadata?.plan);
+    const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
     const plan = ctx.effectivePlan;
     const cap = plan.limits.fmcsaLookups;
     if (cap != null) {

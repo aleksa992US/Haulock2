@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { enforcedPlanId } from '@/lib/plans';
 import { createHash } from 'crypto';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -85,7 +86,7 @@ export async function POST(req: Request) {
   const now = Date.now();
   const month = new Date().toISOString().slice(0, 7);
   const admin = user ? await isAdmin(user.email) : false;
-  const limit = user && !admin ? (await resolveTeamContext(user.id, user.user_metadata?.plan)).effectivePlan.limits.loadPlans : null;
+  const limit = user && !admin ? (await resolveTeamContext(user.id, enforcedPlanId(user))).effectivePlan.limits.loadPlans : null;
   const meta: PlannerMeta = (user?.app_metadata?.planner as PlannerMeta) || {};
   const times = user ? (meta.t || []) : (localBurst.get('local') || []);
   const plansUsed = meta.m === month ? meta.n || 0 : 0;

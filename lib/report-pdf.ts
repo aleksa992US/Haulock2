@@ -6,9 +6,22 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { carrierAuthorityLabel, recommendationFor } from './recommendation';
 
-// Standard PDF fonts only cover basic Latin; swap typographic punctuation.
+// Standard PDF fonts only cover basic Latin (WinAnsi); swap typographic
+// punctuation, and replace anything else they can't encode — pdf-lib throws
+// on it, e.g. the Cyrillic letters in a look-alike domain flag.
 function pdfSafe(t: string): string {
-  return t.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...');
+  return t.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...')
+    .replace(/[^\n\t\x20-\x7E\xA0-\xFF\u20AC\u2022\u2122]/g, '?');
+}
+
+// Every string in the report, made drawable.
+function pdfSafeDeep<T>(v: T): T {
+  if (typeof v === 'string') return pdfSafe(v) as unknown as T;
+  if (Array.isArray(v)) return v.map(pdfSafeDeep) as unknown as T;
+  if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+    return Object.fromEntries(Object.entries(v as any).map(([k, x]) => [k, pdfSafeDeep(x)])) as T;
+  }
+  return v;
 }
 
 // Brand palette — keep in sync with app/globals.css and Haulock.tsx.
@@ -30,7 +43,8 @@ const CONTENT_W = PAGE_W - MARGIN_X * 2;
 
 type Carrier = any;
 
-export async function buildReportPdf(report: Carrier): Promise<Uint8Array> {
+export async function buildReportPdf(input: Carrier): Promise<Uint8Array> {
+  const report = pdfSafeDeep(input);
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Haulock Risk Report — ${report.name || 'Carrier'}`);
   pdf.setAuthor('Haulock');

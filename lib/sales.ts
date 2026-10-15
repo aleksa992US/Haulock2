@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getPlan, monthStart } from './plans';
+import { getPlan, monthStart, enforcedPlanId } from './plans';
 
 // Shared by the admin Sales API routes: who every user is in the funnel,
 // what their own recent lookups were, and how merge tags resolve for them.
@@ -46,20 +46,45 @@ export type SalesLead = {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-export async function loadSalesLeads(svc: SupabaseClient): Promise<{ leads: SalesLead[]; pipelineReady: boolean }> {
-  const { data: authList, error: authErr } = await svc.auth.admin.listUsers({ perPage: 1000, page: 1 });
-  if (authErr) throw new Error(authErr.message);
-  const authUsers = authList?.users || [];
+// PostgREST returns at most 1,000 rows per request, so a plain select
+// silently drops the rest. Pages through by a unique column until done.
+async function selectAll(build: () => any, orderBy: string): Promise<{ data: any[]; error: any }> {
+  const out: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build().order(orderBy, { ascending: true }).range(from, from + 999);
+    if (error) return { data: out, error };
+    out.push(...(data || []));
+    if (!data || data.length < 1000) return { data: out, error: null };
+  }
+}
 
-  const [adminRows, lookupsAgg, cartRows, exitRows, leadRows, salesLog] = await Promise.all([
+export async function loadSalesLeads(svc: SupabaseClient): Promise<{ leads: SalesLead[]; pipelineReady: boolean }> {
+  const authUsers: any[] = [];
+  for (let page = 1; ; page += 1) {
+    const { data: authList, error: authErr } = await svc.auth.admin.listUsers({ perPage: 1000, page });
+    if (authErr) throw new Error(authErr.message);
+    const batch = authList?.users || [];
+    authUsers.push(...batch);
+    if (batch.length < 1000) break;
+  }
+
+  const [adminRows, lookupsAgg, cartRows, exitRows, leadRows, salesLog, teamRows] = await Promise.all([
     svc.from('admins').select('email'),
-    svc.from('lookups').select('user_id, source, created_at'),
-    svc.from('cart_recovery_sends').select('user_id, to_email, sent_at'),
+    selectAll(() => svc.from('lookups').select('id, user_id, source, created_at'), 'id'),
+    selectAll(() => svc.from('cart_recovery_sends').select('id, user_id, to_email, sent_at'), 'id'),
     // May not exist in every environment — a missing table just yields no rows.
-    svc.from('exit_intent_events').select('user_id, user_email, plan, kind, created_at'),
-    svc.from('sales_leads').select('user_id, stage, notes, follow_up_at, last_contacted_at'),
-    svc.from('email_log').select('to_email, sent_at').eq('kind', 'sales'),
+    selectAll(() => svc.from('exit_intent_events').select('id, user_id, user_email, plan, kind, created_at'), 'id'),
+    selectAll(() => svc.from('sales_leads').select('user_id, stage, notes, follow_up_at, last_contacted_at'), 'user_id'),
+    selectAll(() => svc.from('email_log').select('id, to_email, sent_at').eq('kind', 'sales'), 'id'),
+    // Team members get the team's plan; without it, members of paying teams
+    // showed up as Free leads.
+    selectAll(() => svc.from('team_members').select('user_id, teams ( plan )'), 'user_id'),
   ]);
+  const teamPlanByUser = new Map<string, string>();
+  for (const m of teamRows.data || []) {
+    const t = Array.isArray(m.teams) ? m.teams[0] : m.teams;
+    if (t?.plan) teamPlanByUser.set(m.user_id, t.plan);
+  }
   const adminSet = new Set((adminRows.data || []).map((r: any) => String(r.email).toLowerCase()));
   // sales_leads may be missing if the migration hasn't run — the tab still
   // works, just without manual stages and notes.
@@ -106,7 +131,7 @@ export async function loadSalesLeads(svc: SupabaseClient): Promise<{ leads: Sale
     .filter((u: any) => u.email && !adminSet.has(String(u.email).toLowerCase()))
     .map((u: any) => {
       const meta = u.user_metadata || {};
-      const plan = getPlan(meta.plan);
+      const plan = getPlan(teamPlanByUser.get(u.id) || enforcedPlanId(u));
       const email = String(u.email).toLowerCase();
       const l = lookupsByUser.get(u.id) || { total: 0, month: 0, lastAt: null };
       const checkout = checkoutBy.get(u.id) || checkoutBy.get(email) || null;
@@ -132,7 +157,7 @@ export async function loadSalesLeads(svc: SupabaseClient): Promise<{ leads: Sale
         company: meta.company || '',
         mc: meta.mc || '',
         dot: meta.dot || '',
-        role: meta.role || null,
+        role: u.app_metadata?.role || null,
         plan: plan.id,
         planLabel: plan.label,
         segment,

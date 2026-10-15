@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
-import { addOrUpdateContact, isAudienceConfigured } from '@/lib/resend-audience';
+import { addOrUpdateContact, isAudienceConfigured, listContacts } from '@/lib/resend-audience';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,9 +29,21 @@ export async function POST() {
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
-  const { data: usersData, error: usersErr } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
-  const users = usersData?.users || [];
+  const users: any[] = [];
+  for (let page = 1; ; page += 1) {
+    const { data: usersData, error: usersErr } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+    if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
+    const batch = usersData?.users || [];
+    users.push(...batch);
+    if (batch.length < 1000) break;
+  }
+
+  // People who unsubscribed by email link are unsubscribed in Resend; this
+  // sync must never turn that back on. If the list can't be read, stop
+  // rather than risk re-subscribing them.
+  const existing = await listContacts();
+  if (!existing.ok) return NextResponse.json({ error: existing.error || 'Could not read the Resend audience' }, { status: 502 });
+  const optedOut = new Set(existing.contacts.filter((c) => c.unsubscribed).map((c) => c.email.toLowerCase()));
 
   let added = 0;
   let updated = 0;
@@ -45,7 +57,13 @@ export async function POST() {
     if (!u.email_confirmed_at) { skipped += 1; continue; }
 
     const meta = u.user_metadata || {};
-    const wantsNewsletter = meta.notify_fraud_trends !== false;
+    const linkOptOut = optedOut.has(String(u.email).toLowerCase());
+    // Opted out by link before the unsubscribe route updated accounts too:
+    // copy it onto the account so Settings saves and other emails honour it.
+    if (linkOptOut && (meta.notify_fraud_trends !== false || meta.notify_weekly_digest !== false)) {
+      await svc.auth.admin.updateUserById(u.id, { user_metadata: { ...meta, notify_fraud_trends: false, notify_weekly_digest: false } });
+    }
+    const wantsNewsletter = meta.notify_fraud_trends !== false && !linkOptOut;
     const fullName: string = meta.full_name || meta.name || '';
     const [firstName, ...rest] = fullName.trim().split(/\s+/);
 

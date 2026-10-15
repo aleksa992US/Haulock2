@@ -29,9 +29,16 @@ async function run(req: Request) {
   const { getEmailSiteUrl } = await import('@/lib/email');
   const siteUrl = getEmailSiteUrl();
 
-  const { data: usersPage, error: usersErr } = await svc.auth.admin.listUsers({ perPage: 1000 });
-  if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
-  const users = (usersPage?.users || []).filter((u: any) => {
+  // Every page: Supabase Auth returns at most 1,000 users per call.
+  const allUsers: any[] = [];
+  for (let page = 1; ; page += 1) {
+    const { data: usersPage, error: usersErr } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+    if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
+    const batch = usersPage?.users || [];
+    allUsers.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  const users = allUsers.filter((u: any) => {
     const meta = u.user_metadata || {};
     return u.email && meta.notify_weekly_digest !== false;
   });
@@ -46,7 +53,8 @@ async function run(req: Request) {
     const recipientName = String(meta.full_name || meta.name || '');
 
     // Aggregate the week's activity for this user.
-    const [{ data: lookups }, { data: watch }, { data: watchChanged }] = await Promise.all([
+    // head:true counts come back as `count`; `data` is null.
+    const [{ data: lookups }, { count: watchTotal }, { count: watchChanged }] = await Promise.all([
       svc.from('lookups')
         .select('id, name, mc, dot, score, verdict, created_at')
         .eq('user_id', u.id)
@@ -87,8 +95,8 @@ async function run(req: Request) {
         dot: l.dot,
         score: Number(l.score) || 0,
       })),
-      watchlistTotal: (watch as any)?.count ?? 0,
-      watchlistChanges: (watchChanged as any)?.count ?? 0,
+      watchlistTotal: watchTotal ?? 0,
+      watchlistChanges: watchChanged ?? 0,
     };
 
     if (skipQuiet && stats.lookups === 0 && stats.watchlistChanges === 0) {

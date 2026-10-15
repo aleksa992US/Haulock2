@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import { isAdmin } from '@/lib/admin';
 import { getServerSupabase } from '@/lib/supabase/server';
 
@@ -14,13 +15,14 @@ export async function authorizeCronOrAdmin(req: Request): Promise<NextResponse |
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const auth = req.headers.get('authorization') || '';
-    if (auth === `Bearer ${secret}`) return null;
+    if (safeEqual(auth, `Bearer ${secret}`)) return null;
     const url = new URL(req.url);
-    if (url.searchParams.get('secret') === secret) return null;
+    if (safeEqual(url.searchParams.get('secret') || '', secret)) return null;
+  } else if (req.headers.get('x-vercel-cron') === '1') {
+    // Fallback only while CRON_SECRET isn't set: anyone can send this
+    // header, so once a secret exists only the Bearer token counts.
+    return null;
   }
-  // Vercel Cron sends a special header — accept it if the project is
-  // Vercel-deployed and CRON_SECRET isn't set yet.
-  if (req.headers.get('x-vercel-cron') === '1') return null;
 
   const supabase = getServerSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
@@ -28,4 +30,10 @@ export async function authorizeCronOrAdmin(req: Request): Promise<NextResponse |
   const me = data?.user;
   if (me?.email && (await isAdmin(me.email))) return null;
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }

@@ -4,6 +4,8 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { dotForMc, fetchCensusContact } from '@/lib/fmcsa-census';
 import { lookupCarrier, parseQuery } from '@/lib/fmcsa';
 import { attachViolationDetails, fetchRecentSafetyEvents } from '@/lib/fmcsa-inspections';
+import { currentPlansFor } from '@/lib/teams';
+import { isAdmin } from '@/lib/admin';
 import { sendEmail, safetyEventsTemplate, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange, type WatchlistFieldChange } from '@/lib/email';
 
 export const runtime = 'nodejs';
@@ -177,9 +179,12 @@ async function run(req: Request) {
   // Pull every user once so we know their email + notification preference.
   // Service role can list users via the auth admin API.
   const userMap = new Map<string, { email: string; notifyOn: boolean; notificationEmail: string | null }>();
-  {
-    const { data: usersPage } = await svc.auth.admin.listUsers({ perPage: 1000 });
-    for (const u of usersPage?.users || []) {
+  // Every page: users past the first 1,000 were silently never checked.
+  for (let page = 1; ; page += 1) {
+    const { data: usersPage, error: usersErr } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+    if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 500 });
+    const batch = usersPage?.users || [];
+    for (const u of batch) {
       const meta = (u.user_metadata || {}) as any;
       userMap.set(u.id, {
         email: u.email || '',
@@ -187,6 +192,17 @@ async function run(req: Request) {
         notificationEmail: typeof meta.notification_email === 'string' && meta.notification_email.trim() ? meta.notification_email.trim() : null,
       });
     }
+    if (batch.length < 1000) break;
+  }
+
+  // Own-company monitoring is a paid feature, checked when it's turned on.
+  // Re-check here so it stops after a downgrade to Free.
+  const ownUserIds = Array.from(new Set(rows.filter((r: any) => r.data?.own === true).map((r: any) => r.user_id as string)));
+  const ownPlans = await currentPlansFor(ownUserIds);
+  const ownAllowed = new Set<string>();
+  for (const id of ownUserIds) {
+    const plan = ownPlans.get(id) || 'free';
+    if (plan !== 'free' || (await isAdmin(userMap.get(id)?.email))) ownAllowed.add(id);
   }
 
   let processed = 0;
@@ -201,6 +217,12 @@ async function run(req: Request) {
     processed += 1;
     const u = userMap.get(row.user_id);
     if (!u?.email) { skipped += 1; continue; }
+    if (row.data?.own === true && !ownAllowed.has(row.user_id)) {
+      results.push({ id: row.id, status: 'own-not-in-plan' });
+      if (!dryRun) await svc.from('watchlist').update({ last_checked: checkedAt }).eq('id', row.id);
+      skipped += 1;
+      continue;
+    }
 
     // Own company: new roadside inspections and crashes. Runs before the
     // registry check, which can stop early when QCMobile is down.
@@ -221,6 +243,7 @@ async function run(req: Request) {
             const newIns = ev.inspections.filter((e) => !seenI.has(e.id));
             const newCrashes = ev.crashes.filter((c) => !seenC.has(c.id));
             const found = newIns.length + newCrashes.length > 0;
+            let sendFailed = false;
             if (found && u.notifyOn && isResendConfigured() && !dryRun) {
               await attachViolationDetails(newIns);
               const toAddress = u.notificationEmail || u.email;
@@ -235,10 +258,12 @@ async function run(req: Request) {
                 await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
                 sent += 1;
               } catch (err: any) {
+                sendFailed = true;
                 results.push({ id: row.id, status: 'safety-send-error', message: err?.message });
               }
             }
-            next = {
+            // A failed send keeps the old baseline so tomorrow's run retries.
+            next = sendFailed ? prev : {
               seenInspections: insIds,
               seenCrashes: crashIds,
               baselineAt: prev.baselineAt,
@@ -270,8 +295,10 @@ async function run(req: Request) {
       results.push({ id: row.id, status: 'fmcsa-error', message: err?.message });
       continue;
     }
-    if (fresh?.source !== 'fmcsa') {
-      // No live FMCSA data (e.g. no WebKey → mock carrier). Nothing to compare.
+    if (fresh?.source !== 'fmcsa' || (fresh.dataSource != null && fresh.dataSource !== 'fmcsa-live')) {
+      // No live FMCSA data: a mock carrier (no WebKey), or a fallback copy
+      // (daily file, cache, archive) whose fields differ from QCMobile's.
+      // Comparing those against a live baseline sent false "changed" emails.
       results.push({ id: row.id, status: 'no-live-data' });
       continue;
     }
@@ -330,7 +357,9 @@ async function run(req: Request) {
         await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
         sent += 1;
       } catch (err: any) {
+        // Keep the old baseline so the change is emailed on tomorrow's run.
         results.push({ id: row.id, status: 'send-error', message: err?.message });
+        continue;
       }
     }
 
