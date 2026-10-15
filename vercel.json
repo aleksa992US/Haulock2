@@ -42,7 +42,7 @@
     },
     {
       "path": "/api/cron/watchlist-updates",
-      "schedule": "0 13 * * *"
+      "schedule": "0 1,7,13,19 * * *"
     },
     {
       "path": "/api/cron/weekly-digest",

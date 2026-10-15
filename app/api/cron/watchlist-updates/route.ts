@@ -24,7 +24,7 @@ export const maxDuration = 300;
 // cross-reference checks don't run here. So the job never re-scores, never
 // says risk "improved" or "got worse", and never overwrites the saved full
 // report (row.data) or its score — the FMCSA snapshot is kept separately in
-// row.data.fmcsaWatch. Runs from Vercel Cron once a day. Safe to re-run: the
+// row.data.fmcsaWatch. Runs from Vercel Cron every 6 hours (each row about once a day). Safe to re-run: the
 // snapshot is updated after each check, so the same change isn't re-sent.
 //
 // For the user's own company (data.own) it also emails each new roadside
@@ -169,12 +169,22 @@ async function run(req: Request) {
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
-  const { data: rows, error } = await svc.from('watchlist').select('*').order('last_checked', { ascending: true, nullsFirst: true }).limit(500);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  if (!rows || rows.length === 0) return NextResponse.json({ ok: true, processed: 0 });
-
   const url = new URL(req.url);
   const dryRun = url.searchParams.get('dryRun') === '1';
+  // Runs every 6 hours and takes the rows not checked in the last 20 hours,
+  // oldest first, so each company is still checked about once a day but a
+  // long list is spread over several runs. force=1 (admin) checks them all.
+  const force = url.searchParams.get('force') === '1';
+  const dueBefore = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+  let rowsQuery = svc.from('watchlist').select('*').order('last_checked', { ascending: true, nullsFirst: true }).limit(500);
+  if (!force) rowsQuery = rowsQuery.or(`last_checked.is.null,last_checked.lt.${dueBefore}`);
+  const { data: rows, error } = await rowsQuery;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!rows || rows.length === 0) return NextResponse.json({ ok: true, processed: 0 });
+  // Stop well before the 300s limit; whatever is left is still due and
+  // goes first on the next run.
+  const stopAt = Date.now() + 240_000;
+  let stoppedEarly = false;
 
   // Pull every user once so we know their email + notification preference.
   // Service role can list users via the auth admin API.
@@ -214,6 +224,7 @@ async function run(req: Request) {
   const checkedAt = new Date().toISOString();
 
   for (const row of rows) {
+    if (Date.now() > stopAt) { stoppedEarly = true; break; }
     processed += 1;
     const u = userMap.get(row.user_id);
     if (!u?.email) { skipped += 1; continue; }
@@ -377,5 +388,5 @@ async function run(req: Request) {
     await new Promise((r) => setTimeout(r, 400));
   }
 
-  return NextResponse.json({ ok: true, processed, sent, skipped, dryRun, sample: results.slice(0, 10) });
+  return NextResponse.json({ ok: true, processed, sent, skipped, stoppedEarly, due: rows.length, dryRun, sample: results.slice(0, 10) });
 }

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { listContacts, isAudienceConfigured } from '@/lib/resend-audience';
-import { sendEmail, fraudTrendsTemplate, isResendConfigured } from '@/lib/email';
+import { fraudTrendsTemplate, isResendConfigured, recentlySentTo, sendEmailBatch } from '@/lib/email';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { pickWeekTopic, searchFraudNews, generateFraudArticle } from '@/lib/news-research';
 
 export const runtime = 'nodejs';
@@ -55,8 +56,12 @@ async function run(req: Request) {
   const siteUrl = getEmailSiteUrl();
 
   // Recipient set: either a single test address (for QA) or every subscribed
-  // contact in Resend.
+  // contact in Resend — minus account-level opt-outs (Settings, or an
+  // unsubscribe link at a time Resend's contact couldn't be updated) and
+  // anyone who already got this week's issue (a re-run or retry).
   let recipients: string[] = [];
+  let skippedOptOut = 0;
+  let skippedAlreadySent = 0;
   if (testRecipient) {
     recipients = [testRecipient.trim().toLowerCase()];
   } else {
@@ -64,34 +69,31 @@ async function run(req: Request) {
     if (!list.ok) {
       return NextResponse.json({ error: list.error || 'Resend list failed' }, { status: 500 });
     }
-    recipients = list.contacts.filter((c) => !c.unsubscribed && c.email).map((c) => c.email);
-  }
-
-  console.log('[cron/fraud-trends] sending to', { count: recipients.length });
-
-  let sent = 0;
-  let failed = 0;
-  // Sequential sends so we don't get rate-limited by Resend (free tier:
-  // 2/sec). For huge lists this would need batching, but Haulock is small.
-  for (const email of recipients) {
-    try {
-      const { subject, html } = fraudTrendsTemplate({
-        title: article.title,
-        preview: article.preview,
-        bodyHtml: article.bodyHtml,
-        sources: article.sources,
-        recipientEmail: email,
-        siteUrl,
-      });
-      await sendEmail({ to: email, subject, html, kind: 'newsletter' });
-      sent += 1;
-      // Polite spacing — 600ms keeps us well under Resend's free-tier limit.
-      await new Promise((r) => setTimeout(r, 600));
-    } catch (err: any) {
-      failed += 1;
-      console.warn('[cron/fraud-trends] send failed', { email, message: err?.message });
+    const optedOut = await accountOptOuts();
+    const already = await recentlySentTo('fraud_trends', new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString());
+    for (const c of list.contacts) {
+      const email = String(c.email || '').trim().toLowerCase();
+      if (!email || c.unsubscribed) continue;
+      if (optedOut.has(email)) { skippedOptOut += 1; continue; }
+      if (already.has(email)) { skippedAlreadySent += 1; continue; }
+      recipients.push(email);
     }
   }
+
+  console.log('[cron/fraud-trends] sending to', { count: recipients.length, skippedOptOut, skippedAlreadySent });
+
+  const { sent, failed, errors } = await sendEmailBatch(recipients.map((email) => {
+    const { subject, html } = fraudTrendsTemplate({
+      title: article.title,
+      preview: article.preview,
+      bodyHtml: article.bodyHtml,
+      sources: article.sources,
+      recipientEmail: email,
+      siteUrl,
+    });
+    return { to: email, subject, html, kind: 'fraud_trends' as const };
+  }));
+  if (errors.length) console.warn('[cron/fraud-trends] batch errors', errors.slice(0, 3));
 
   return NextResponse.json({
     ok: true,
@@ -100,6 +102,28 @@ async function run(req: Request) {
     sources: article.sources.length,
     sent,
     failed,
+    skippedOptOut,
+    skippedAlreadySent,
     totalRecipients: recipients.length,
   });
+}
+
+// Addresses (login or notification email) whose account has the newsletter
+// turned off.
+async function accountOptOuts(): Promise<Set<string>> {
+  const out = new Set<string>();
+  const svc = getServiceSupabase();
+  if (!svc) return out;
+  for (let page = 1; ; page += 1) {
+    const { data, error } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw new Error(error.message);
+    const batch = data?.users || [];
+    for (const u of batch) {
+      const meta: any = u.user_metadata || {};
+      if (meta.notify_fraud_trends !== false) continue;
+      if (u.email) out.add(u.email.toLowerCase());
+      if (typeof meta.notification_email === 'string' && meta.notification_email.trim()) out.add(meta.notification_email.trim().toLowerCase());
+    }
+    if (batch.length < 1000) return out;
+  }
 }

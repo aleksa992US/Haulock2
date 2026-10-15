@@ -6515,6 +6515,8 @@ function NewsletterAdminPanel() {
     : k === 'welcome' ? 'Welcome'
     : k === 'report_share' ? 'Report share'
     : k === 'newsletter' ? 'Newsletter'
+    : k === 'weekly_digest' ? 'Weekly digest'
+    : k === 'fraud_trends' ? 'Fraud briefing'
     : k === 'team_invite' ? 'Team invite'
     : k;
 
