@@ -18,30 +18,42 @@ export const dynamic = 'force-dynamic';
 // account using this address. Watchlist and safety alerts the user set up
 // stay on; they're managed in Settings.
 async function unsubscribe(email: string): Promise<{ ok: boolean; error?: string }> {
-  const r = await setSubscribed(email, false);
-  if (!r.ok) return r;
+  // The account settings are what our senders check, so they're written
+  // first and don't depend on Resend. Resend's contact flag is best-effort:
+  // a send-only Resend key can't edit contacts, and that used to make every
+  // unsubscribe link fail with "Could not unsubscribe".
+  let matched = 0;
+  let accountError: string | null = null;
   const svc = getServiceSupabase();
-  if (!svc) return r;
-  try {
-    for (let page = 1; ; page += 1) {
-      const { data, error } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
-      if (error) throw error;
-      const batch = data?.users || [];
-      for (const u of batch) {
-        const meta: any = u.user_metadata || {};
-        const notifyTo = typeof meta.notification_email === 'string' ? meta.notification_email.trim().toLowerCase() : '';
-        if ((u.email || '').toLowerCase() !== email && notifyTo !== email) continue;
-        if (meta.notify_fraud_trends === false && meta.notify_weekly_digest === false) continue;
-        await svc.auth.admin.updateUserById(u.id, {
-          user_metadata: { ...meta, notify_fraud_trends: false, notify_weekly_digest: false },
-        });
+  if (svc) {
+    try {
+      for (let page = 1; ; page += 1) {
+        const { data, error } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+        if (error) throw error;
+        const batch = data?.users || [];
+        for (const u of batch) {
+          const meta: any = u.user_metadata || {};
+          const notifyTo = typeof meta.notification_email === 'string' ? meta.notification_email.trim().toLowerCase() : '';
+          if ((u.email || '').toLowerCase() !== email && notifyTo !== email) continue;
+          matched += 1;
+          if (meta.notify_fraud_trends === false && meta.notify_weekly_digest === false) continue;
+          const { error: updErr } = await svc.auth.admin.updateUserById(u.id, {
+            user_metadata: { ...meta, notify_fraud_trends: false, notify_weekly_digest: false },
+          });
+          if (updErr) throw updErr;
+        }
+        if (batch.length < 1000) break;
       }
-      if (batch.length < 1000) break;
+    } catch (err: any) {
+      accountError = err?.message || 'Could not update your email settings right now.';
     }
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Could not update your email settings right now.' };
   }
-  return r;
+  const resend = await setSubscribed(email, false).catch(() => ({ ok: false }));
+  if (!resend.ok) console.warn('[unsubscribe] Resend contact not updated', { email });
+  if (accountError) return { ok: false, error: accountError };
+  // An address with no account exists only as a Resend contact.
+  if (matched === 0 && !resend.ok) return { ok: false, error: 'Could not update your subscription right now.' };
+  return { ok: true };
 }
 
 function htmlPage({ ok, email, error }: { ok: boolean; email: string; error?: string }): string {
