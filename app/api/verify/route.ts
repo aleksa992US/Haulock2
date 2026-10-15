@@ -7,6 +7,7 @@ import { checkAddress } from '@/lib/places';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
 import { countMonthlyLookups } from '@/lib/usage';
+import { getServiceSupabase } from '@/lib/supabase/service';
 import { findCarrierWebsite, assessWebsiteOwnership } from '@/lib/website-finder';
 import { checkDomain } from '@/lib/domain';
 import { findSocialLinks } from '@/lib/social-finder';
@@ -953,5 +954,30 @@ export async function GET(req: Request) {
     }
   }
   console.log(''); // visual gap after each scan
+
+  // Usage is recorded here, not by the browser: the monthly limit and the
+  // per-minute rate limit count these rows, and a caller that skipped the
+  // browser's follow-up save used to get unlimited lookups. The browser
+  // only attaches its extras (the sender-email domain check) to this row
+  // via /api/lookups. Admin tools can pass record=0 (Sales re-scans run on
+  // other people's companies and shouldn't fill the admin's history).
+  const skipRecord = searchParams.get('record') === '0' && user && (await isAdmin(user.email));
+  if (user && !skipRecord) {
+    const email = queriedEmail.trim() || null;
+    const { data: saved, error: saveErr } = await (getServiceSupabase() || supabase)!.from('lookups').insert({
+      user_id: user.id,
+      query: q,
+      name: scored.name || '',
+      mc: scored.mc || null,
+      dot: scored.dot || null,
+      score: typeof scored.score === 'number' ? scored.score : 0,
+      verdict: scored.verdict || 'low',
+      email_query: email,
+      source: 'quick',
+      data: { ...scored, query: q, queriedEmail: email || undefined },
+    }).select('id').single();
+    if (saveErr) console.error('[verify] could not record lookup', saveErr.message);
+    else scored.lookupId = saved.id;
+  }
   return NextResponse.json(scored);
 }

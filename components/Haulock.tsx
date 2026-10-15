@@ -63,6 +63,19 @@ function consumePostLoginRedirect(): string | null {
 
 // Lazy-mount each page once and toggle visibility with display:none on subsequent navigations.
 // Keeps state, scroll position, and avoids re-firing useEffect fetches on every tab switch.
+// /api/verify records each fresh lookup itself (that row is what the plan
+// limits count). The browser only attaches what it adds afterwards — the
+// sender-email domain check — to that row, then refreshes the counts.
+function saveLookupExtras(data: any, extras: { domain?: any; queriedEmail?: string } = {}) {
+  const refresh = () => invalidateCache('lookups:200', 'usage', 'alerts');
+  if (!data?.lookupId || (!extras.domain && !extras.queriedEmail)) { refresh(); return; }
+  fetch('/api/lookups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lookupId: data.lookupId, domain: extras.domain, queriedEmail: extras.queriedEmail }),
+  }).then(refresh, refresh);
+}
+
 // Document uploads go through a Vercel function, which rejects request
 // bodies over 4.5 MB with a plain-text 413 before our route runs; timeouts
 // come back as a plain-text 504. Check size up front, and read error bodies
@@ -7589,7 +7602,8 @@ function SalesComposer({ recipients, audience, adminEmail, onClose, onSent }: {
       while (next < companies.length) {
         const c = companies[next++];
         try {
-          const r = await fetch(`/api/verify?q=${encodeURIComponent(c.query)}&force=1`);
+          // record=0: admin re-scans of leads' companies stay out of the admin's history.
+          const r = await fetch(`/api/verify?q=${encodeURIComponent(c.query)}&force=1&record=0`);
           const report = await r.json();
           if (!r.ok) throw new Error(report?.error || 'scan failed');
           const saved = await fetch('/api/admin/sales/rescans', {
@@ -8966,8 +8980,7 @@ function HeaderSearch({ navigate }: { navigate: any }) {
         throw new Error(data?.error || `Lookup failed (${res.status})`);
       }
       if (!data?.cached) {
-        fetch('/api/lookups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-          .then(() => invalidateCache('lookups:200', 'usage', 'alerts')).catch(() => {});
+        saveLookupExtras(data);
         if (data?.verdict === 'high') {
           fetch('/api/email/high-risk-alert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report: data }) }).catch(() => {});
         }
@@ -11149,11 +11162,7 @@ function VerifyTool({ navigate }: any) {
       const [data, domain] = await Promise.all(promises);
       const merged = { ...data, domain: domain || data.domain || undefined, queriedEmail: e || data.queriedEmail || undefined };
       if (!data?.cached) {
-        fetch('/api/lookups', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(merged),
-        }).then(() => invalidateCache('lookups:200', 'usage', 'alerts')).catch(() => {});
+        saveLookupExtras(data, { domain: merged.domain, queriedEmail: merged.queriedEmail });
         if (data?.verdict === 'high') {
           fetch('/api/email/high-risk-alert', {
             method: 'POST',
@@ -12485,9 +12494,7 @@ function CarrierReport({ report, navigate }: any) {
         if (dres.ok) domain = await dres.json();
       }
       const merged = { ...data, domain, queriedEmail: e };
-      fetch('/api/lookups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) })
-        .then(() => invalidateCache('lookups:200', 'usage', 'alerts'))
-        .catch(() => {});
+      saveLookupExtras(data, { domain, queriedEmail: e });
       if (data?.verdict === 'high') {
         fetch('/api/email/high-risk-alert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report: data }) }).catch(() => {});
       }
@@ -13243,7 +13250,7 @@ function CarrierReport({ report, navigate }: any) {
                     try {
                       const resp = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
                       const data = await resp.json();
-                      if (resp.ok) navigate('report', data);
+                      if (resp.ok) { if (!data?.cached) saveLookupExtras(data); navigate('report', data); }
                     } catch { /* swallow — modal already showed user we tried */ }
                   };
                   const onClick = () => {
@@ -14400,7 +14407,7 @@ function FmcsaArchivePanel({ data, navigate }: { data: NonNullable<any>; navigat
                 try {
                   const res = await fetch(`/api/verify?q=${encodeURIComponent(q)}`);
                   const j = await res.json();
-                  if (res.ok) navigate('report', j);
+                  if (res.ok) { if (!j?.cached) saveLookupExtras(j); navigate('report', j); }
                 } catch { /* ignore */ }
               };
               return (
@@ -15382,8 +15389,7 @@ function SearchHistory({ navigate }: any) {
       // before the report opens — same UX as the Verify tool.
       setScanResult(merged);
       if (!data?.cached) {
-        fetch('/api/lookups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) })
-          .then(() => invalidateCache('lookups:200', 'usage', 'alerts')).catch(() => {});
+        saveLookupExtras(data, { domain: merged.domain, queriedEmail: merged.queriedEmail });
         if (data?.verdict === 'high') {
           fetch('/api/email/high-risk-alert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report: data }) }).catch(() => {});
         }
