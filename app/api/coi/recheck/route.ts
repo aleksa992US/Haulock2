@@ -45,6 +45,7 @@ export async function POST(req: Request) {
       mc: saved.mc || null,
       dot: saved.dot || null,
       forensics: saved.forensics ?? null,
+      identifiedAs: saved.identifiedBy ?? null,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Re-check failed' }, { status: 502 });
