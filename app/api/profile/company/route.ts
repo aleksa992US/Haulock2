@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { checkSimpleRateLimit } from '@/lib/rate-limit';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
@@ -130,17 +131,25 @@ export async function POST(req: Request) {
   }
 
   if (b?.action === 'confirm_code') {
+    // The attempt counter lives in app_metadata and is read-modify-written,
+    // so many guesses sent at once all saw the same count. Cap attempts per
+    // user before checking (5 per half hour, the same as one code allows).
+    const rl = checkSimpleRateLimit({ bucket: 'company-code', identity: user.id, max: 5, windowMs: 30 * 60_000 });
+    if (!rl.ok) return NextResponse.json({ ok: false, error: 'Too many tries. Wait a little, then send a new code.' }, { status: 429 });
     const r = checkVerificationCode(user, String((b as any).code || ''));
     const meta: any = { ...(user.app_metadata || {}) };
     if (r.ok === false) {
       const f = r as Extract<typeof r, { ok: false }>;
-      if (f.pending === null) delete meta.company_verification_pending;
+      // null, not delete: Supabase merges app_metadata, so a missing key
+      // left the old pending code in place.
+      // Keep only the send times, so the 3-codes-an-hour limit still holds.
+      if (f.pending === null) meta.company_verification_pending = { sends: (meta.company_verification_pending?.sends || []) };
       else if (f.pending) meta.company_verification_pending = f.pending;
       if (f.pending !== undefined) await svc.auth.admin.updateUserById(user.id, { app_metadata: meta });
       return NextResponse.json({ ok: false, error: f.error }, { status: 200 });
     }
     const okR = r as Extract<typeof r, { ok: true }>;
-    delete meta.company_verification_pending;
+    meta.company_verification_pending = null; // used up (see above: null, not delete)
     meta.company_verification = okR.verification;
     const { error } = await svc.auth.admin.updateUserById(user.id, { app_metadata: meta });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
