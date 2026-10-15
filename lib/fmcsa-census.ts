@@ -86,7 +86,8 @@ export async function dotForMc(mc: string | null | undefined): Promise<string | 
   const digits = String(mc ?? '').replace(/\D/g, '').replace(/^0+/, '');
   if (!digits) return null;
   const registry = process.env.FMCSA_REGISTRY_DATASET_ID || '6eyk-hxee';
-  const params = new URLSearchParams({ $where: `docket_number = 'MC${digits}'`, $limit: '1', $select: 'dot_number' });
+  // Dockets are zero-padded to 6 digits in the registry ("MC012345").
+  const params = new URLSearchParams({ $where: `docket_number IN ('MC${digits.padStart(6, '0')}', 'MC${digits}')`, $limit: '1', $select: 'dot_number' });
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (process.env.SOCRATA_APP_TOKEN) headers['X-App-Token'] = process.env.SOCRATA_APP_TOKEN;
   const controller = new AbortController();

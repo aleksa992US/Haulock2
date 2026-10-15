@@ -59,18 +59,30 @@ async function run(req: Request) {
 
   // Pull both buckets — Stripe filters by status, not by age, so we page
   // through and apply age windows in JS.
-  const incompleteList = await stripe.subscriptions.list({
-    status: 'incomplete',
-    limit: 100,
-    expand: ['data.customer', 'data.items.data.price'],
-  });
-  const expiredList = await stripe.subscriptions.list({
-    status: 'incomplete_expired',
-    limit: 100,
-    expand: ['data.customer', 'data.items.data.price'],
-  });
-  const candidates = [...incompleteList.data, ...expiredList.data]
-    .filter((s) => s.metadata?.product === 'haulock');
+  // Haulock's own unfinished checkouts, every page. Listing by status read
+  // only the first 100 across the whole shared Stripe account, and the
+  // Haulock filter ran after that, so 7-day reminders could be missed.
+  const candidates: any[] = [];
+  for (const status of ['incomplete', 'incomplete_expired']) {
+    for await (const s of stripe.subscriptions.search({
+      query: `metadata['product']:'haulock' AND status:'${status}'`,
+      limit: 100,
+      expand: ['data.customer', 'data.items.data.price'],
+    }) as any) {
+      candidates.push(s);
+      if (candidates.length >= 1000) break;
+    }
+  }
+  // One email per person per stage: someone who started checkout twice has
+  // two subscriptions and used to get both reminders twice.
+  const recentSends = new Set<string>();
+  {
+    const { data: rows } = await svc.from('cart_recovery_sends')
+      .select('to_email, kind')
+      .gte('sent_at', new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString())
+      .limit(5000);
+    for (const r of rows || []) recentSends.add(`${String(r.to_email || '').toLowerCase()}|${r.kind}`);
+  }
 
   let processed = 0;
   let sent = 0;
@@ -121,6 +133,10 @@ async function run(req: Request) {
     const recipientName = (typeof customer === 'object' && customer && !customer.deleted)
       ? (customer.name || undefined)
       : undefined;
+
+    const personKey = `${email.toLowerCase()}|${stage.kind}`;
+    if (recentSends.has(personKey)) { skipped += 1; results.push({ id: sub.id, status: 'already-reminded', stage: stage.kind }); continue; }
+    recentSends.add(personKey);
 
     // Insert dedupe row first — if it conflicts on the unique index, this
     // sub already got this stage and we move on. Doing the insert before

@@ -3,6 +3,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
+import { enforcedPlanId } from '@/lib/plans';
 import { NOTIFY_DELAY_MS, companyChecksSince, currentVerification } from '@/lib/company-profile';
 
 export const runtime = 'nodejs';
@@ -20,12 +21,18 @@ export async function GET(req: Request) {
   const svc = getServiceSupabase();
   const verification = currentVerification(user);
   if (!svc || !verification) return NextResponse.json({ enabled: false });
-  const ctx = await resolveTeamContext(user.id, (user.user_metadata as any)?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   if (ctx.effectivePlan.id === 'free' && !(await isAdmin(user.email))) return NextResponse.json({ enabled: false });
 
-  const until = new Date(Date.now() - NOTIFY_DELAY_MS).toISOString();
+  // Whole hours only, on both ends. `since` comes from the browser, so
+  // exact timestamps let an owner poll or binary-search the window and pin
+  // each check to the minute (and to "the broker I just sent my rate con
+  // to"). Hourly buckets, at least NOTIFY_DELAY_MS behind, only say how many.
+  const HOUR = 60 * 60 * 1000;
+  const floorHour = (ms: number) => Math.floor(ms / HOUR) * HOUR;
+  const until = new Date(floorHour(Date.now() - NOTIFY_DELAY_MS)).toISOString();
   const sinceParam = new URL(req.url).searchParams.get('since');
-  const since = sinceParam && !Number.isNaN(Date.parse(sinceParam)) ? new Date(sinceParam).toISOString() : null;
+  const since = sinceParam && !Number.isNaN(Date.parse(sinceParam)) ? new Date(floorHour(Date.parse(sinceParam))).toISOString() : null;
   // First call on a device: just hand back the cursor — don't toast history.
   if (!since || since >= until) return NextResponse.json({ enabled: true, count: 0, until });
 

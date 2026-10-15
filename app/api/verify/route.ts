@@ -174,7 +174,11 @@ export async function GET(req: Request) {
       hasOperation: carrier.operation != null,
     });
   } catch (err: any) {
-    console.error('[verify] FMCSA lookup FAILED', err?.message);
+    // "Which company?" and "no such name" are normal answers, not errors;
+    // logging them as errors filled the production error log.
+    const expected = err instanceof AmbiguousNameError || err?.code === 'ambiguous_name' || err instanceof NotFoundByNameError;
+    if (expected) console.log('[verify] name search needs a choice or found nothing:', err?.message);
+    else console.error('[verify] FMCSA lookup FAILED', err?.message);
     // The name matches several companies, or none closely enough to accept
     // without asking. Same 409 shape as `ambiguous_number`: each candidate's
     // `query` (MC-… / DOT-…) picks it. Clients re-run with that query plus

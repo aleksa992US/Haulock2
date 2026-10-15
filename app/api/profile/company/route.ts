@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
+import { checkSimpleRateLimit } from '@/lib/rate-limit';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { resolveTeamContext } from '@/lib/teams';
+import { enforcedPlanId } from '@/lib/plans';
 import { checkVerificationCode, companyCheckStats, createVerificationCode, currentVerification, ownIds, resolveOwnDot, verifyCompanyOwnership } from '@/lib/company-profile';
 import { companyVerificationCodeTemplate, getEmailSiteUrl, sendEmail } from '@/lib/email';
 
@@ -23,7 +25,7 @@ async function context() {
   const svc = getServiceSupabase();
   if (!svc) return { error: NextResponse.json({ error: 'Service role not configured' }, { status: 500 }) };
   const admin = await isAdmin(user.email);
-  const ctx = await resolveTeamContext(user.id, (user.user_metadata as any)?.plan);
+  const ctx = await resolveTeamContext(user.id, enforcedPlanId(user));
   const paid = admin || ctx.effectivePlan.id !== 'free';
   return { user, svc, paid, ctx };
 }
@@ -129,17 +131,25 @@ export async function POST(req: Request) {
   }
 
   if (b?.action === 'confirm_code') {
+    // The attempt counter lives in app_metadata and is read-modify-written,
+    // so many guesses sent at once all saw the same count. Cap attempts per
+    // user before checking (5 per half hour, the same as one code allows).
+    const rl = checkSimpleRateLimit({ bucket: 'company-code', identity: user.id, max: 5, windowMs: 30 * 60_000 });
+    if (!rl.ok) return NextResponse.json({ ok: false, error: 'Too many tries. Wait a little, then send a new code.' }, { status: 429 });
     const r = checkVerificationCode(user, String((b as any).code || ''));
     const meta: any = { ...(user.app_metadata || {}) };
     if (r.ok === false) {
       const f = r as Extract<typeof r, { ok: false }>;
-      if (f.pending === null) delete meta.company_verification_pending;
+      // null, not delete: Supabase merges app_metadata, so a missing key
+      // left the old pending code in place.
+      // Keep only the send times, so the 3-codes-an-hour limit still holds.
+      if (f.pending === null) meta.company_verification_pending = { sends: (meta.company_verification_pending?.sends || []) };
       else if (f.pending) meta.company_verification_pending = f.pending;
       if (f.pending !== undefined) await svc.auth.admin.updateUserById(user.id, { app_metadata: meta });
       return NextResponse.json({ ok: false, error: f.error }, { status: 200 });
     }
     const okR = r as Extract<typeof r, { ok: true }>;
-    delete meta.company_verification_pending;
+    meta.company_verification_pending = null; // used up (see above: null, not delete)
     meta.company_verification = okR.verification;
     const { error } = await svc.auth.admin.updateUserById(user.id, { app_metadata: meta });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -149,7 +159,14 @@ export async function POST(req: Request) {
   if (b?.action === 'monitor') {
     const existing = await ownWatchRow(svc, user.id);
     if (b.on === false) {
-      if (existing) await svc.from('watchlist').delete().eq('id', existing.id).eq('user_id', user.id);
+      if (existing?.data?.ownAdopted) {
+        // The company was on the regular watchlist before monitoring was
+        // turned on: keep that entry, just stop the own-company monitoring.
+        const { own, ownAdopted, safetyWatch, ...rest } = existing.data || {};
+        await svc.from('watchlist').update({ data: rest }).eq('id', existing.id).eq('user_id', user.id);
+      } else if (existing) {
+        await svc.from('watchlist').delete().eq('id', existing.id).eq('user_id', user.id);
+      }
       return NextResponse.json({ ok: true, monitoring: { on: false } });
     }
     if (existing) return NextResponse.json({ ok: true, monitoring: { on: true } });
@@ -167,7 +184,8 @@ export async function POST(req: Request) {
       // Same company already on the regular watchlist: mark that row as own.
       const { data: rows } = await svc.from('watchlist').select('id, data').eq('user_id', user.id).or([mc ? `mc.eq.${mc}` : null, usdot ? `dot.eq.${usdot}` : null].filter(Boolean).join(','));
       if (rows && rows[0]) {
-        await svc.from('watchlist').update({ data: { ...(rows[0].data || {}), own: true } }).eq('id', rows[0].id);
+        // ownAdopted: turning monitoring off later keeps this entry.
+        await svc.from('watchlist').update({ data: { ...(rows[0].data || {}), own: true, ownAdopted: true } }).eq('id', rows[0].id);
       } else {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }

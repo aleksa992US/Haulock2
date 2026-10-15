@@ -4,6 +4,7 @@ import { getServiceSupabase } from '@/lib/supabase/service';
 import { isAdmin } from '@/lib/admin';
 import { getStripe } from '@/lib/stripe';
 import { applyUserPlan } from '@/lib/teams';
+import { customerIdOf, pickLiveSubscription, subscriptionPlan } from '@/lib/billing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,8 +53,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({ error: e?.message || 'Stripe error' }, { status: 502 });
   }
 
-  // Don't wait for Stripe's webhook: a subscription canceled now means Free
-  // now. (At period end, the plan changes when the period actually ends.)
+  // Don't wait for Stripe's webhook: apply the plan now. That's Free unless
+  // the customer has another live Haulock subscription (e.g. this one was a
+  // duplicate) — then that one's plan. (At period end, the plan changes when
+  // the period actually ends.)
   let movedToFree: string | null = null;
   if (when === 'now') {
     const userId = typeof body?.userId === 'string' && body.userId ? body.userId : sub.metadata?.user_id;
@@ -61,8 +64,15 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     if (userId && svc) {
       const { data } = await svc.auth.admin.getUserById(userId);
       if (data?.user) {
-        await applyUserPlan(userId, 'free');
-        movedToFree = data.user.email || userId;
+        const customerId = customerIdOf(sub);
+        let plan = 'free';
+        if (customerId) {
+          const rest = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
+          const live = pickLiveSubscription(rest.data.filter((s) => s.id !== sub.id && s.metadata?.product === 'haulock'));
+          plan = (live && subscriptionPlan(live)) || 'free';
+        }
+        await applyUserPlan(userId, plan);
+        if (plan === 'free') movedToFree = data.user.email || userId;
       }
     }
   }

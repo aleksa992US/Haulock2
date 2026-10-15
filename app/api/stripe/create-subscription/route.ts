@@ -63,6 +63,14 @@ export async function POST(req: Request) {
 
   // Reuse an existing Stripe customer id stored on the user, or create one.
   const svc = getServiceSupabase();
+  // Team members are on the team's plan (it always wins), so a plan they buy
+  // themselves would charge them and never apply.
+  if (svc) {
+    const { data: membership } = await svc.from('team_members').select('role').eq('user_id', me.id).maybeSingle();
+    if (membership && membership.role !== 'owner') {
+      return NextResponse.json({ error: "You're on a team, so you use the team's plan. The team owner manages billing.", code: 'team_member' }, { status: 403 });
+    }
+  }
   // The stored id is only reused if that customer is really this user's.
   let customerId: string | null = await ownedCustomerId(stripe, me);
   if (!customerId) {

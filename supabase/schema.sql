@@ -222,7 +222,7 @@ drop policy if exists "fraud_reports_delete_own" on public.fraud_reports;
 create table if not exists public.admins (
   email text primary key,
   created_at timestamptz not null default now(),
-  added_by uuid references auth.users(id)
+  added_by uuid references auth.users(id) on delete set null
 );
 
 alter table public.admins enable row level security;
