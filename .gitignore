@@ -63,3 +63,6 @@ public/motor-carrier*.csv
 *.tsbuildinfo
 next-env.d.ts
 node_modules
+
+# Promo videos (Remotion project, recordings, renders): kept locally, not in the repo
+/promo-videos/
