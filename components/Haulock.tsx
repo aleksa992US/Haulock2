@@ -3090,7 +3090,7 @@ function Footer({ navigate }: any) {
           ))}
         </div>
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pt-8">
-          <div className="text-sm text-white/50">© 2026 Haulock, Inc. All rights reserved.</div>
+          <div className="text-sm text-white/50">© 2026 Haulock, a trade name of Ella AI LLC. All rights reserved.</div>
           <div className="flex items-center gap-4 text-xs mono text-white/50">
             <span className="flex items-center gap-2"><ShieldCheck className="w-3.5 h-3.5" /> Official FMCSA data</span>
             <span>·</span>
@@ -3620,7 +3620,7 @@ function Pricing({ navigate, user }: any) {
 
 function LegalPage({ page, navigate, user }: { page: 'terms' | 'privacy'; navigate: any; user?: any }) {
   const isTerms = page === 'terms';
-  const lastUpdated = 'November 15, 2026';
+  const lastUpdated = 'November 21, 2026';
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
@@ -3667,7 +3667,7 @@ function TermsContent() {
   return (
     <div>
       <LegalP>
-        Welcome to Haulock. These Terms of Use (&ldquo;Terms&rdquo;) govern your access to and use of the Haulock website, dashboard, API, emails, and any related services (together, the &ldquo;Service&rdquo;). By creating an account, running a lookup, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.
+        Welcome to Haulock. Haulock is a trade name of Ella AI LLC, a Florida limited liability company (&ldquo;Haulock,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;). These Terms of Use (&ldquo;Terms&rdquo;) govern your access to and use of the Haulock website, dashboard, API, emails, and any related services (together, the &ldquo;Service&rdquo;). By creating an account, running a lookup, or otherwise using the Service, you agree to these Terms. If you do not agree, do not use the Service.
       </LegalP>
 
       <LegalH2>1. What Haulock is</LegalH2>
@@ -3783,7 +3783,7 @@ function TermsContent() {
 
       <LegalH2>13. Governing law and disputes</LegalH2>
       <LegalP>
-        These Terms are governed by the laws of the State of Delaware, United States, without regard to its conflict of laws rules. Any dispute arising out of or relating to the Service or these Terms will be resolved in the state or federal courts located in Delaware, and you consent to personal jurisdiction in those courts. Where applicable law allows, you and Haulock waive any right to a jury trial and to participate in any class action arising out of or relating to the Service.
+        These Terms are governed by the laws of the State of Florida, United States, without regard to its conflict of laws rules. Any dispute arising out of or relating to the Service or these Terms will be resolved in the state or federal courts located in Lee County, Florida, and you consent to personal jurisdiction in those courts. Where applicable law allows, you and Haulock waive any right to a jury trial and to participate in any class action arising out of or relating to the Service.
       </LegalP>
 
       <LegalH2>14. Contact</LegalH2>
@@ -3798,7 +3798,7 @@ function PrivacyContent() {
   return (
     <div>
       <LegalP>
-        This Privacy Policy explains what information Haulock collects, how we use it, who we share it with, and what choices you have. By using Haulock, you agree to the practices described here.
+        Haulock is a trade name of Ella AI LLC, a Florida limited liability company, which runs the Service and is responsible for the information described here. This Privacy Policy explains what information Haulock collects, how we use it, who we share it with, and what choices you have. By using Haulock, you agree to the practices described here.
       </LegalP>
 
       <LegalH2>1. Information we collect</LegalH2>

@@ -45,7 +45,7 @@ export function DirectoryFooter() {
           Haulock is not affiliated with FMCSA or with the companies listed. Reports are statements by the verified company or driver that filed them.
           If a detail about your company is wrong, it is corrected in FMCSA&apos;s record; for anything else write to contact@haulock.com.
         </p>
-        <p className="text-xs text-[#0B1E3F]/40">© {new Date().getFullYear()} Haulock</p>
+        <p className="text-xs text-[#0B1E3F]/40">© {new Date().getFullYear()} Haulock, a trade name of Ella AI LLC</p>
       </div>
     </footer>
   );
