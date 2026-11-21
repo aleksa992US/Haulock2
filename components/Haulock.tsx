@@ -686,10 +686,10 @@ function Landing({ navigate, user }: any) {
             </h2>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
-            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA & Motus verification" desc="Type an MC, DOT, or company name and pick the right company as you type. Carrier and broker authority shown separately, plus authority age, insurance on file, safety rating, and crash history — pulled live from FMCSA and its new Motus system." stat="Live" statLabel="FMCSA + Motus" />
-            <FeatureCard icon={Bell} iconBg="#FF6B35" title="Insurance filings & cancellations" desc="Every liability, cargo and bond filing with the insurer and the date it took effect. When an insurer files to cancel, usually 30 days ahead, you see the countdown, and your watchlist emails you that day." stat="30 days" statLabel="warning before coverage ends" />
+            <FeatureCard isNew icon={Database} iconBg="#0B1E3F" title="Motus: FMCSA's newest records" desc="Since May 2026 FMCSA records changes in Motus first. When Motus is newer than FMCSA's other records, like a new phone, a dropped policy or a suspension notice, you see both side by side, plus the BOC-3 process agent." stat="Daily" statLabel="from FMCSA Motus" />
+            <FeatureCard isNew icon={Bell} iconBg="#FF6B35" title="Insurance filings & cancellations" desc="Every liability, cargo and bond filing with the insurer and the date it took effect. When an insurer files to cancel, usually 30 days ahead, you see the countdown, and your watchlist emails you that day." stat="30 days" statLabel="warning before coverage ends" />
             <FeatureCard icon={ShieldCheck} iconBg="#16A34A" title="Last FMCSA audit" desc="When FMCSA last reviewed the company, a compliance review or the safety audit every new carrier gets, and the safety rating that came out of it, with dates." stat="Census" statLabel="FMCSA review on file" />
-            <FeatureCard icon={Database} iconBg="#0B1E3F" title="Motus: FMCSA's newest records" desc="Since May 2026 FMCSA records changes in Motus first. When Motus is newer than FMCSA's other records, like a new phone, a dropped policy or a suspension notice, you see both side by side, plus the BOC-3 process agent." stat="Daily" statLabel="from FMCSA Motus" />
+            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA & Motus verification" desc="Type an MC, DOT, or company name and pick the right company as you type. Carrier and broker authority shown separately, plus authority age, insurance on file, safety rating, and crash history — pulled live from FMCSA and its new Motus system." stat="Live" statLabel="FMCSA + Motus" />
             <FeatureCard icon={UserCheck} iconBg="#FF6B35" title="Officer names on file" desc="See the company officers on the FMCSA filing (MCS-150), plus the phone and email on it and when it was last updated. Ask for the owner by name, on the number FMCSA has — not the one on the rate con." stat="MCS-150" statLabel="FMCSA company census" />
             <FeatureCard icon={Globe} iconBg="#16A34A" title="Website & domain check" desc="We find the counterparty's real website and check it, and their email domain, against the FMCSA record. Plus WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
             <FeatureCard icon={Clock} iconBg="#0B1E3F" title="Inspections, crashes & history" desc="Every roadside inspection and crash from the last 24 months: when, where, each violation, and whether a driver or truck was put out of service. Plus authority, insurance, name, address, and phone changes over time." stat="24 mo" statLabel="every inspection & crash" />
@@ -2707,15 +2707,18 @@ function RoleCard({ icon: Icon, accent, role, tagline, points, cta, onClick, hig
   );
 }
 
-function FeatureCard({ icon: Icon, iconBg, title, desc, stat, statLabel }: any) {
+function FeatureCard({ icon: Icon, iconBg, title, desc, stat, statLabel, isNew }: any) {
   return (
     <div className="group relative p-7 bg-white border border-[#0B1E3F]/10 rounded-2xl hover:border-[#0B1E3F]/20 transition card-shadow overflow-hidden text-[#0B1E3F]">
       <div className="absolute top-0 right-0 w-32 h-32 opacity-[0.03] pointer-events-none">
         <Icon className="w-full h-full text-[#0B1E3F]" />
       </div>
       <div className="relative">
-        <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-6" style={{ backgroundColor: iconBg }}>
-          <Icon className="w-5 h-5 text-white" />
+        <div className="flex items-start justify-between mb-6">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: iconBg }}>
+            <Icon className="w-5 h-5 text-white" />
+          </div>
+          {isNew && <span className="text-[10px] mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#FF6B35]/15 text-[#FF6B35] font-bold">New</span>}
         </div>
         <div className="text-xl font-semibold text-[#0B1E3F] mb-3">{title}</div>
         <div className="text-[#0B1E3F]/60 text-sm leading-relaxed mb-6 min-h-[3rem]">{desc}</div>
