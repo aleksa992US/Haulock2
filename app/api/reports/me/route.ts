@@ -1,3 +1,4 @@
+import { DRIVER_REPORTS_ON, REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -12,6 +13,7 @@ export const dynamic = 'force-dynamic';
 // FMCSA shows for it), a verified driver, a verified shipper. Also what it
 // still needs to do to get there.
 export async function GET() {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const supabase = getServerSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
   const { data: userData } = await supabase.auth.getUser();
@@ -48,6 +50,6 @@ export async function GET() {
     shipper,
     // The MC/DOT on the profile, not yet proved.
     claimedCompany: !company && (claimed.mc || claimed.dot) ? claimed : null,
-    driverCheckAvailable: isStripeConfigured(),
+    driverCheckAvailable: DRIVER_REPORTS_ON && isStripeConfigured(),
   });
 }

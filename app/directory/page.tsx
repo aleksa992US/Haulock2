@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { REPORTS_ON } from '@/lib/features';
+import { notFound } from 'next/navigation';
 import { DirectoryFooter, DirectoryHeader, FreeVsPaid } from '@/components/directory/Chrome';
 import DirectorySearch from '@/components/directory/DirectorySearch';
 import { listStates, type StateCount } from '@/lib/directory';
@@ -9,7 +11,7 @@ export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: 'Freight broker and carrier directory',
-  description: 'Look up any freight broker or trucking company by name, MC or DOT number. See its FMCSA operating authority and whether carriers, brokers or drivers have reported it on Haulock.',
+  description: 'Look up any freight broker or trucking company by name, MC or DOT number. See its FMCSA operating authority and whether carriers, brokers or shippers have reported it on Haulock.',
   alternates: { canonical: '/directory' },
   openGraph: { url: '/directory', title: 'Freight broker and carrier directory · Haulock', description: 'Every freight broker and carrier with FMCSA operating authority, with the reports filed about them.' },
 };
@@ -36,6 +38,7 @@ function StateGrid({ kind, states }: { kind: DirectoryKind; states: StateCount[]
 }
 
 export default async function DirectoryPage() {
+  if (!REPORTS_ON) notFound(); // the directory is off with Reports (lib/features.ts)
   const [brokers, carriers] = await Promise.all([safeStates('brokers'), safeStates('carriers')]);
   const total = (list: StateCount[]) => list.reduce((n, s) => n + s.count, 0);
   const brokerTotal = total(brokers);

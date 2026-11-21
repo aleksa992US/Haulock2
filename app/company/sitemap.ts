@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { activeBrokerMcs } from '@/lib/directory';
+import { REPORTS_ON } from '@/lib/features';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 
@@ -13,6 +14,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 export const revalidate = 86400;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  if (!REPORTS_ON) return [];
   let mcs: string[] = [];
   try { mcs = await activeBrokerMcs(); } catch { return []; }
   return mcs.slice(0, 50000).map((mc) => ({

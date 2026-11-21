@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { BLOG_POSTS } from '@/lib/blog-posts';
 import { statePath, US_STATES } from '@/lib/directory-links';
+import { REPORTS_ON } from '@/lib/features';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 
@@ -39,5 +40,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     }))),
   ];
 
-  return [...staticEntries, ...blogEntries, ...directoryEntries];
+  return [...staticEntries, ...blogEntries, ...(REPORTS_ON ? directoryEntries : [])];
 }

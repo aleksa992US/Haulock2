@@ -1,3 +1,4 @@
+import { DRIVER_REPORTS_ON, REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -23,6 +24,7 @@ export const dynamic = 'force-dynamic';
 // Results go in app_metadata, which only the server can write. Haulock keeps
 // the driver's name and state; the license photos stay with Stripe.
 export async function POST(req: Request) {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const supabase = getServerSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
   const { data: userData } = await supabase.auth.getUser();
@@ -34,6 +36,7 @@ export async function POST(req: Request) {
   const meta: any = { ...(user.app_metadata || {}) };
 
   if (b?.kind === 'driver') {
+    if (!DRIVER_REPORTS_ON) return NextResponse.json({ error: 'Driver ID checks aren’t available.', code: 'driver_reports_off' }, { status: 404 });
     const stripe = getStripe();
     if (!stripe) return NextResponse.json({ error: 'Driver ID checks aren’t switched on yet.', code: 'not_configured' }, { status: 503 });
 

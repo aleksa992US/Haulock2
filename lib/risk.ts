@@ -1,3 +1,4 @@
+import { REPORTS_ON } from './features';
 import type { CarrierReport, RiskFlag } from './fmcsa';
 import { roleNoun } from './recommendation';
 import { isRecentReactivation, humanMonths } from './fmcsa-authority-history';
@@ -416,7 +417,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
   // newest open report is over two years old), 0 once resolved, 30 at most.
   // The flag states what's on record; the reports are the reporters' own
   // statements, shown with the company's replies on the report page.
-  const ur = c.userReports;
+  const ur = REPORTS_ON ? c.userReports : null; // off with Reports (lib/features.ts)
   if (ur && ur.published > 0) {
     const from = `${ur.reporters} verified reporter${ur.reporters === 1 ? '' : 's'}`;
     flags.push({
@@ -424,7 +425,7 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
       title: ur.open > 0
         ? `${ur.open} open report${ur.open === 1 ? '' : 's'} from ${from}`
         : `${ur.published} report${ur.published === 1 ? '' : 's'} on record, all marked resolved`,
-      desc: 'Reports filed on Haulock by verified carriers, brokers, drivers or shippers, each with documents. They are the reporters’ statements, not findings by Haulock.',
+      desc: 'Reports filed on Haulock by verified carriers, brokers or shippers, each with documents. They are the reporters’ statements, not findings by Haulock.',
       pts: ur.points,
       details: 'How reports count: each reporter counts once per company, however many loads they report. 8 points each, 4 when their newest open report is more than two years old, 0 once they mark it resolved. 30 points at most.',
       metrics: [

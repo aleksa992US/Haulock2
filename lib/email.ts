@@ -1636,7 +1636,7 @@ export function reportsLaunchTemplate(args: { recipientEmail: string; siteUrl: s
 ${h1(`New in Haulock: everyone in freight, ${italicAccent('on the record')}`)}
 ${p('We&rsquo;ve added four things to your account. The first one is free on every plan.')}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
-  ${item('Verified reports', 'Free', 'Carriers report brokers, brokers report carriers, drivers report the companies they hauled for, and shippers report and can be reported. Only verified reporters, one load per report with documents, and the other side can reply publicly.')}
+  ${item('Verified reports', 'Free', 'Carriers report brokers, brokers report carriers, and shippers report and can be reported. Only verified reporters, one load per report with documents, and the other side can reply publicly.')}
   ${item('Insurance cancellation countdown', 'New', 'Every report lists each insurance filing with the date it took effect. When an insurer files to cancel, usually 30 days ahead, you see the date and the days left, and your watchlist emails you that day.')}
   ${item('FMCSA Motus, side by side', 'New', 'FMCSA now records changes in its Motus system first. When Motus is newer than FMCSA&rsquo;s other records, your report shows both, along with the last FMCSA audit and the BOC-3 process agent.')}
   ${item('Report alerts', 'Paid plans', 'An email the moment a report is published about your company or one on your watchlist.')}

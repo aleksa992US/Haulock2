@@ -1,3 +1,4 @@
+import { REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -14,6 +15,7 @@ export const dynamic = 'force-dynamic';
 //   { action: 'resolve' }                  → the reporter marks it settled (stays on record, stops counting)
 //   { action: 'respond', body, disputes }  → the reported company's public reply (verified owner only)
 export async function POST(req: Request, { params }: { params: { id: string } }) {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const supabase = getServerSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
   const { data: userData } = await supabase.auth.getUser();
