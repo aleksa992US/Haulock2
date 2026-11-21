@@ -1,3 +1,4 @@
+import { REPORTERS_TEXT } from '@/lib/features';
 import { CheckCircle2, Flag } from 'lucide-react';
 import { ReadReportsButton, ReportCompanyButton, type ActionCompany } from './CompanyActions';
 
@@ -63,7 +64,7 @@ export default function ReportsSummary({ name, action, reports }: { name: string
           </div>
         </>
       )}
-      <p className="mt-4 text-xs text-[#0B1E3F]/50 leading-relaxed">Only verified carriers, brokers, drivers and shippers can file a report: one load per report, with documents, reviewed before it is shown. The company can reply.</p>
+      <p className="mt-4 text-xs text-[#0B1E3F]/50 leading-relaxed">Only verified {REPORTERS_TEXT} can file a report: one load per report, with documents, reviewed before it is shown. The company can reply.</p>
     </section>
   );
 }

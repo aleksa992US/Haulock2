@@ -1,3 +1,4 @@
+import { DRIVER_REPORTS_ON } from './features';
 // Verified reports: who may report whom, what a report must contain, and how
 // published reports count in the Haulock score. Free for every account.
 //
@@ -172,10 +173,15 @@ export function validateReportInput(i: ReportInput, today: string = new Date().t
 // ---------- The rules, as shown to users ----------
 
 export const REPORT_RULES: { title: string; text: string }[] = [
-  { title: 'Verified reporters only', text: 'You file as a verified carrier, broker, driver or shipper. Companies are named on the report. A driver can keep their name off the public report (it shows “Verified driver”); we still verify who they are and hold them to these rules.' },
+  {
+    title: 'Verified reporters only',
+    text: DRIVER_REPORTS_ON
+      ? 'You file as a verified carrier, broker, driver or shipper. Companies are named on the report. A driver can keep their name off the public report (it shows “Verified driver”); we still verify who they are and hold them to these rules.'
+      : 'You file as a verified carrier, broker or shipper. Your company is named on the report.',
+  },
   { title: 'One load per report', text: 'Each report is about one load you were part of, with its load number and date.' },
   { title: 'Facts, not opinions', text: 'Say what was agreed and what happened: dates, amounts, who you spoke to. No guesses about motives and no opinions about people.' },
-  { title: 'Show it', text: 'Attach the rate con, BOL, invoice, settlement or messages. Drivers also attach a document that shows they drove for the company (settlement, pay stub, dispatch sheet, lease or onboarding form). Only Haulock’s reviewers see your documents.' },
+  { title: 'Show it', text: `Attach the rate con, BOL, invoice, settlement or messages.${DRIVER_REPORTS_ON ? ' Drivers also attach a document that shows they drove for the company (settlement, pay stub, dispatch sheet, lease or onboarding form).' : ''} Only Haulock’s reviewers see your documents.` },
   { title: 'Keep it professional', text: 'No insults, threats or profanity (curse words are hidden automatically). No personal details of individuals: no personal phone numbers, home addresses or license numbers.' },
   { title: 'Reviewed, and the other side replies', text: 'We check every report against these rules before it’s shown. The company is told and can reply publicly under it.' },
   { title: 'You stand behind it', text: 'You confirm the report is true and you’re responsible for it. False reports are removed and can cost you your account.' },

@@ -1,3 +1,4 @@
+import { REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -30,6 +31,7 @@ async function admin() {
 }
 
 export async function GET(req: Request) {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const a = await admin();
   if ('error' in a) return a.error;
   const { svc } = a;
@@ -91,6 +93,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const a = await admin();
   if ('error' in a) return a.error;
   const { me, svc } = a;

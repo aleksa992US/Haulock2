@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { REPORTS_ON } from '@/lib/features';
 import { notFound } from 'next/navigation';
 import { Breadcrumbs, DirectoryFooter, DirectoryHeader } from '@/components/directory/Chrome';
 import DirectorySearch from '@/components/directory/DirectorySearch';
@@ -44,6 +45,7 @@ function pageLinks(page: number, pages: number): (number | '…')[] {
 }
 
 export default async function StatePage({ params }: { params: Params }) {
+  if (!REPORTS_ON) notFound(); // the directory is off with Reports (lib/features.ts)
   const state = stateByCode(params.state);
   const page = pageNumber(params.page);
   if (!isDirectoryKind(params.kind) || !state || !page) notFound();

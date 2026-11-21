@@ -1,3 +1,4 @@
+import { DRIVER_REPORTS_ON, REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { getServerSupabase } from '@/lib/supabase/server';
@@ -33,6 +34,7 @@ async function signedIn() {
 }
 
 export async function GET(req: Request) {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const s = await signedIn();
   if ('error' in s) return s.error;
   const { user } = s;
@@ -63,6 +65,7 @@ const str = (v: FormDataEntryValue | null, max: number) => (typeof v === 'string
 const safeFileName = (name: string) => name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+/, '').slice(-80) || 'document';
 
 export async function POST(req: Request) {
+  if (!REPORTS_ON) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const s = await signedIn();
   if ('error' in s) return s.error;
   const { user } = s;
@@ -99,6 +102,7 @@ export async function POST(req: Request) {
     const dot = company.dot || id.dot;
     reporter = { name: company.name, mc: company.mc || id.mc, dot, key: reporterKey({ role: reporterRole, dot, mc: company.mc || id.mc }), verifiedBy: id.verifiedBy };
   } else if (reporterRole === 'driver') {
+    if (!DRIVER_REPORTS_ON) return NextResponse.json({ error: 'Driver reports aren’t available.', code: 'driver_reports_off' }, { status: 403 });
     const id = identities.find((i) => i.kind === 'driver');
     if (!id || id.kind !== 'driver') return NextResponse.json({ error: 'Verify your identity as a driver first.', code: 'not_verified' }, { status: 403 });
     reporter = { name: id.name, mc: null, dot: null, key: reporterKey({ role: 'driver', userId: user.id }), verifiedBy: id.verifiedBy };

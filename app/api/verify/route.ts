@@ -1,3 +1,4 @@
+import { REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { enforcedPlanId } from '@/lib/plans';
 import { lookupCarrier, parseQuery, resolveQuery, ambiguousNumberMessage, NotFoundByNameError, AmbiguousNameError } from '@/lib/fmcsa';
@@ -300,7 +301,7 @@ export async function GET(req: Request) {
   // Published reports from verified users about this company. null = not
   // checked (reports not set up, or the read failed): no flag either way.
   const reportsPromise = timed('reports',
-    import('@/lib/reports-server').then((m) => m.publishedReportsFor({ mc: carrier.mc, dot: carrier.dot })).catch(() => null),
+    REPORTS_ON ? import('@/lib/reports-server').then((m) => m.publishedReportsFor({ mc: carrier.mc, dot: carrier.dot })).catch(() => null) : Promise.resolve(null),
     null,
   );
   const [addressResult, webResult, chameleonLinks, webReputation, legacyReference, smsData] = await Promise.all([

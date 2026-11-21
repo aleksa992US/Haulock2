@@ -9,6 +9,7 @@ import {
   allowedSubjects, categoriesFor,
   type PublicReport, type ReporterRole, type SubjectType,
 } from '@/lib/reports';
+import { DRIVER_REPORTS_ON, REPORTERS_TEXT, REPORTS_ON } from '@/lib/features';
 
 // Verified reports: carriers report brokers, brokers report carriers, drivers
 // report the companies they hauled for, shippers report and can be reported.
@@ -184,7 +185,7 @@ export function CompanyReportsSection({ r, navigate }: { r: any; navigate: any }
         <div>
           <h2 className="text-xl font-semibold text-[#0B1E3F]">Reports from verified users</h2>
           <div className="text-sm text-[#0B1E3F]/60 mt-1 max-w-2xl">
-            Filed by verified carriers, brokers, drivers and shippers, one load each, with documents. They are the reporters&apos; statements, not findings by Haulock; the company can reply under each one.
+            Filed by verified {REPORTERS_TEXT}, one load each, with documents. They are the reporters&apos; statements, not findings by Haulock; the company can reply under each one.
           </div>
         </div>
         <button className={btn} onClick={() => startReportAbout(navigate, { mc, dot, name: r.name, type: isBroker ? 'broker' : undefined })}>
@@ -308,8 +309,8 @@ function ReporterSetup({ me, reload, navigate }: { me: Me; reload: () => Promise
         {note('company')}
       </div>
 
-      {/* Driver */}
-      <div className={`${card} p-5`}>
+      {/* Driver (off unless DRIVER_REPORTS_ON) */}
+      {DRIVER_REPORTS_ON && <div className={`${card} p-5`}>
         <div className="flex items-center gap-2"><Truck className="w-4 h-4 text-[#0B1E3F]/60" /><span className="font-semibold">Driver</span></div>
         {me.driver ? (
           verified(<><span className="font-medium">{me.driver.name}</span>{me.driver.state ? <span className="text-[#0B1E3F]/55"> · {me.driver.state}</span> : null} <span className="text-[#0B1E3F]/55">· ID checked</span></>)
@@ -321,7 +322,7 @@ function ReporterSetup({ me, reload, navigate }: { me: Me; reload: () => Promise
           </>
         )}
         {note('driver')}
-      </div>
+      </div>}
 
       {/* Shipper */}
       <div className={`${card} p-5`}>
@@ -402,7 +403,7 @@ function CompanyPicker({ value, onPick }: { value: Picked | null; onPick: (p: Pi
 }
 
 function ReportForm({ me, onFiled }: { me: Me; onFiled: () => void }) {
-  const roles: ReporterRole[] = [...(me.company?.roles || []), ...(me.driver ? ['driver' as const] : []), ...(me.shipper ? ['shipper' as const] : [])];
+  const roles: ReporterRole[] = [...(me.company?.roles || []), ...(DRIVER_REPORTS_ON && me.driver ? ['driver' as const] : []), ...(me.shipper ? ['shipper' as const] : [])];
   const [role, setRole] = useState<ReporterRole | ''>(roles.length === 1 ? roles[0] : '');
   const [subjectType, setSubjectType] = useState<SubjectType | ''>('');
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -654,7 +655,7 @@ const LOOK: { id: LookKind; label: string; icon: any; placeholder: string; help:
   { id: 'broker', label: 'Broker', icon: Building2, placeholder: 'Broker name, MC or DOT number', help: 'Searches every freight broker in FMCSA and Motus records. Pick one to see the reports filed about it.' },
   { id: 'carrier', label: 'Carrier', icon: Truck, placeholder: 'Carrier name, MC or DOT number', help: 'Searches every trucking company in FMCSA and Motus records. Pick one to see the reports filed about it.' },
   { id: 'shipper', label: 'Shipper', icon: Flag, placeholder: 'Shipper or receiver name', help: 'Shippers aren’t in FMCSA’s records, so this searches the shippers that already have a report here. No result means nobody has reported it yet.' },
-  { id: 'driver', label: 'Driver', icon: UserCheck, placeholder: '', help: '' },
+  ...(DRIVER_REPORTS_ON ? [{ id: 'driver' as const, label: 'Driver', icon: UserCheck, placeholder: '', help: '' }] : []),
 ];
 const kindOfHit = (h: CompanyHit): 'broker' | 'carrier' | 'shipper' | 'either' =>
   h.type === 'shipper' ? 'shipper'
@@ -1096,14 +1097,14 @@ function whatsNewSeen(): boolean {
 const WHO_REPORTS: { who: string; whom: React.ReactNode }[] = [
   { who: 'Carriers', whom: <>can report <strong>brokers</strong> and <strong>shippers</strong></> },
   { who: 'Brokers', whom: <>can report <strong>carriers</strong> and <strong>shippers</strong></> },
-  { who: 'Drivers', whom: <>can report the <strong>carriers</strong> and <strong>brokers</strong> they hauled for</> },
+  ...(DRIVER_REPORTS_ON ? [{ who: 'Drivers', whom: <>can report the <strong>carriers</strong> and <strong>brokers</strong> they hauled for</> }] : []),
   { who: 'Shippers', whom: <>can report <strong>carriers</strong> and <strong>brokers</strong>, and can be reported themselves</> },
 ];
 
 const WHATS_NEW_MORE: { icon: any; title: string; text: string; tag: 'New' | 'Paid plans' }[] = [
   { icon: Clock, tag: 'New', title: 'Insurance cancellation countdown', text: 'Each insurance filing shows the date it started. When an insurer files to cancel, you see the end date and the days left. Your watchlist emails you that same day.' },
   { icon: ShieldCheck, tag: 'New', title: 'FMCSA Motus, side by side', text: 'FMCSA now records changes in its Motus system first. When Motus is newer, your report shows both versions with their dates, plus the last FMCSA audit.' },
-  { icon: MessageSquare, tag: 'Paid plans', title: 'Report alerts', text: 'An email the moment a report is published about your company, or about a company on your watchlist.' },
+  ...(REPORTS_ON ? [{ icon: MessageSquare, tag: 'Paid plans' as const, title: 'Report alerts', text: 'An email the moment a report is published about your company, or about a company on your watchlist.' }] : []),
 ];
 
 // The header button. An orange dot shows until the news has been opened.
@@ -1156,10 +1157,12 @@ export function WhatsNewModal({ navigate, autoOpen }: { navigate: any; autoOpen:
           <div className="absolute -top-16 -right-10 w-56 h-56 rounded-full bg-[#FF6B35]/35 blur-3xl pointer-events-none" />
           <button onClick={close} aria-label="Close" className="absolute top-4 right-4 text-white/60 hover:text-white"><X className="w-5 h-5" /></button>
           <div className="relative inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6B35] text-white text-[10px] mono uppercase tracking-[0.18em]">New in Haulock</div>
-          <h2 className="relative text-3xl mt-3 leading-tight">Report a broker, carrier or shipper. <span className="serif italic block">Read any company&apos;s reports.</span></h2>
+          {REPORTS_ON
+            ? <h2 className="relative text-3xl mt-3 leading-tight">Report a broker, carrier or shipper. <span className="serif italic block">Read any company&apos;s reports.</span></h2>
+            : <h2 className="relative text-3xl mt-3 leading-tight">Insurance cancellations, <span className="serif italic block">the day they&apos;re filed.</span></h2>}
         </div>
 
-        <div className="px-7 pt-6">
+        {REPORTS_ON && <div className="px-7 pt-6">
           <div className="flex flex-wrap items-center gap-2">
             <Flag className="w-4 h-4 text-[#DC2626]" />
             <span className="font-semibold text-lg">Verified reports</span>
@@ -1175,13 +1178,13 @@ export function WhatsNewModal({ navigate, autoOpen }: { navigate: any; autoOpen:
             ))}
           </ul>
           <ul className="mt-3 space-y-1.5 text-sm text-[#0B1E3F]/75">
-            <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] mt-0.5 shrink-0" /><span><strong className="text-[#0B1E3F]">Verified reporters only.</strong> Drivers can keep their name off the report; we still verify who they are.</span></li>
+            <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] mt-0.5 shrink-0" /><span><strong className="text-[#0B1E3F]">Verified reporters only.</strong> {DRIVER_REPORTS_ON ? 'Drivers can keep their name off the report; we still verify who they are.' : 'Every reporter is checked against the company’s FMCSA filing or business email.'}</span></li>
             <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] mt-0.5 shrink-0" /><span><strong className="text-[#0B1E3F]">One load per report,</strong> with documents that show it.</span></li>
             <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] mt-0.5 shrink-0" /><span><strong className="text-[#0B1E3F]">Reviewed before it&apos;s shown,</strong> and the company can reply.</span></li>
           </ul>
-        </div>
+        </div>}
 
-        <ul className="px-7 pt-5 pb-2 space-y-4 mt-5 border-t border-[#0B1E3F]/[0.07]">
+        <ul className={`px-7 pt-5 pb-2 space-y-4 ${REPORTS_ON ? 'mt-5 border-t border-[#0B1E3F]/[0.07]' : 'mt-1'}`}>
           {WHATS_NEW_MORE.map((item) => {
             const Icon = item.icon;
             return (
@@ -1200,8 +1203,8 @@ export function WhatsNewModal({ navigate, autoOpen }: { navigate: any; autoOpen:
         </ul>
 
         <div className="sticky bottom-0 bg-white border-t border-[#0B1E3F]/[0.07] px-7 py-4 mt-4 flex flex-wrap gap-2">
-          <button className={btn} onClick={() => { close(); navigate('reports'); }}>Open Reports</button>
-          <button className={btnGhost} onClick={() => { close(); navigate('verify'); }}>Run a check</button>
+          {REPORTS_ON && <button className={btn} onClick={() => { close(); navigate('reports'); }}>Open Reports</button>}
+          <button className={REPORTS_ON ? btnGhost : btn} onClick={() => { close(); navigate('verify'); }}>Run a check</button>
           <button className="px-4 py-2 text-sm text-[#0B1E3F]/55 hover:text-[#0B1E3F]" onClick={close}>Got it</button>
         </div>
       </div>

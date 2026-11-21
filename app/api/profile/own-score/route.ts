@@ -1,3 +1,4 @@
+import { REPORTS_ON } from '@/lib/features';
 import { NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -200,7 +201,7 @@ export async function GET() {
     const [insurance, motus, userReports] = await Promise.all([
       cap<any>(import('@/lib/fmcsa-insurance').then((m) => m.fetchInsuranceFilings(ids)).catch((e) => ({ filings: [], asOf: null, error: e?.message || 'unavailable' })), { filings: [], asOf: null, error: 'FMCSA insurance data took too long' }),
       cap<any>(import('@/lib/fmcsa-motus').then((m) => m.fetchMotusRecord(ids)).catch((e) => ({ checked: false, found: false, authorities: [], suspensions: [], error: e?.message || 'unavailable' })), { checked: false, found: false, authorities: [], suspensions: [], error: 'Motus data took too long' }),
-      cap<any>(import('@/lib/reports-server').then((m) => m.publishedReportsFor(ids)).catch(() => null), null),
+      REPORTS_ON ? cap<any>(import('@/lib/reports-server').then((m) => m.publishedReportsFor(ids)).catch(() => null), null) : Promise.resolve(null),
     ]);
     if (userReports) carrier.userReports = userReports.score;
     const { attachFilings } = await import('@/lib/fmcsa-motus');

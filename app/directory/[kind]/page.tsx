@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { REPORTS_ON } from '@/lib/features';
 import { notFound } from 'next/navigation';
 import { Breadcrumbs, DirectoryFooter, DirectoryHeader } from '@/components/directory/Chrome';
 import DirectorySearch from '@/components/directory/DirectorySearch';
@@ -21,6 +22,7 @@ export function generateMetadata({ params }: { params: { kind: string } }): Meta
 }
 
 export default async function KindPage({ params }: { params: { kind: string } }) {
+  if (!REPORTS_ON) notFound(); // the directory is off with Reports (lib/features.ts)
   if (!isDirectoryKind(params.kind)) notFound();
   const kind = params.kind;
   const k = KIND_LABEL[kind];

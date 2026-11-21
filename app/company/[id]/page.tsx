@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { REPORTS_ON } from '@/lib/features';
 import { notFound } from 'next/navigation';
 import { AlertTriangle, Building2, CheckCircle2, Lock, ShieldCheck } from 'lucide-react';
 import { Breadcrumbs, DirectoryFooter, DirectoryHeader } from '@/components/directory/Chrome';
@@ -41,7 +42,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   if (!c) return { title: 'Company not found', robots: { index: false } };
   const place = placeText(c);
   const title = `${c.name} (${c.mc ? `MC-${c.mc}` : `USDOT-${c.dot}`}): ${noun(c)}${place ? ` in ${place}` : ''}`;
-  const description = `${c.name} is a ${noun(c)}${place ? ` in ${place}` : ''} (${idText(c)}). See its FMCSA operating authority and whether carriers, brokers or drivers have reported it on Haulock.`;
+  const description = `${c.name} is a ${noun(c)}${place ? ` in ${place}` : ''} (${idText(c)}). See its FMCSA operating authority and whether carriers, brokers or shippers have reported it on Haulock.`;
   const canonical = companyPath(c) || `/company/${params.id.toLowerCase()}`;
   return {
     title,
@@ -62,6 +63,7 @@ function Status({ on, label }: { on: boolean; label: string }) {
 }
 
 export default async function CompanyPage({ params }: { params: Params }) {
+  if (!REPORTS_ON) notFound(); // the directory is off with Reports (lib/features.ts)
   const c = await load(params.id);
   if (!c) notFound();
 
