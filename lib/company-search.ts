@@ -10,6 +10,11 @@
 
 const REGISTRY = process.env.FMCSA_REGISTRY_DATASET_ID || '6eyk-hxee';
 const CENSUS = process.env.FMCSA_CENSUS_DATASET_ID || 'az4n-8mr2';
+// FMCSA moved licensing to Motus in May 2026 and froze the legacy registry.
+// "Motus Carrier - All With History" holds every company registered or changed
+// since (one row per operating authority); it wins over the legacy row for
+// the same MC. Companies with no change since are only in the legacy registry.
+const MOTUS_REGISTRY = process.env.FMCSA_MOTUS_REGISTRY_DATASET_ID || 'inys-ebih';
 const BASE = 'https://data.transportation.gov/resource';
 // FMCSA's open-data API can take 2s+ on a cold query from a shared host.
 const TIMEOUT_MS = 5000;
@@ -41,7 +46,7 @@ function toTitle(s: string | undefined): string | undefined {
   return s.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
 }
 
-function toSuggestion(r: any, matchedOn: CompanySuggestion['matchedOn']): CompanySuggestion | null {
+export function toSuggestion(r: any, matchedOn: CompanySuggestion['matchedOn']): CompanySuggestion | null {
   const mcRaw = String(r.docket_number || '');
   // Only MC dockets are motor-carrier numbers; MX/FF dockets aren't searchable by MC.
   const mc = /^MC/i.test(mcRaw) ? mcRaw.replace(/\D/g, '').replace(/^0+/, '') : undefined;
@@ -63,8 +68,62 @@ function toSuggestion(r: any, matchedOn: CompanySuggestion['matchedOn']): Compan
   };
 }
 
-const REGISTRY_COLS = 'legal_name,dba_name,docket_number,dot_number,bus_city,bus_state_code,common_stat,contract_stat,broker_stat';
-const CENSUS_COLS = 'dot_number,legal_name,dba_name,phy_city,phy_state,status_code,power_units';
+export const REGISTRY_COLS = 'legal_name,dba_name,docket_number,dot_number,bus_city,bus_state_code,common_stat,contract_stat,broker_stat';
+export const MOTUS_COLS = 'legal_name,dba_name,docket_number,usdot_number,bus_city,bus_state_code,op_auth_type,op_auth_status';
+export const CENSUS_COLS = 'dot_number,legal_name,dba_name,phy_city,phy_state,status_code,power_units';
+
+// Motus has one row per operating authority; fold them into one suggestion
+// per docket. Carrier = any active motor-carrier authority (property,
+// household goods, passengers, enterprise); broker = any active broker one.
+function fromMotus(rows: any[], matchedOn: (r: any) => CompanySuggestion['matchedOn']): CompanySuggestion[] {
+  const byDocket = new Map<string, any[]>();
+  for (const r of rows) {
+    const key = String(r.docket_number || `DOT${r.usdot_number || ''}`);
+    byDocket.set(key, [...(byDocket.get(key) || []), r]);
+  }
+  const out: CompanySuggestion[] = [];
+  for (const group of byDocket.values()) {
+    const first = group[0];
+    const active = (re: RegExp) => group.some((r) => re.test(String(r.op_auth_type || '')) && /^active$/i.test(String(r.op_auth_status || '')));
+    const s = toSuggestion({
+      legal_name: first.legal_name,
+      dba_name: first.dba_name,
+      docket_number: first.docket_number,
+      dot_number: first.usdot_number,
+      bus_city: first.bus_city,
+      bus_state_code: first.bus_state_code,
+      common_stat: active(/Motor Carrier/i) ? 'A' : 'N',
+      broker_stat: active(/^Broker/i) ? 'A' : 'N',
+    }, matchedOn(first));
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+// Motus first: for the same MC (or USDOT, when there's no MC) the legacy row
+// is out of date.
+function mergeRegistries(motus: CompanySuggestion[], legacy: CompanySuggestion[]): CompanySuggestion[] {
+  const key = (s: CompanySuggestion) => (s.mc ? `mc:${s.mc}` : `dot:${s.dot}`);
+  const seen = new Set(motus.map(key));
+  return [...motus, ...legacy.filter((s) => !seen.has(key(s)))];
+}
+
+// Either registry alone is useful; only when both fail is it an error.
+async function registrySearch(
+  legacyWhere: string,
+  motusWhere: string,
+  order: { legacy: string; motus: string },
+  matchedOn: (r: any) => CompanySuggestion['matchedOn'],
+): Promise<CompanySuggestion[]> {
+  const [legR, motR] = await Promise.allSettled([
+    soql(legacyWhere, order.legacy),
+    soql(motusWhere, order.motus, MOTUS_REGISTRY, MOTUS_COLS),
+  ]);
+  if (legR.status === 'rejected' && motR.status === 'rejected') throw legR.reason;
+  const legacy = (legR.status === 'fulfilled' ? legR.value : []).map((r) => toSuggestion(r, matchedOn(r))).filter(Boolean) as CompanySuggestion[];
+  const motus = motR.status === 'fulfilled' ? fromMotus(motR.value, matchedOn) : [];
+  return mergeRegistries(motus, legacy);
+}
 
 async function soql(where: string, order: string, dataset: string = REGISTRY, select: string = REGISTRY_COLS): Promise<any[]> {
   const params = new URLSearchParams({
@@ -91,7 +150,11 @@ async function soql(where: string, order: string, dataset: string = REGISTRY, se
 // USDOT-only companies, then inactive ones; ties by name.
 function rank(list: CompanySuggestion[], exact?: { mc?: string; dot?: string }): CompanySuggestion[] {
   const seen = new Set<string>();
+  // A company's FF or MX docket has no MC number, so it arrives as a second,
+  // USDOT-only row for a company already listed under its MC. Keep the MC row.
+  const dotsWithMc = new Set(list.filter((s) => s.mc && s.dot).map((s) => s.dot as string));
   return list
+    .filter((s) => !(!s.mc && s.dot && dotsWithMc.has(s.dot)))
     .filter((s) => (seen.has(s.query) ? false : (seen.add(s.query), true)))
     .sort((a, b) => {
       const ea = exact && ((exact.mc && a.mc === exact.mc) || (exact.dot && a.dot === exact.dot)) ? 1 : 0;
@@ -102,7 +165,7 @@ function rank(list: CompanySuggestion[], exact?: { mc?: string; dot?: string }):
     .slice(0, MAX_RESULTS);
 }
 
-function fromCensus(r: any, matchedOn: CompanySuggestion['matchedOn']): CompanySuggestion | null {
+export function fromCensus(r: any, matchedOn: CompanySuggestion['matchedOn']): CompanySuggestion | null {
   const dot = String(r.dot_number || '').replace(/\D/g, '').replace(/^0+/, '');
   if (!dot) return null;
   const units = Number(r.power_units);
@@ -139,10 +202,15 @@ function mergeByDot(registry: CompanySuggestion[], census: CompanySuggestion[]):
 async function byMc(digits: string): Promise<CompanySuggestion[]> {
   // The registry zero-pads dockets to 6 digits ("MC012345"), so a short MC
   // also needs its padded form, which a prefix search can't reach.
+  // Motus dockets aren't padded.
   const d = digits.replace(/^0+/, '') || digits;
   const padded = d.length < 6 ? ` OR docket_number = 'MC${d.padStart(6, '0')}'` : '';
-  const rows = await soql(`starts_with(docket_number, 'MC${d}')${padded}`, 'docket_number');
-  return rows.map((r) => toSuggestion(r, 'mc')).filter(Boolean) as CompanySuggestion[];
+  return registrySearch(
+    `starts_with(docket_number, 'MC${d}')${padded}`,
+    `starts_with(docket_number, 'MC${d}')`,
+    { legacy: 'docket_number', motus: 'docket_number' },
+    () => 'mc',
+  );
 }
 
 async function byDot(digits: string): Promise<CompanySuggestion[]> {
@@ -159,16 +227,17 @@ async function byDot(digits: string): Promise<CompanySuggestion[]> {
     const lo = n * 10 ** k;
     ranges.push(`(dot_number between ${lo} and ${lo + 10 ** k - 1})`);
   }
-  // Either dataset alone is useful; only when BOTH fail is it an error.
+  // Motus: USDOT numbers are unpadded text.
+  // Either source alone is useful; only when BOTH fail is it an error.
   const [regR, cenR] = await Promise.allSettled([
-    soql(pads.join(' OR '), 'dot_number'),
+    registrySearch(pads.join(' OR '), `starts_with(usdot_number, '${digits}')`, { legacy: 'dot_number', motus: 'usdot_number' }, () => 'dot'),
     soql(ranges.join(' OR '), 'dot_number', CENSUS, CENSUS_COLS),
   ]);
   if (regR.status === 'rejected' && cenR.status === 'rejected') throw regR.reason;
   const reg = regR.status === 'fulfilled' ? regR.value : [];
   const cen = cenR.status === 'fulfilled' ? cenR.value : [];
   return mergeByDot(
-    reg.map((r) => toSuggestion(r, 'dot')).filter(Boolean) as CompanySuggestion[],
+    reg,
     cen.map((r) => fromCensus(r, 'dot')).filter(Boolean) as CompanySuggestion[],
   );
 }
@@ -178,17 +247,17 @@ async function byName(text: string): Promise<CompanySuggestion[]> {
   const q = text.toUpperCase().replace(/[^A-Z0-9 &.,'-]/g, '').replace(/\s+/g, ' ').trim().replace(/'/g, "''");
   if (q.length < 3) return [];
   const where = `starts_with(upper(legal_name), '${q}') OR starts_with(upper(dba_name), '${q}')`;
+  const plain = q.replace(/''/g, "'");
+  const on = (r: any): CompanySuggestion['matchedOn'] => (!String(r.legal_name || '').toUpperCase().startsWith(plain) && r.dba_name ? 'dba' : 'name');
   const [regR, cenR] = await Promise.allSettled([
-    soql(where, 'legal_name'),
+    registrySearch(where, where, { legacy: 'legal_name', motus: 'legal_name' }, on),
     soql(where, 'legal_name', CENSUS, CENSUS_COLS),
   ]);
   if (regR.status === 'rejected' && cenR.status === 'rejected') throw regR.reason;
   const reg = regR.status === 'fulfilled' ? regR.value : [];
   const cen = cenR.status === 'fulfilled' ? cenR.value : [];
-  const plain = q.replace(/''/g, "'");
-  const on = (r: any): CompanySuggestion['matchedOn'] => (!String(r.legal_name || '').toUpperCase().startsWith(plain) && r.dba_name ? 'dba' : 'name');
   return mergeByDot(
-    reg.map((r) => toSuggestion(r, on(r))).filter(Boolean) as CompanySuggestion[],
+    reg,
     cen.map((r) => fromCensus(r, on(r))).filter(Boolean) as CompanySuggestion[],
   );
 }

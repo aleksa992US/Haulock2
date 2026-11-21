@@ -16,7 +16,33 @@ export type CensusContact = {
   phone?: string;
   cellPhone?: string;
   mcs150Date?: string;      // YYYY-MM-DD — when the filing was last updated
+  // FMCSA's latest on-site/off-site review of the company (an "audit") and
+  // the safety rating that came out of one, if any.
+  lastReview?: { code: string; label: string; date: string };
+  safetyRatingCode?: 'S' | 'C' | 'U';
+  safetyRatingDate?: string; // YYYY-MM-DD
 };
+
+// MCMIS Company Census data dictionary (Rev08, 2026-01-23), REVIEW_TYPE.
+const REVIEW_TYPES: Record<string, string> = {
+  C: 'Compliance review',
+  H: 'Shipper review',
+  N: 'Non-ratable review',
+  A: 'New-entrant safety audit',
+  S: 'Safety review',
+  E: 'Educational contact',
+  U: 'Historical audit record',
+  K: 'Automatic safety assessment review',
+  F: 'Cargo tank facility review',
+  G: 'Compliance review + cargo tank facility review',
+  I: 'Carrier inactivated',
+  J: 'Compliance review + security contact review',
+};
+
+function censusDate(v: unknown): string | undefined {
+  const d = String(v ?? '').match(/^(\d{4})(\d{2})(\d{2})/);
+  return d && d[1] !== '0000' ? `${d[1]}-${d[2]}-${d[3]}` : undefined;
+}
 
 const cache = new Map<string, { at: number; value: CensusContact | null }>();
 
@@ -41,7 +67,7 @@ export async function fetchCensusContact(dot: string | null | undefined): Promis
   const params = new URLSearchParams({
     $where: `dot_number = ${Number(n)}`,
     $limit: '1',
-    $select: 'legal_name,company_officer_1,company_officer_2,email_address,phone,cell_phone,mcs150_date',
+    $select: 'legal_name,company_officer_1,company_officer_2,email_address,phone,cell_phone,mcs150_date,review_type,review_date,safety_rating,safety_rating_date',
   });
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (process.env.SOCRATA_APP_TOKEN) headers['X-App-Token'] = process.env.SOCRATA_APP_TOKEN;
@@ -59,15 +85,20 @@ export async function fetchCensusContact(dot: string | null | undefined): Promis
         .filter((o: string) => o.length > 1)
         .map(titleCase)
         .filter((o: string, i: number, all: string[]) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i);
-      const d = String(r.mcs150_date || '').match(/^(\d{4})(\d{2})(\d{2})/);
       const email = String(r.email_address || '').trim().toLowerCase();
+      const reviewCode = String(r.review_type || '').trim().toUpperCase();
+      const reviewDate = censusDate(r.review_date);
+      const rating = String(r.safety_rating || '').trim().toUpperCase();
       value = {
         legalName: r.legal_name ? String(r.legal_name).trim() : undefined,
         officers,
         email: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(email) ? email : undefined,
         phone: phone(r.phone),
         cellPhone: phone(r.cell_phone),
-        mcs150Date: d ? `${d[1]}-${d[2]}-${d[3]}` : undefined,
+        mcs150Date: censusDate(r.mcs150_date),
+        lastReview: reviewCode && reviewDate ? { code: reviewCode, label: REVIEW_TYPES[reviewCode] || `Review (type ${reviewCode})`, date: reviewDate } : undefined,
+        safetyRatingCode: rating === 'S' || rating === 'C' || rating === 'U' ? rating : undefined,
+        safetyRatingDate: censusDate(r.safety_rating_date),
       };
     }
     cache.set(n, { at: Date.now(), value });
@@ -85,18 +116,29 @@ export async function fetchCensusContact(dot: string | null | undefined): Promis
 export async function dotForMc(mc: string | null | undefined): Promise<string | null> {
   const digits = String(mc ?? '').replace(/\D/g, '').replace(/^0+/, '');
   if (!digits) return null;
+  // Motus registry first (companies registered or changed since FMCSA's May
+  // 2026 cutover, unpadded dockets), then the frozen legacy registry, where
+  // dockets are zero-padded to 6 digits ("MC012345").
+  const motus = process.env.FMCSA_MOTUS_REGISTRY_DATASET_ID || 'inys-ebih';
   const registry = process.env.FMCSA_REGISTRY_DATASET_ID || '6eyk-hxee';
-  // Dockets are zero-padded to 6 digits in the registry ("MC012345").
-  const params = new URLSearchParams({ $where: `docket_number IN ('MC${digits.padStart(6, '0')}', 'MC${digits}')`, $limit: '1', $select: 'dot_number' });
+  const dockets = `'MC${digits.padStart(6, '0')}', 'MC${digits}'`;
+  return (
+    (await firstDot(motus, `docket_number IN (${dockets})`, 'usdot_number')) ??
+    (await firstDot(registry, `docket_number IN (${dockets})`, 'dot_number'))
+  );
+}
+
+async function firstDot(dataset: string, where: string, column: string): Promise<string | null> {
+  const params = new URLSearchParams({ $where: where, $limit: '1', $select: column });
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (process.env.SOCRATA_APP_TOKEN) headers['X-App-Token'] = process.env.SOCRATA_APP_TOKEN;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${BASE}/${registry}.json?${params.toString()}`, { headers, signal: controller.signal, cache: 'no-store' });
+    const res = await fetch(`${BASE}/${dataset}.json?${params.toString()}`, { headers, signal: controller.signal, cache: 'no-store' });
     if (!res.ok) return null;
     const rows = await res.json();
-    const dot = String(rows?.[0]?.dot_number || '').replace(/\D/g, '').replace(/^0+/, '');
+    const dot = String(rows?.[0]?.[column] || '').replace(/\D/g, '').replace(/^0+/, '');
     return dot || null;
   } catch {
     return null;

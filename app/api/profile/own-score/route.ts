@@ -120,6 +120,12 @@ function diffAutoSnapshots(curr: any, prev: any, currCreatedAt: string): AutoCha
   };
 }
 
+// Bump when this route adds data to the report, so saved rows from before are
+// rebuilt on the next visit. 2: insurance filings, Motus record, last FMCSA
+// review, reports from verified users. 3: authority timeline, past policies,
+// pending applications, the rest of the Motus record.
+const AUTO_VERSION = 3;
+
 // Returns the user's own broker report (using user_metadata.mc or .dot).
 // Re-runs FMCSA at most once per 24h. Always free of quota — never counts against
 // the user's monthly lookup limit. Saves auto-refreshes with source='auto'.
@@ -153,9 +159,11 @@ export async function GET() {
 
   // If the latest auto row is < 24h old, serve it directly. The diff is
   // computed once when the row was inserted (path below) and persisted in
-  // `data.autoChange` so subsequent reads stay consistent.
+  // `data.autoChange` so subsequent reads stay consistent. A row built before
+  // AUTO_VERSION (no insurance filings, Motus record or reports) is refreshed
+  // now instead of waiting out its 24 hours.
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  if (latestAuto && new Date(latestAuto.created_at).toISOString() >= since) {
+  if (latestAuto && latestAuto.data?.autoVersion === AUTO_VERSION && new Date(latestAuto.created_at).toISOString() >= since) {
     return NextResponse.json({
       ownMc: ownMc || null,
       ownDot: ownDot || null,
@@ -178,8 +186,26 @@ export async function GET() {
       if (!carrier.phone && census.phone) carrier.phone = census.phone;
       if (!carrier.mcs150Date && census.mcs150Date) carrier.mcs150Date = census.mcs150Date;
       carrier.censusAsOf = census.mcs150Date;
+      if (census.lastReview) carrier.lastReview = census.lastReview;
+      if (!carrier.safetyRatingDate && census.safetyRatingDate) carrier.safetyRatingDate = census.safetyRatingDate;
     }
   } catch { /* contact details are optional */ }
+  // The same FMCSA filings a normal lookup shows: insurance filings with
+  // their dates and any cancellation, the Motus record, and published reports
+  // about the company. Each has a time cap; a source that doesn't answer is
+  // shown as not checked, never as "nothing found".
+  try {
+    const cap = <T,>(p: Promise<T>, fallback: T): Promise<T> => Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), 9000))]);
+    const ids = { mc: carrier.mc, dot: carrier.dot };
+    const [insurance, motus, userReports] = await Promise.all([
+      cap<any>(import('@/lib/fmcsa-insurance').then((m) => m.fetchInsuranceFilings(ids)).catch((e) => ({ filings: [], asOf: null, error: e?.message || 'unavailable' })), { filings: [], asOf: null, error: 'FMCSA insurance data took too long' }),
+      cap<any>(import('@/lib/fmcsa-motus').then((m) => m.fetchMotusRecord(ids)).catch((e) => ({ checked: false, found: false, authorities: [], suspensions: [], error: e?.message || 'unavailable' })), { checked: false, found: false, authorities: [], suspensions: [], error: 'Motus data took too long' }),
+      cap<any>(import('@/lib/reports-server').then((m) => m.publishedReportsFor(ids)).catch(() => null), null),
+    ]);
+    if (userReports) carrier.userReports = userReports.score;
+    const { attachFilings } = await import('@/lib/fmcsa-motus');
+    await attachFilings(carrier, insurance, motus);
+  } catch { /* the report still stands on FMCSA's main record */ }
   if (carrier.address) {
     const ac = await checkAddress(carrier.address, carrier.name);
     if (ac.configured) carrier.addressCheck = ac;
@@ -226,6 +252,7 @@ export async function GET() {
     }
   } catch {}
   const scored: any = scoreCarrier(carrier);
+  scored.autoVersion = AUTO_VERSION;
 
   // Compare against the previous auto row (the most-recent one we have).
   // Use `latestAuto` here because we're about to insert a NEW row that

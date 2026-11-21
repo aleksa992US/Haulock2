@@ -1537,3 +1537,115 @@ export function inboundScanReplyTemplate(args: {
     }),
   };
 }
+
+// ---------- Verified reports ----------
+
+export type ReportEmailFacts = {
+  reporterName: string;
+  reporterRole: string;      // "Carrier", "Broker", "Driver", "Shipper"
+  subjectName: string;
+  categoryLabel: string;
+  loadRef: string;
+  incidentDate: string;      // YYYY-MM-DD
+  amount: number | null;
+};
+
+function reportFactsTable(f: ReportEmailFacts): string {
+  const row = (label: string, value: string) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);font-size:13px;color:rgba(11,30,63,0.6);vertical-align:top;width:38%;">${escapeHtml(label)}</td>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(11,30,63,0.08);font-size:14px;color:#0B1E3F;vertical-align:top;">${escapeHtml(value)}</td>
+    </tr>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+    ${row('Reported by', `${f.reporterName} (verified ${f.reporterRole.toLowerCase()})`)}
+    ${row('What they reported', f.categoryLabel)}
+    ${row('Load / reference', f.loadRef)}
+    ${row('Date', f.incidentDate)}
+    ${f.amount != null ? row('Amount', `$${f.amount.toLocaleString('en-US')}`) : ''}
+  </table>`;
+}
+
+// To the reported company, at the email on its FMCSA filing, when a report
+// about it is published: what was reported and how to reply.
+export function reportNoticeTemplate(args: { facts: ReportEmailFacts; siteUrl: string }): { subject: string; html: string } {
+  const f = args.facts;
+  const body = `
+${h1(`A report about ${escapeHtml(f.subjectName)} was published on Haulock`)}
+${p(`Haulock is a verification service used by carriers, brokers and drivers. A verified ${escapeHtml(f.reporterRole.toLowerCase())} filed the report below about your company. It is their statement, not a finding by Haulock.`)}
+${reportFactsTable(f)}
+${p('<strong style="color:#0B1E3F;">You can reply publicly, free.</strong> Create a Haulock account, confirm the company is yours (we email a code to this address), and your reply is shown right under the report. If the matter is settled, the reporter can mark it resolved.')}
+${button(`${args.siteUrl}/reports`, 'See the report and reply')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Think the report is false? Reply to it, and write to <a href="mailto:contact@haulock.com" style="color:#0B1E3F;text-decoration:underline;">contact@haulock.com</a> with what shows it. We remove reports that are shown to be false or that a court orders removed.</div>`;
+  return {
+    subject: `A report about ${f.subjectName} was published on Haulock`,
+    html: baseLayout({ preview: `${f.reporterName} reported: ${f.categoryLabel}`, body, reason: `You&rsquo;re receiving this because this address is on ${escapeHtml(f.subjectName)}&rsquo;s FMCSA filing.` }),
+  };
+}
+
+// To the reporter, when an admin publishes or declines their report.
+export function reportDecisionTemplate(args: { facts: ReportEmailFacts; published: boolean; reason?: string | null; siteUrl: string }): { subject: string; html: string } {
+  const f = args.facts;
+  const body = args.published
+    ? `
+${h1(`Your report about ${escapeHtml(f.subjectName)} is published`)}
+${p('It now shows on that company&rsquo;s Haulock report and counts in its score. We&rsquo;ve told the company, and they can reply publicly.')}
+${reportFactsTable(f)}
+${p('If it gets settled, open the report and mark it resolved. You can also withdraw it at any time.')}
+${button(`${args.siteUrl}/reports`, 'Open my reports')}`
+    : `
+${h1(`We didn&rsquo;t publish your report about ${escapeHtml(f.subjectName)}`)}
+${args.reason ? p(`<strong style="color:#0B1E3F;">Why:</strong> ${escapeHtml(args.reason)}`) : ''}
+${reportFactsTable(f)}
+${p('Reports need to state what happened on one load, with a document that shows it. You can file it again with the missing piece.')}
+${button(`${args.siteUrl}/reports`, 'Open my reports')}`;
+  return {
+    subject: args.published ? `Your report about ${f.subjectName} is published` : `Your report about ${f.subjectName} wasn't published`,
+    html: baseLayout({ preview: args.published ? 'It now shows on their Haulock report.' : args.reason || 'See what was missing.', body }),
+  };
+}
+
+// Report alerts (paid plans): to an account that monitors its own company,
+// or has the company on its watchlist, when a report about it is published.
+export function reportAlertTemplate(args: { facts: ReportEmailFacts; own: boolean; recipientEmail: string; siteUrl: string }): { subject: string; html: string } {
+  const f = args.facts;
+  const body = `
+${h1(args.own ? `A report about your company was just published` : `New report about ${escapeHtml(f.subjectName)}`)}
+${p(args.own
+    ? `A verified ${escapeHtml(f.reporterRole.toLowerCase())} filed a report about <strong style="color:#0B1E3F;">${escapeHtml(f.subjectName)}</strong>. Anyone who checks your company on Haulock can see it. You can reply publicly under it right now.`
+    : `<strong style="color:#0B1E3F;">${escapeHtml(f.subjectName)}</strong> is on your watchlist. A verified ${escapeHtml(f.reporterRole.toLowerCase())} just filed a report about them.`)}
+${reportFactsTable(f)}
+${button(`${args.siteUrl}/reports`, args.own ? 'Read it and reply' : 'Read the report')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Reports are the reporter&rsquo;s own statement, not a finding by Haulock. Report alerts are part of your paid plan; turn watchlist emails off in Settings.</div>`;
+  return {
+    subject: args.own ? `A report about your company was published on Haulock` : `Watchlist: new report about ${f.subjectName}`,
+    html: baseLayout({ preview: `${f.reporterName} reported: ${f.categoryLabel}`, body, unsubEmail: args.recipientEmail }),
+  };
+}
+
+// Product update for every registered user: verified reports, insurance
+// cancellation countdowns, Motus. Prepared only: nothing sends it yet.
+export function reportsLaunchTemplate(args: { recipientEmail: string; siteUrl: string }): { subject: string; html: string } {
+  const item = (title: string, tag: string, text: string) => `
+    <tr><td style="padding:14px 0;border-bottom:1px solid rgba(11,30,63,0.08);">
+      <div style="font-size:15px;font-weight:600;color:#0B1E3F;">${title} <span style="display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;background:${tag === 'Free' ? 'rgba(22,163,74,0.12)' : tag === 'Paid plans' ? 'rgba(11,30,63,0.07)' : 'rgba(255,107,53,0.12)'};color:${tag === 'Free' ? '#16A34A' : tag === 'Paid plans' ? 'rgba(11,30,63,0.65)' : '#FF6B35'};font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;">${tag}</span></div>
+      <div style="font-size:14px;color:rgba(11,30,63,0.7);line-height:1.6;margin-top:4px;">${text}</div>
+    </td></tr>`;
+  const body = `
+${h1(`New in Haulock: everyone in freight, ${italicAccent('on the record')}`)}
+${p('We&rsquo;ve added four things to your account. The first one is free on every plan.')}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+  ${item('Verified reports', 'Free', 'Carriers report brokers, brokers report carriers, drivers report the companies they hauled for, and shippers report and can be reported. Only verified reporters, one load per report with documents, and the other side can reply publicly.')}
+  ${item('Insurance cancellation countdown', 'New', 'Every report lists each insurance filing with the date it took effect. When an insurer files to cancel, usually 30 days ahead, you see the date and the days left, and your watchlist emails you that day.')}
+  ${item('FMCSA Motus, side by side', 'New', 'FMCSA now records changes in its Motus system first. When Motus is newer than FMCSA&rsquo;s other records, your report shows both, along with the last FMCSA audit and the BOC-3 process agent.')}
+  ${item('Report alerts', 'Paid plans', 'An email the moment a report is published about your company or one on your watchlist.')}
+</table>
+${button(`${args.siteUrl}/reports`, 'See what&rsquo;s new')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">Had a load go wrong? Filing a report takes a few minutes and helps the next carrier, broker or driver who deals with that company.</div>`;
+  return {
+    subject: 'New in Haulock: verified reports, insurance cancellation alerts, and Motus',
+    html: baseLayout({ preview: 'Report a broker, carrier or shipper, free. Plus insurance cancellation countdowns and FMCSA Motus.', body, unsubEmail: args.recipientEmail }),
+  };
+}

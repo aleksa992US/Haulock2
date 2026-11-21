@@ -6,7 +6,7 @@ import { fetchCensusContact, dotForMc } from './fmcsa-census';
 // whether FMCSA's own record backs that up, and — for verified owners —
 // how often other Haulock users have checked that company. Never who.
 
-const FREE_EMAIL_DOMAINS = new Set([
+export const FREE_EMAIL_DOMAINS = new Set([
   'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com',
   'aol.com', 'icloud.com', 'me.com', 'mac.com', 'comcast.net', 'att.net', 'sbcglobal.net', 'verizon.net',
   'protonmail.com', 'proton.me', 'mail.com', 'gmx.com', 'zoho.com', 'yandex.com',

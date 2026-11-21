@@ -10,7 +10,7 @@ import {
   Command, ShieldCheck, Star, Quote, Radio, PlayCircle, Target,
   Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Trash2, Copy, Key, ScanLine, Sparkles, Upload,
   Truck, UserCheck, LifeBuoy, MessageSquare, Fuel, Navigation, Route as RouteIcon,
-  X, LogIn,
+  X, LogIn, Info,
 } from 'lucide-react';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { timeAgo } from '@/lib/timeago';
@@ -20,8 +20,9 @@ import { COI_CHECK_ON, SCAN_EMAIL_ON } from '@/lib/features';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 import { recommendationFor, carrierAuthorityLabel } from '@/lib/recommendation';
+import { ReportsPage, CompanyReportsSection, ReportsAdminPanel, WhatsNewButton, WhatsNewModal } from './Reports';
 
-const APP_ROUTES = ['dashboard', 'verify', 'planner', 'history', 'watchlist', 'alerts', 'plan', 'settings', 'report', 'admin', 'sales', 'support', 'earnings'];
+const APP_ROUTES = ['dashboard', 'verify', 'planner', 'history', 'watchlist', 'reports', 'alerts', 'plan', 'settings', 'report', 'admin', 'sales', 'support', 'earnings'];
 const AUTH_ROUTES = ['login', 'signup', 'pricing'];
 const PUBLIC_ROUTES = ['terms', 'privacy', 'blog', 'about', 'affiliate'];
 const ALL_ROUTES = [...APP_ROUTES, ...AUTH_ROUTES, ...PUBLIC_ROUTES, 'landing'];
@@ -403,6 +404,7 @@ export default function Haulock() {
           <PageSlot routeId="planner" current={route}><LoadPlanner navigate={navigate} /></PageSlot>
           <PageSlot routeId="report" current={route}><Report report={currentReport} navigate={navigate} /></PageSlot>
           <PageSlot routeId="watchlist" current={route}><Watchlist navigate={navigate} /></PageSlot>
+          <PageSlot routeId="reports" current={route}><ReportsPage navigate={navigate} plan={user?.plan} /></PageSlot>
           <PageSlot routeId="support" current={route}><SupportPage user={user} /></PageSlot>
           <PageSlot routeId="alerts" current={route}><Alerts navigate={navigate} /></PageSlot>
           <PageSlot routeId="settings" current={route}><SettingsPage user={user} navigate={navigate} initialTab={settingsTab} /></PageSlot>
@@ -501,42 +503,189 @@ function Landing({ navigate, user }: any) {
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
 
-      <section className="relative overflow-hidden pt-12 pb-24 text-[#0B1E3F]">
+      <section className="relative overflow-hidden pt-4 pb-20 text-[#0B1E3F]">
         <div className="absolute inset-0 radial-glow pointer-events-none" />
         <div className="absolute inset-0 grid-bg opacity-40" />
-        <div className="relative max-w-7xl mx-auto px-6 grid lg:grid-cols-12 gap-12 items-center">
-          <div className="lg:col-span-6 pt-8">
-            <div className="fade-up fade-up-1 inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-[#0B1E3F]/10 rounded-full text-xs mono uppercase tracking-wider text-[#0B1E3F] mb-8 card-shadow">
-              <span className="relative flex w-2 h-2">
-                <span className="absolute inline-flex w-full h-full bg-[#FF6B35] rounded-full opacity-75 animate-ping" />
-                <span className="relative inline-flex w-2 h-2 bg-[#FF6B35] rounded-full" />
-              </span>
-              Cargo theft hit a record in 2024 · up 27%
-            </div>
-            <h1 className="fade-up fade-up-2 text-5xl md:text-6xl lg:text-7xl leading-[0.95] tracking-tight text-[#0B1E3F] mb-6">
-              Know who&apos;s on the <span className="serif italic">other end</span> of the rate con.
-            </h1>
-            <p className="fade-up fade-up-3 text-lg md:text-xl text-[#0B1E3F]/70 max-w-xl mb-10 leading-relaxed">
-              Verify any broker or carrier in seconds. Cross-checks FMCSA (including the officer names on file), the company website, social presence, and Google Business listing — catching double-brokers, ghost MCs, and spoofed identities before you hook the trailer or hand off the load.
-            </p>
-            <div className="fade-up fade-up-4 flex flex-col sm:flex-row gap-3 mb-12">
-              <button onClick={() => navigate('signup')} className="group px-7 py-4 bg-[#0B1E3F] text-white text-base font-medium rounded-full hover:bg-[#0B1E3F]/90 transition flex items-center justify-center gap-2 card-shadow-lg">
-                Check any broker or carrier free <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
+          <HeroSlider slides={[
+            {
+              // 1 — New: verified reports, free on every plan.
+              key: 'reports',
+              label: 'Reports',
+              badge: 'New',
+              dark: true,
+              content: (
+                <div className="grid lg:grid-cols-12 gap-10 lg:gap-12 items-center">
+                  <div className="lg:col-span-6 min-w-0">
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#FF6B35] text-white rounded-full text-xs mono uppercase tracking-wider mb-4">
+                      <Sparkles className="w-3.5 h-3.5" /> New · Free on every plan
+                    </div>
+                    <h2 className="text-4xl md:text-[2.6rem] lg:text-[2.75rem] leading-[1] tracking-tight text-white mb-4">
+                      Report a broker, carrier or shipper. <span className="serif italic text-[#FFD9C7] block mt-0.5">Read any company&apos;s reports.</span>
+                    </h2>
+                    <p className="text-base text-white/70 max-w-xl mb-4 leading-relaxed">
+                      Carriers, brokers, drivers and shippers can all file one. It stays on that company&apos;s record for whoever checks it next.
+                    </p>
+                    {/* the two things you can do */}
+                    <div className="grid sm:grid-cols-2 gap-3 max-w-xl mb-4">
+                      {[
+                        { n: '1', icon: Flag, title: 'File a report', text: 'Pick the company, say what happened on that load and attach your documents.' },
+                        { n: '2', icon: Search, title: 'Read a company’s reports', text: 'Search any company by name, MC or DOT and read every report, plus the company’s reply.' },
+                      ].map((x) => {
+                        const Icon = x.icon;
+                        return (
+                          <div key={x.n} className="rounded-2xl bg-white/[0.06] border border-white/10 px-4 py-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-[#FF6B35] flex items-center justify-center shrink-0"><Icon className="w-4 h-4 text-white" /></div>
+                              <div className="text-base font-semibold text-white leading-tight">{x.title}</div>
+                            </div>
+                            <p className="mt-2 text-sm text-white/65 leading-snug">{x.text}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* who can report whom */}
+                    <div className="max-w-xl mb-4">
+                      <div className="text-[10px] mono uppercase tracking-[0.18em] text-white/45 mb-2">Who can report whom</div>
+                      <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                        {[
+                          { icon: Truck, who: 'Carriers', what: 'report brokers and shippers' },
+                          { icon: Building2, who: 'Brokers', what: 'report carriers and shippers' },
+                          { icon: UserCheck, who: 'Drivers', what: 'report the carriers and brokers they hauled for' },
+                          { icon: Flag, who: 'Shippers', what: 'report carriers and brokers' },
+                        ].map((x) => {
+                          const Icon = x.icon;
+                          return (
+                            <li key={x.who} className="flex items-start gap-2.5 text-sm leading-snug">
+                              <Icon className="w-4 h-4 text-[#FF6B35] mt-0.5 shrink-0" />
+                              <span><strong className="font-semibold text-white">{x.who}</strong> <span className="text-white/65">{x.what}</span></span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                      <button onClick={() => navigate(user ? 'reports' : 'signup')} className="group px-7 py-3.5 bg-[#FF6B35] text-white text-base font-semibold rounded-full hover:bg-[#FF6B35]/90 transition flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B35]/25">
+                        {user ? 'File a report' : 'Create a free account'} <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-white/60">
+                      <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#4ADE80]" /> Every reporter is verified</span>
+                      <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#4ADE80]" /> Reviewed before it&apos;s shown</span>
+                      <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#4ADE80]" /> Companies can reply</span>
+                    </div>
+                  </div>
+                  <div className="lg:col-span-6 min-w-0"><HeroReportsVisual /></div>
+                </div>
+              ),
+            },
+            {
+              // 2 — What Haulock has always done: check a broker or carrier.
+              key: 'verify',
+              label: 'Verify a company',
+              short: 'Verify',
+              content: (
+                <div className="grid lg:grid-cols-12 gap-10 lg:gap-12 items-center">
+                  <div className="lg:col-span-6">
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#F5F3EE] border border-[#0B1E3F]/10 rounded-full text-xs mono uppercase tracking-wider text-[#0B1E3F] mb-6">
+                      <span className="relative flex w-2 h-2">
+                        <span className="absolute inline-flex w-full h-full bg-[#FF6B35] rounded-full opacity-75 animate-ping" />
+                        <span className="relative inline-flex w-2 h-2 bg-[#FF6B35] rounded-full" />
+                      </span>
+                      Cargo theft hit a record in 2024 · up 27%
+                    </div>
+                    <h1 className="text-4xl md:text-5xl lg:text-6xl leading-[0.98] tracking-tight text-[#0B1E3F] mb-5">
+                      Know who&apos;s on the <span className="serif italic">other end</span> of the rate con.
+                    </h1>
+                    <p className="text-lg text-[#0B1E3F]/70 max-w-xl mb-7 leading-relaxed">
+                      Check any broker or carrier in seconds: FMCSA authority, insurance, inspections and crashes, the officer names on file, the company&apos;s website and address, and what the web says. 15 sources, one verdict.
+                    </p>
+                    <HeroSearch navigate={navigate} user={user} />
+                    <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-[#0B1E3F]/60">
+                      <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 3 free lookups a month</span>
+                      <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> No credit card</span>
+                      <button onClick={() => { setDemoOpen(true); track('demo_opened'); }} className="inline-flex items-center gap-1.5 text-[#0B1E3F] font-medium hover:text-[#FF6B35] transition">
+                        <PlayCircle className="w-4 h-4" /> Watch 60-sec demo
+                      </button>
+                    </div>
+                  </div>
+                  <div className="lg:col-span-6"><HeroLiveCheck /></div>
+                </div>
+              ),
+            },
+            {
+              // 3 — FMCSA Motus: the newest records, side by side.
+              key: 'motus',
+              label: 'FMCSA Motus',
+              short: 'Motus',
+              content: (
+                <div className="grid lg:grid-cols-12 gap-10 lg:gap-12 items-center">
+                  <div className="lg:col-span-6">
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#0B1E3F] text-white rounded-full text-xs mono uppercase tracking-wider mb-6">
+                      <Radio className="w-3.5 h-3.5 text-[#FF6B35]" /> FMCSA Motus · on every lookup
+                    </div>
+                    <h2 className="text-4xl md:text-5xl lg:text-6xl leading-[0.98] tracking-tight text-[#0B1E3F] mb-5">
+                      FMCSA&apos;s changes land in Motus first. <span className="serif italic">So do we.</span>
+                    </h2>
+                    <p className="text-lg text-[#0B1E3F]/70 max-w-xl mb-7 leading-relaxed">
+                      Since May 2026, a new phone number, a dropped policy or a suspension notice shows up in FMCSA&apos;s Motus system before its other records. Haulock reads both and shows you where they differ, with the date of each.
+                    </p>
+                    <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-3 max-w-xl mb-8 text-sm text-[#0B1E3F]/80">
+                      {[
+                        { icon: Bell, text: 'Insurance cancellations, with the days left' },
+                        { icon: AlertTriangle, text: 'Suspension notices FMCSA has served' },
+                        { icon: ShieldCheck, text: 'The last FMCSA audit and its result' },
+                        { icon: FileText, text: 'The BOC-3 process agent on file' },
+                      ].map((x) => {
+                        const Icon = x.icon;
+                        return (
+                          <li key={x.text} className="flex items-start gap-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-[#0B1E3F]/[0.06] flex items-center justify-center shrink-0"><Icon className="w-3.5 h-3.5 text-[#0B1E3F]" /></span>
+                            <span className="pt-1">{x.text}</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button onClick={() => navigate(user ? 'verify' : 'signup')} className="group px-7 py-4 bg-[#0B1E3F] text-white text-base font-medium rounded-full hover:bg-[#0B1E3F]/90 transition flex items-center justify-center gap-2 card-shadow-lg">
+                        Check a company <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="lg:col-span-6"><HeroMotusVisual /></div>
+                </div>
+              ),
+            },
+          ]} />
+
+          {/* Where every lookup looks — FMCSA and Motus first. */}
+          <div className="mt-10 px-2">
+            <div className="text-[10px] mono uppercase tracking-[0.2em] text-[#0B1E3F]/45 mb-3">Checked on every lookup</div>
+            <div className="flex flex-wrap items-center gap-2">
+              {HERO_SOURCES.map((s) => {
+                const Icon = s.icon;
+                return (
+                  <span
+                    key={s.label}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border ${s.strong ? 'bg-[#0B1E3F] text-white border-[#0B1E3F] card-shadow' : 'bg-white text-[#0B1E3F]/75 border-[#0B1E3F]/10'}`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 ${s.strong ? 'text-[#FF6B35]' : 'text-[#0B1E3F]/45'}`} />
+                    <span className={s.strong ? 'font-semibold' : ''}>{s.label}</span>
+                    {s.tag && (
+                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider ${s.tag === 'New' ? 'bg-[#FF6B35] text-white' : 'bg-white/15 text-white/85'}`}>{s.tag}</span>
+                    )}
+                  </span>
+                );
+              })}
+              <button
+                onClick={() => document.getElementById('product')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs text-[#0B1E3F]/60 hover:text-[#0B1E3F] transition"
+              >
+                +{15 - HERO_SOURCES.length} more <ArrowRight className="w-3 h-3" />
               </button>
-              <button onClick={() => { setDemoOpen(true); track('demo_opened'); }} className="group px-7 py-4 border border-[#0B1E3F]/20 bg-white text-[#0B1E3F] text-base font-medium rounded-full hover:bg-[#0B1E3F]/5 transition flex items-center justify-center gap-2">
-                <PlayCircle className="w-4 h-4" /> Watch 60-sec demo
-              </button>
-              {demoOpen && <DemoModal onClose={() => setDemoOpen(false)} />}
-            </div>
-            <div className="fade-up fade-up-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-[#0B1E3F]/60">
-              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> Official FMCSA data</div>
-              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> 14 data sources per lookup</div>
-              <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A]" /> No credit card</div>
             </div>
           </div>
-          <div className="lg:col-span-6 fade-up fade-up-3 relative">
-            <HeroDashboardMockup />
-          </div>
+          {demoOpen && <DemoModal onClose={() => setDemoOpen(false)} />}
         </div>
       </section>
 
@@ -646,7 +795,7 @@ function Landing({ navigate, user }: any) {
       <section className="py-20 px-6 bg-[#F5F3EE] text-[#0B1E3F] border-t border-[#0B1E3F]/10">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <BigStat value="14" label="data sources per lookup" />
+            <BigStat value="15" label="data sources per lookup" />
             <BigStat value="FMCSA" label="official federal data" />
             <BigStat value="1 verdict" label="in plain English" />
             <BigStat value="3 free" label="lookups every month" />
@@ -684,7 +833,10 @@ function Landing({ navigate, user }: any) {
             </h2>
           </div>
           <div className="grid md:grid-cols-3 gap-5">
-            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA verification" desc="Type an MC, DOT, or company name and pick the right company as you type. Carrier and broker authority shown separately, plus authority age, insurance on file, safety rating, and crash history — pulled live from the federal registry." stat="Live" statLabel="from FMCSA" />
+            <FeatureCard icon={Search} iconBg="#0B1E3F" title="FMCSA & Motus verification" desc="Type an MC, DOT, or company name and pick the right company as you type. Carrier and broker authority shown separately, plus authority age, insurance on file, safety rating, and crash history — pulled live from FMCSA and its new Motus system." stat="Live" statLabel="FMCSA + Motus" />
+            <FeatureCard icon={Bell} iconBg="#FF6B35" title="Insurance filings & cancellations" desc="Every liability, cargo and bond filing with the insurer and the date it took effect. When an insurer files to cancel, usually 30 days ahead, you see the countdown, and your watchlist emails you that day." stat="30 days" statLabel="warning before coverage ends" />
+            <FeatureCard icon={ShieldCheck} iconBg="#16A34A" title="Last FMCSA audit" desc="When FMCSA last reviewed the company, a compliance review or the safety audit every new carrier gets, and the safety rating that came out of it, with dates." stat="Census" statLabel="FMCSA review on file" />
+            <FeatureCard icon={Database} iconBg="#0B1E3F" title="Motus: FMCSA's newest records" desc="Since May 2026 FMCSA records changes in Motus first. When Motus is newer than FMCSA's other records, like a new phone, a dropped policy or a suspension notice, you see both side by side, plus the BOC-3 process agent." stat="Daily" statLabel="from FMCSA Motus" />
             <FeatureCard icon={UserCheck} iconBg="#FF6B35" title="Officer names on file" desc="See the company officers on the FMCSA filing (MCS-150), plus the phone and email on it and when it was last updated. Ask for the owner by name, on the number FMCSA has — not the one on the rate con." stat="MCS-150" statLabel="FMCSA company census" />
             <FeatureCard icon={Globe} iconBg="#16A34A" title="Website & domain check" desc="We find the counterparty's real website and check it, and their email domain, against the FMCSA record. Plus WHOIS age, MX and SPF records, and Google Safe Browsing. A domain registered last week is an immediate red flag." stat="WHOIS" statLabel="live domain lookup" />
             <FeatureCard icon={Clock} iconBg="#0B1E3F" title="Inspections, crashes & history" desc="Every roadside inspection and crash from the last 24 months: when, where, each violation, and whether a driver or truck was put out of service. Plus authority, insurance, name, address, and phone changes over time." stat="24 mo" statLabel="every inspection & crash" />
@@ -703,12 +855,12 @@ function Landing({ navigate, user }: any) {
             <div className="lg:sticky lg:top-24 text-[#0B1E3F]">
               <div className="text-xs mono uppercase tracking-[0.2em] text-[#FF6B35] mb-4">— How it works</div>
               <h2 className="text-4xl md:text-5xl serif italic leading-tight text-[#0B1E3F] mb-6">Rate con to verdict before you sign.</h2>
-              <p className="text-[#0B1E3F]/60 text-lg">Haulock pulls from 14 data sources at once. No screens to navigate, no spreadsheets to cross-reference.</p>
+              <p className="text-[#0B1E3F]/60 text-lg">Haulock pulls from 15 data sources at once, FMCSA and Motus included. No screens to navigate, no spreadsheets to cross-reference.</p>
             </div>
             <div className="space-y-4">
               {[
                 { n: '01', icon: Zap, title: 'Enter MC, DOT, company name, or drop a rate con', desc: 'Works with any identifier — for a broker or a carrier. Start typing and pick the right company from the suggestions, or drop a PDF. Upload works from your phone in the cab or the desk.' },
-                { n: '02', icon: Database, title: 'We cross-check 14 data sources', desc: 'FMCSA authority & insurance, the officer names on the FMCSA filing, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, web reputation across 50+ trusted news outlets, and more.' },
+                { n: '02', icon: Database, title: 'We cross-check 15 data sources', desc: 'FMCSA authority and FMCSA’s newest Motus records, every insurance filing with its start date and any pending cancellation, the last FMCSA audit, the officer names on the FMCSA filing, company website, domain WHOIS, social profiles across 6 platforms, Google Business address, web reputation across 50+ trusted news outlets, and more.' },
                 { n: '03', icon: Target, title: 'Get a score and a clear verdict', desc: 'Plain English. No jargon. "Book this load" or "Walk away." Share with your dispatcher or ops team in one click.' },
               ].map((step, i) => (
                 <div key={i} className="group bg-white border border-[#0B1E3F]/10 rounded-2xl p-7 hover:border-[#0B1E3F]/20 transition card-shadow text-[#0B1E3F]">
@@ -1073,10 +1225,10 @@ function Landing({ navigate, user }: any) {
 
       <section className="border-y border-[#0B1E3F]/10 bg-white py-8 text-[#0B1E3F]">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="text-xs mono uppercase tracking-[0.2em] text-[#0B1E3F]/50 mb-5 text-center">— 14 data sources, cross-checked on every lookup</div>
+          <div className="text-xs mono uppercase tracking-[0.2em] text-[#0B1E3F]/50 mb-5 text-center">— 15 data sources, cross-checked on every lookup</div>
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-3">
             {[
-              'FMCSA SAFER', 'L&I authority status', 'MCS-150 officers & contacts', 'Insurance filings', 'Crash & inspection history',
+              'FMCSA SAFER', 'FMCSA Motus records', 'L&I authority status', 'MCS-150 officers & audits', 'Insurance filings & cancellations', 'Crash & inspection history',
               'Authority & identity history', 'Company website', 'Domain WHOIS', 'DNS (MX / SPF)', 'Google Safe Browsing',
               'Google Business address', 'Social profiles (6 platforms)', 'Disposable email registry', 'Web reputation scan',
             ].map((src, i) => (
@@ -1128,11 +1280,13 @@ function Landing({ navigate, user }: any) {
           </div>
           <div className="space-y-3">
             {[
-              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. FMCSA’s public Company Census for the officer names, phone, and email on the company’s MCS-150 filing. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And our own historical snapshot archive going back five years.' },
+              { q: 'Where does Haulock get its data?', a: 'Live from the official FMCSA SAFER, L&I, and SMS systems for authority, insurance, surety bond, safety rating, BASIC scores, 24-month inspections, and crash history. FMCSA’s new Motus system, where changes to authority, insurance, contact details, process agents and suspension notices show up first. FMCSA’s insurance filings for every policy’s start date and any pending cancellation. FMCSA’s public Company Census for the officer names, phone, and email on the company’s MCS-150 filing, and the date of the last FMCSA audit. Plus WHOIS and DNS for domain age, MX provider, and DMARC. Google Places for physical address verification. Google Safe Browsing for known threat domains. Brave Search for web reputation across 50+ trusted news outlets. And our own historical snapshot archive going back five years.' },
               { q: 'How is this different from Carrier411 or DAT CarrierWatch?', a: 'Most tools vet in one direction: brokers checking carriers. Haulock works both ways. Carriers verify brokers, brokers verify carriers, and either side can verify shippers. We also catch things those tools do not, like lookalike domains, chameleon-network shared phone numbers, AI-driven rate confirmation analysis, and identity-history snapshots that show when a carrier quietly changed their address or phone.' },
               { q: 'Can I drop a rate confirmation PDF and have it analyzed?', a: 'Yes. Upload any rate con PDF and Haulock runs it through OCR, then through Claude AI to extract the broker, carrier, load, and rate. The same scan checks the broker email domain against their FMCSA-registered website, looks for spoofed lookalike domains, scores the document for fraud language patterns, and pulls a full broker risk report. Most rate cons are scanned in under a minute.' },
               { q: 'Do you have driver-side checks for inspections and crashes?', a: 'Yes. Every report pulls 24 months of FMCSA SMS inspection data: total inspections, vehicle and driver out-of-service rates, BASIC score percentiles across all seven safety BASICs, plus the crash count broken down by fatal, injury, and tow-away. So whether you are vetting a broker before booking or a carrier before dispatching, you see the actual safety history, not just the marketing.' },
-              { q: 'What checks run on every lookup?', a: 'Up to 14 sources in parallel: FMCSA SAFER and Company Census (authority, address, MCS-150 officers and contact details), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes) plus every roadside inspection and crash from FMCSA’s inspection and crash files, MC name lookup, authority, insurance, and identity-change history (name, address, phone), our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
+              { q: 'Can I see when a carrier’s insurance expires?', a: 'FMCSA doesn’t keep an expiration date: an insurance filing stays in force until the insurer cancels it, and the insurer has to give FMCSA at least 30 days’ notice. Haulock shows every liability, cargo and bond filing with the insurer and the date it took effect, and the moment a cancellation is filed you see the date it takes effect and how many days are left. Put the company on your watchlist and we email you the day a cancellation is filed. The policy’s own renewal date is printed on the certificate of insurance, which the COI check reads.' },
+              { q: 'What is Motus, and do you check it?', a: 'Motus is FMCSA’s new registration and licensing system, in use since May 2026. Changes a company makes, like a new phone or address, a new or cancelled insurance policy, a new process agent (BOC-3), or a suspension notice, show up in Motus first and reach FMCSA’s older systems later. Haulock reads Motus on every lookup. When it’s newer than FMCSA’s other records, the report shows both side by side with their dates, and the score goes by the newer one.' },
+              { q: 'What checks run on every lookup?', a: 'Up to 15 sources in parallel: FMCSA SAFER and Company Census (authority, address, MCS-150 officers and contact details, last FMCSA audit), FMCSA Motus (the newest authority, insurance, contact details, process agent and suspension notices), FMCSA insurance filings (each policy’s start date and any pending cancellation), FMCSA L&I (insurance and surety bond), FMCSA SMS (BASICs, inspections, crashes) plus every roadside inspection and crash from FMCSA’s inspection and crash files, MC name lookup, authority, insurance, and identity-change history (name, address, phone), our Day-1 archive, lookalike-domain detection, cross-reference scan for shared phones and addresses, web reputation across major news outlets and forums, linked-entity extraction, Google Places address match, Google Safe Browsing domain check, WHOIS and DNS, and email infrastructure (MX, SPF, DMARC).' },
               { q: 'Can I see who owns a carrier or broker?', a: 'Yes. Reports show the company officers listed on the FMCSA filing (the MCS-150, from FMCSA’s public Company Census), plus the phone and email on that filing and the date it was last updated. Before you book, call the number FMCSA has, not the one on the rate con, and ask for the owner by name. The names are only as current as the company’s last MCS-150 update, which we show next to them. If FMCSA has no names on file, the report says so.' },
               { q: 'Can I see a carrier’s roadside inspections and crashes?', a: 'Yes. Every carrier report lists the roadside inspections and crashes from the last 24 months, from FMCSA’s public inspection and crash files, which are refreshed daily: the date, where it happened, the inspection level, each violation, and whether a driver or truck was put out of service. A month-by-month chart shows whether things are getting better or worse. Inspections reach FMCSA a few days after they happen, and crash records don’t say who was at fault. On paid plans, we also email you each new inspection and crash filed on your own DOT.' },
               { q: 'Can Haulock work out empty miles, fuel and profit on a load?', a: 'Yes. The Load planner takes the pickup, delivery and rate (type them, or upload the rate con and they fill in while the broker is checked) plus where the truck is now. It shows a truck route on the map, empty and loaded miles, drive time with the required 10-hour breaks, fuel at this week’s EIA diesel average for the region (or your own price), and what’s left after fuel, driver pay and other costs, with your break-even rate per mile. It handles company drivers and owner-operators: pay as a flat amount, per mile or a percentage, and who buys the fuel. US loads only. Free plans include 10 load plans a month; paid plans are unlimited.' },
@@ -1140,7 +1294,7 @@ function Landing({ navigate, user }: any) {
               { q: 'Does it work for drivers and owner-operators?', a: 'Yes. Drivers and owner-operators get the most use out of two features. First, the broker verification: paste an MC or DOT before you accept the load and see authority, insurance, surety bond, FMCSA enforcement history, the officer names on the FMCSA filing, and any web-reputation hits from trusted sources. Second, the PDF tamper check: drop the rate confirmation and we open the file, rebuild every saved version, and show exactly what text changed after it was made. That second one catches dispatchers who quietly shaved the rate before forwarding the rate con. Free plan covers 3 broker lookups and 3 PDF scans every month with no credit card.' },
               { q: 'How does the PDF tamper check work?', a: 'We open the PDF itself, not just its metadata. When a PDF is edited and saved, the earlier version often stays inside the file, so we rebuild every saved version and compare them page by page, showing the exact text that changed (before → after). We also look for white-out boxes drawn over text with new text on top, text boxes typed on top of the page, invisible text, changes made after a digital signature, Acrobat “Edit Text” markers, the same font embedded twice, online editors like iLovePDF, Sejda, or Smallpdf, impossible dates, stripped metadata, and JavaScript. Changed spots are highlighted on a preview of your PDF. We also tell you what’s normal, like filled-in form fields, signatures, the text layer on a scan, or a re-save that changed nothing, so an honest document isn’t flagged. No AI and no broker lookup: the file itself is checked, and it isn’t stored. Free plan: 3 scans a month. Paid plans: unlimited.' },
               { q: 'What about my existing TMS?', a: 'Haulock plugs into your workflow without replacing anything. On the Fleet plan, use our API to bring verification directly into your TMS, your dispatch software, your onboarding, or your factor approval flow.' },
-              { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time. Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
+              { q: 'How fresh is the FMCSA data?', a: 'For lookups you trigger, we pull live FMCSA in real time, and FMCSA’s Motus records and insurance filings as of FMCSA’s latest daily update (the report shows that date). Repeat lookups within 24 hours are served from cache so we do not burn FMCSA quota or slow you down. We also keep an append-only snapshot history of every carrier we have ever scanned, so when an upstream system is down we can still show you the most recent record we have on file.' },
               { q: 'Can I see who is checking my company?', a: 'On paid plans you can see how often your company is checked on Haulock: checks per week, and how many different accounts looked you up. We never show who searched, and nobody can see lookups made on FMCSA\u2019s own site, because FMCSA doesn\u2019t publish them. You also get a notice in the app when your company is checked. To protect other users, these counts unlock only after you verify the company is yours: either your login email is on the same company domain as the email on your FMCSA filing, or you enter a code we email to that address. Paid plans also monitor your own FMCSA record every day and email you if anything changes, including each new roadside inspection or crash filed on your DOT.' },
               { q: 'How accurate are the risk scores?', a: 'A risk score is a signal, not a verdict. It surfaces specific red flags from real public data: missing surety bond, expired insurance, address mismatch, lookalike email domain, BASIC violations, fraud or lawsuit mentions in trusted news sources, and so on. A high score should slow you down. A low score does not mean a load is risk-free. You still make the call. Always verify identity through an independent channel before you book.' },
               { q: 'Can I cancel anytime?', a: 'Yes. No contracts, no questions. Cancel in one click from your settings. Your scan history stays accessible. Subscriptions can also be paused if you want to keep the account but stop billing.' },
@@ -1263,7 +1417,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'good', t: 'Verified physical office', i: Building2 },
     ],
     scanTime: '1.7s', dataSources: 14,
-    communityAlert: 'Clean across all 14 sources · 12-year authority',
+    communityAlert: 'Clean across all 15 sources · 12-year authority',
   },
   {
     name: 'Braxtone Logistics LLC',
@@ -1333,7 +1487,7 @@ const HERO_SCENARIOS: Array<{
       { s: 'good', t: 'Verified physical office · 2,400 sqft', i: Building2 },
     ],
     scanTime: '1.5s', dataSources: 14,
-    communityAlert: 'Clean across all 14 sources · 18-year authority',
+    communityAlert: 'Clean across all 15 sources · 18-year authority',
   },
 ];
 
@@ -1370,108 +1524,422 @@ function DemoModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function HeroDashboardMockup() {
-  // Marketing hero deliberately renders only hardcoded HERO_SCENARIOS — never
-  // real user lookups — so a visitor's own search history can't appear on the
-  // public landing page. Pick a random scenario per page load.
-  const [idx, setIdx] = useState<number | null>(null);
-  useEffect(() => {
-    setIdx(Math.floor(Math.random() * HERO_SCENARIOS.length));
-  }, []);
-  if (idx === null) {
-    return (
-      <div className="relative text-[#0B1E3F]">
-        <div className="bg-white rounded-3xl card-shadow-lg border border-[#0B1E3F]/10" style={{ minHeight: 540 }} />
-      </div>
-    );
-  }
+// ---------- Homepage hero ----------
 
-  const flagColor = (level: 'critical' | 'warning' | 'good') => level === 'critical' ? '#DC2626' : level === 'warning' ? '#F59E0B' : '#16A34A';
-  const s: {
-    name: string; mc: string; dot: string; score: number;
-    badgeLabel: string; badgeColor: string;
-    verdictTitle: string; verdictLine: string; verdictTone: 'danger' | 'warn' | 'good';
-    flags: { s: 'critical' | 'warning' | 'good'; t: string; i: any }[];
-    scanTime: string; dataSources: number;
-    communityAlert?: string;
-    entity?: string;
-    isReal: boolean;
-  } = { ...HERO_SCENARIOS[idx], isReal: false };
+// Sources named under the hero. FMCSA and Motus lead; the rest of the 15 are
+// one click away in "What we check".
+const HERO_SOURCES: { label: string; icon: any; strong?: boolean; tag?: 'Official' | 'New' }[] = [
+  { label: 'FMCSA SAFER', icon: Shield, strong: true, tag: 'Official' },
+  { label: 'FMCSA Motus', icon: Radio, strong: true, tag: 'New' },
+  { label: 'Insurance filings & cancellations', icon: Bell },
+  { label: 'MCS-150 census & audits', icon: UserCheck },
+  { label: 'Inspections & crashes', icon: Truck },
+  { label: 'Google Places', icon: MapPin },
+  { label: 'WHOIS & DNS', icon: Globe },
+  { label: 'Web reputation', icon: Eye },
+];
 
-  const toneBg = s.verdictTone === 'danger' ? 'bg-[#DC2626]/10 border-[#DC2626]/30' : s.verdictTone === 'warn' ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30' : 'bg-[#16A34A]/10 border-[#16A34A]/30';
-  const toneText = s.verdictTone === 'danger' ? 'text-[#DC2626]' : s.verdictTone === 'warn' ? 'text-[#F59E0B]' : 'text-[#16A34A]';
-  const VerdictIcon = s.verdictTone === 'good' ? CheckCircle2 : AlertTriangle;
+// The hero slider: one big rounded stage, three slides. The tab bar at the
+// top shows where you are; the active tab's bar fills while its slide is up
+// and the slider moves on when it's full. Hovering or focusing anything in
+// the stage pauses it. On desktop every slide sits in the same grid cell, so
+// the stage keeps the height of the tallest and nothing jumps. On phones only
+// the active slide is laid out and it doesn't rotate by itself (see
+// .hero-progress in globals.css), so the page never shifts under a thumb.
+type HeroSlide = { key: string; label: string; short?: string; badge?: string; dark?: boolean; content: React.ReactNode };
+
+function HeroSlider({ slides }: { slides: HeroSlide[] }) {
+  const [active, setActive] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const go = (i: number) => setActive((i + slides.length) % slides.length);
+  const dark = Boolean(slides[active].dark);
   return (
-    <div className="relative text-[#0B1E3F]">
-      <div className="absolute -top-4 -right-4 z-20 floaty">
-        <div className="px-4 py-2 text-white rounded-full text-xs mono uppercase tracking-wider shadow-lg flex items-center gap-2" style={{ backgroundColor: s.badgeColor }}>
-          <VerdictIcon className="w-3.5 h-3.5 text-white" /> {s.badgeLabel} · just now
+    <div
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="What Haulock does"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)}
+      onBlurCapture={() => setPaused(false)}
+      className={`fade-up fade-up-1 relative rounded-[2rem] overflow-hidden border card-shadow-lg transition-colors duration-700 ${dark ? 'bg-[#0B1E3F] border-[#0B1E3F]' : 'bg-white border-[#0B1E3F]/10'}`}
+    >
+      {/* colour wash behind the dark slide */}
+      <div className={`absolute inset-0 pointer-events-none transition-opacity duration-700 ${dark ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true">
+        <div className="absolute -top-32 -left-24 w-[26rem] h-[26rem] rounded-full bg-[#FF6B35]/30 blur-[120px]" />
+        <div className="absolute -bottom-40 right-0 w-[28rem] h-[28rem] rounded-full bg-[#2563EB]/25 blur-[130px]" />
+      </div>
+
+      {/* tabs + arrows */}
+      <div className={`relative flex items-center gap-3 px-5 sm:px-8 lg:px-12 pt-4 sm:pt-4 pb-2.5 border-b transition-colors duration-700 ${dark ? 'border-white/10' : 'border-[#0B1E3F]/[0.07]'}`}>
+        <div
+          role="tablist"
+          aria-label="Choose a slide"
+          className="flex-1 grid grid-cols-3 gap-2 sm:gap-4"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight') { e.preventDefault(); go(active + 1); }
+            if (e.key === 'ArrowLeft') { e.preventDefault(); go(active - 1); }
+          }}
+        >
+          {slides.map((s, i) => {
+            const on = i === active;
+            return (
+              <button
+                key={s.key}
+                id={`hero-tab-${s.key}`}
+                role="tab"
+                aria-selected={on}
+                aria-controls={`hero-slide-${s.key}`}
+                tabIndex={on ? 0 : -1}
+                onClick={() => go(i)}
+                className="group text-left min-w-0"
+              >
+                <span className={`flex items-center gap-2 text-[11px] sm:text-xs mono uppercase tracking-wider transition-colors ${dark ? (on ? 'text-white' : 'text-white/45 group-hover:text-white/75') : (on ? 'text-[#0B1E3F]' : 'text-[#0B1E3F]/40 group-hover:text-[#0B1E3F]/70')}`}>
+                  <span className="opacity-60">0{i + 1}</span>
+                  <span className="truncate sm:hidden">{s.short || s.label}</span>
+                  <span className="truncate hidden sm:inline">{s.label}</span>
+                  {s.badge && <span className="hidden sm:inline px-1.5 py-0.5 rounded-full bg-[#FF6B35] text-white text-[9px] tracking-[0.12em]">{s.badge}</span>}
+                </span>
+                <span className={`mt-2 block h-[3px] rounded-full overflow-hidden ${dark ? 'bg-white/15' : 'bg-[#0B1E3F]/10'}`}>
+                  {on && (
+                    <span
+                      key={active}
+                      aria-hidden="true"
+                      className="hero-progress block h-full w-full bg-[#FF6B35]"
+                      style={{ animationPlayState: paused ? 'paused' : 'running' }}
+                      onAnimationEnd={() => go(active + 1)}
+                    />
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+          {[{ d: -1, label: 'Previous slide' }, { d: 1, label: 'Next slide' }].map((b) => (
+            <button
+              key={b.d}
+              aria-label={b.label}
+              onClick={() => go(active + b.d)}
+              className={`w-9 h-9 rounded-full border flex items-center justify-center transition ${dark ? 'border-white/20 text-white/80 hover:bg-white/10' : 'border-[#0B1E3F]/15 text-[#0B1E3F]/70 hover:bg-[#0B1E3F]/5'}`}
+            >
+              <ArrowRight className={`w-4 h-4 ${b.d === -1 ? 'rotate-180' : ''}`} />
+            </button>
+          ))}
         </div>
       </div>
-      <div className="bg-white rounded-3xl p-6 card-shadow-lg border border-[#0B1E3F]/10 relative overflow-hidden text-[#0B1E3F]">
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#0B1E3F]/10">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-[#FF6B35]" />
-            <div className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
-            <div className="w-2.5 h-2.5 rounded-full bg-[#16A34A]" />
+
+      {/* slides */}
+      <div className="relative grid">
+        {slides.map((s, i) => (
+          <div
+            key={s.key}
+            id={`hero-slide-${s.key}`}
+            role="tabpanel"
+            aria-roledescription="slide"
+            aria-labelledby={`hero-tab-${s.key}`}
+            aria-hidden={i !== active}
+            className={`[grid-area:1/1] min-w-0 px-5 sm:px-8 lg:px-12 py-8 sm:py-8 lg:py-8 lg:flex lg:flex-col lg:justify-center transition-[opacity,transform,visibility] duration-500 ease-out ${i === active ? 'opacity-100 translate-y-0 visible' : 'max-lg:hidden opacity-0 translate-y-3 invisible pointer-events-none'}`}
+          >
+            {s.content}
           </div>
-          <div className="mono text-xs text-[#0B1E3F]/50">haulock.com/verify</div>
-          <div className="w-12" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Slide 1 visual: one company's list of reports, with the first report open
+// so a visitor sees every part of it. The same layout as the real report
+// card in Reports.tsx. Made-up company names and numbers, marked "Example".
+function HeroReportsVisual() {
+  const more = [
+    { what: 'Paid more than 30 days late', amount: '$1,850', by: 'Verified carrier', when: 'Nov 2025', status: 'Disputed' },
+    { what: 'Didn’t pay for a completed load or pay period', amount: '$1,200', by: 'Verified driver', when: 'Aug 2025', status: '' },
+  ];
+  return (
+    <div className="relative max-w-lg mx-auto lg:mr-0">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <span className="text-[10px] mono uppercase tracking-[0.18em] text-white/55">What a report looks like</span>
+        <span className="px-2 py-0.5 rounded-full border border-white/20 text-[10px] mono uppercase tracking-wider text-white/60">Example</span>
+      </div>
+
+      <div className="bg-white rounded-2xl card-shadow-lg overflow-hidden text-[#0B1E3F]">
+        {/* the company these reports are about */}
+        <div className="px-5 py-4 bg-[#F5F3EE] border-b border-[#0B1E3F]/10 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#0B1E3F] flex items-center justify-center shrink-0"><Building2 className="w-5 h-5 text-white" /></div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold truncate">Example Logistics Inc</div>
+            <div className="text-[11px] mono text-[#0B1E3F]/55 truncate">Broker · MC-000000 · Dallas, TX</div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-2xl font-semibold leading-none">3</div>
+            <div className="text-[9px] mono uppercase tracking-wider text-[#0B1E3F]/50 mt-1">reports</div>
+          </div>
         </div>
-        <div className="flex items-start justify-between mb-6">
-          <div className="text-[#0B1E3F]">
-            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/50 mb-1 flex items-center gap-2 flex-wrap">
-              <span>{s.entity ? `${s.entity.toLowerCase()} lookup` : 'Broker lookup'}</span>
-              {s.isReal && (
-                <span className="px-1.5 py-0.5 rounded-full text-[9px] mono uppercase tracking-wider bg-[#16A34A]/10 text-[#16A34A] flex items-center gap-1">
-                  <span className="relative flex w-1.5 h-1.5">
-                    <span className="absolute inline-flex w-full h-full bg-[#16A34A] rounded-full opacity-75 animate-ping" />
-                    <span className="relative inline-flex w-1.5 h-1.5 bg-[#16A34A] rounded-full" />
-                  </span>
-                  Live
-                </span>
-              )}
+
+        {/* the newest report, open */}
+        <div className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[#DC2626]/10 flex items-center justify-center shrink-0"><Flag className="w-5 h-5 text-[#DC2626]" /></div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold leading-snug">Didn&apos;t pay for a delivered load · $2,400</div>
+                <div className="text-[11px] mono text-[#0B1E3F]/50 mt-1">Load 48213 · happened Jan 12, 2026</div>
+              </div>
             </div>
-            <div className="text-xl font-semibold text-[#0B1E3F] mb-0.5 flex items-center gap-2 flex-wrap">
-              <span>{s.name}</span>
-              {s.entity && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] mono uppercase tracking-wider bg-[#0B1E3F]/5 text-[#0B1E3F]/65 font-normal">
-                  {s.entity}
-                </span>
-              )}
+            <span className="shrink-0 px-2 py-0.5 rounded-full bg-[#16A34A]/10 text-[#16A34A] text-[10px] mono uppercase tracking-wider">Resolved</span>
+          </div>
+          <p className="mt-3 text-[13px] text-[#0B1E3F]/80 leading-relaxed">
+            Delivered on Jan 12 with a signed POD. Invoice 2291 for $2,400 was due Feb 11. It wasn&apos;t paid, and four emails got no answer.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[#0B1E3F]/60">
+            <span className="inline-flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5 text-[#16A34A]" /> Reported by <span className="font-medium text-[#0B1E3F]">Sample Trucking LLC</span> · verified carrier</span>
+            <span className="inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> 3 documents on file</span>
+          </div>
+          <div className="mt-3 rounded-xl bg-[#F5F3EE] border border-[#0B1E3F]/10 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">Reply from Example Logistics Inc</span>
+              <span className="text-[10px] mono text-[#0B1E3F]/40">Mar 28, 2026</span>
             </div>
-            <div className="text-xs mono text-[#0B1E3F]/50">{s.mc} · {s.dot}</div>
+            <p className="text-xs text-[#0B1E3F]/75 mt-1.5 leading-relaxed">Paid in full on Mar 28, check 10442. The invoice had gone to an old email address.</p>
           </div>
-          <RiskGauge score={s.score} size="md" />
         </div>
-        <div className={`p-4 border rounded-xl mb-5 ${toneBg}`}>
-          <div className={`text-xs mono uppercase tracking-wider mb-1 flex items-center gap-1.5 ${toneText}`}>
-            <VerdictIcon className="w-3.5 h-3.5" /> {s.verdictTitle}
+
+        {/* the company's other reports */}
+        {more.map((m) => (
+          <div key={m.what} className="px-5 py-3 border-t border-[#0B1E3F]/[0.07] flex items-center gap-3">
+            <Flag className="w-4 h-4 text-[#DC2626]/70 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium truncate">{m.what} · {m.amount}</div>
+              <div className="text-[10px] mono text-[#0B1E3F]/45 mt-0.5">{m.by} · {m.when}</div>
+            </div>
+            {m.status && <span className="shrink-0 px-2 py-0.5 rounded-full bg-[#F59E0B]/15 text-[#B45309] text-[9px] mono uppercase tracking-wider">{m.status}</span>}
           </div>
-          <div className="text-sm font-medium text-[#0B1E3F]">{s.verdictLine}</div>
+        ))}
+      </div>
+
+      {/* how it counts */}
+      <div className="mt-4 rounded-2xl bg-white/[0.07] border border-white/10 px-4 py-3 hidden sm:flex items-center gap-3 text-white">
+        <div className="w-9 h-9 rounded-xl bg-[#FF6B35] flex items-center justify-center shrink-0"><BarChart3 className="w-4 h-4" /></div>
+        <div className="text-xs leading-snug text-white/75"><span className="font-semibold text-white">Counts in the Haulock score</span> by one published rule: each reporter once, less after two years, nothing once it&apos;s resolved.</div>
+      </div>
+    </div>
+  );
+}
+
+// Slide 3 visual: Motus next to FMCSA's older record, and an insurance
+// cancellation with its countdown. Placeholder values.
+function HeroMotusVisual() {
+  const rows = [
+    { field: 'Phone', motus: '(214) 555-0142', older: '(972) 555-0199', bad: false },
+    { field: 'Carrier authority', motus: 'Not active', older: 'Active', bad: true },
+    { field: 'Liability insurance', motus: '$0', older: '$750,000', bad: true },
+  ];
+  return (
+    <div className="relative max-w-lg mx-auto lg:mr-0">
+      <div className="absolute -inset-6 bg-[#FF6B35]/10 blur-3xl rounded-full pointer-events-none" />
+      <div className="relative bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow-lg overflow-hidden">
+        <div className="px-5 py-3 border-b border-[#0B1E3F]/10 bg-[#F5F3EE]/60 flex items-center justify-between gap-3">
+          <span className="text-xs font-semibold text-[#0B1E3F]">Newer FMCSA records (Motus)</span>
+          <span className="text-[10px] mono text-[#0B1E3F]/45">as of today</span>
         </div>
-        <div className="space-y-2">
-          {s.flags.map((f, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 rounded-lg text-[#0B1E3F]" style={{ backgroundColor: 'rgba(11,30,63,0.05)' }}>
-              <f.i className="w-4 h-4 flex-shrink-0" style={{ color: flagColor(f.s) }} />
-              <div className="text-sm font-medium text-[#0B1E3F] flex-1">{f.t}</div>
-              <ChevronRight className="w-4 h-4 text-[#0B1E3F]/30" />
+        <div className="px-5 py-2">
+          <div className="grid grid-cols-[1fr_1fr_1fr] gap-3 py-2 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/45">
+            <span>Field</span>
+            <span className="inline-flex items-center gap-1 text-[#0B1E3F]"><Radio className="w-3 h-3 text-[#FF6B35]" /> Motus · newer</span>
+            <span>FMCSA · older</span>
+          </div>
+          {rows.map((r) => (
+            <div key={r.field} className="grid grid-cols-[1fr_1fr_1fr] gap-3 py-2.5 border-t border-[#0B1E3F]/5 text-sm items-center">
+              <span className="text-[#0B1E3F]/65">{r.field}</span>
+              <span className={`font-semibold ${r.bad ? 'text-[#DC2626]' : 'text-[#0B1E3F]'}`}>{r.motus}</span>
+              <span className="text-[#0B1E3F]/45 line-through decoration-[#0B1E3F]/20">{r.older}</span>
             </div>
           ))}
         </div>
-        <div className="mt-5 pt-4 border-t border-[#0B1E3F]/10 flex items-center justify-between text-xs mono text-[#0B1E3F]/50">
-          <span className="flex items-center gap-1.5"><Clock className="w-3 h-3" /> Example report</span>
-          <span>{s.dataSources} data sources</span>
+      </div>
+
+      <div className="relative mt-4 lg:ml-10 bg-[#0B1E3F] text-white rounded-2xl p-5 card-shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#FF6B35] flex items-center justify-center shrink-0"><Bell className="w-5 h-5 text-white" /></div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] mono uppercase tracking-[0.18em] text-white/50">Insurance filing</div>
+            <div className="text-sm font-semibold">Cancellation filed on liability</div>
+            <div className="text-xs mono text-white/55 mt-0.5">Effective Dec 17 · no other policy on file</div>
+          </div>
+          <div className="text-center shrink-0 pl-2">
+            <div className="text-3xl font-semibold text-[#FF6B35] leading-none">32</div>
+            <div className="text-[9px] mono uppercase tracking-wider text-white/50 mt-1">days left</div>
+          </div>
         </div>
       </div>
-      <div className="absolute -bottom-6 -left-6 z-10 bg-[#0B1E3F] text-white p-4 rounded-2xl card-shadow-lg max-w-[240px] floaty" style={{ animationDelay: '1s' }}>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-6 h-6 rounded-full bg-[#FF6B35] flex items-center justify-center">
-            <Users className="w-3.5 h-3.5 text-white" />
-          </div>
-          <div className="text-xs mono uppercase tracking-wider text-white/70">Community alert</div>
+
+      <div className="relative mt-4 lg:mr-10 bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow px-4 py-3 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-[#16A34A]/10 flex items-center justify-center shrink-0"><ShieldCheck className="w-4 h-4 text-[#16A34A]" /></div>
+        <div className="min-w-0">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">Last FMCSA audit</div>
+          <div className="text-sm text-[#0B1E3F]"><span className="font-semibold">Compliance review</span> · Mar 2021 · Satisfactory</div>
         </div>
-        <div className="text-sm text-white">{s.communityAlert}</div>
+      </div>
+    </div>
+  );
+}
+
+// Hero search box. Signed in: opens Verify with the query filled in.
+// Signed out: sign-up, and the query waits in sessionStorage for Verify.
+function HeroSearch({ navigate, user }: { navigate: any; user: any }) {
+  const [q, setQ] = useState('');
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = q.trim();
+    if (query) {
+      try { sessionStorage.setItem('haulock:verifyQuery', query); } catch {}
+    }
+    navigate(user ? 'verify' : 'signup');
+  };
+  return (
+    <form onSubmit={submit} className="relative flex items-center max-w-xl bg-white border border-[#0B1E3F]/15 rounded-full card-shadow-lg focus-within:border-[#0B1E3F]/40 transition">
+      <Search className="absolute left-5 w-5 h-5 text-[#0B1E3F]/40 pointer-events-none" />
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        aria-label="MC number, DOT number or company name"
+        placeholder="MC, DOT or company name"
+        className="w-full min-w-0 bg-transparent pl-14 pr-36 py-4 text-base text-[#0B1E3F] placeholder:text-[#0B1E3F]/40 outline-none rounded-full"
+      />
+      <button type="submit" className="group absolute right-1.5 px-5 py-3 bg-[#0B1E3F] text-white text-sm font-medium rounded-full hover:bg-[#0B1E3F]/90 transition inline-flex items-center gap-2">
+        Check it <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+      </button>
+    </form>
+  );
+}
+
+// The hero visual: one lookup running live, source by source — FMCSA, Motus,
+// insurance filings, the last audit, inspections, Places, the web — ending
+// in a verdict. Placeholder company (masked); loops while the page is open.
+type LiveCheckRow = { key: string; source: string; tag?: 'Official' | 'New'; icon: any; result: string; tone: 'ok' | 'warn' | 'bad' };
+const LIVE_CHECK_ROWS: LiveCheckRow[] = [
+  { key: 'safer', source: 'FMCSA SAFER', tag: 'Official', icon: Shield, result: 'Carrier authority active · 6 years', tone: 'ok' },
+  { key: 'motus', source: 'FMCSA Motus', tag: 'New', icon: Radio, result: 'New phone filed 3 days ago, not in SAFER yet', tone: 'warn' },
+  { key: 'insurance', source: 'Insurance filings', icon: Bell, result: 'Liability cancellation filed · ends in 12 days', tone: 'bad' },
+  { key: 'audit', source: 'Last FMCSA audit', icon: ShieldCheck, result: 'Compliance review, Mar 2021 · Satisfactory', tone: 'ok' },
+  { key: 'sms', source: 'Inspections & crashes', icon: Truck, result: '31 inspections in 24 months · vehicle OOS 9.7%', tone: 'ok' },
+  { key: 'places', source: 'Google Places', icon: MapPin, result: 'A real business at this address, not a mailbox', tone: 'ok' },
+  { key: 'web', source: 'Web reputation', icon: Globe, result: 'No fraud mentions on 50+ trusted sites', tone: 'ok' },
+];
+
+function HeroLiveCheck() {
+  const total = LIVE_CHECK_ROWS.length;
+  // Rows revealed so far; total + 1 means the verdict is showing too.
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setStep(total + 1);
+      return;
+    }
+    let s = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      s = s > total ? 0 : s + 1;
+      setStep(s);
+      timer = setTimeout(tick, s > total ? 5200 : s === 0 ? 700 : 650);
+    };
+    timer = setTimeout(tick, 900);
+    return () => clearTimeout(timer);
+  }, [total]);
+  const done = step > total;
+  const shown = Math.min(step, total);
+  const sourcesChecked = done ? 15 : Math.round((shown / total) * 14);
+  const toneStyle = {
+    ok: { icon: CheckCircle2, color: 'text-[#16A34A]', text: 'text-[#0B1E3F]/70' },
+    warn: { icon: AlertTriangle, color: 'text-[#F59E0B]', text: 'text-[#B45309]' },
+    bad: { icon: XCircle, color: 'text-[#DC2626]', text: 'text-[#DC2626]' },
+  } as const;
+  return (
+    <div className="relative max-w-xl mx-auto lg:mr-0">
+      <div className="absolute -inset-8 bg-[#FF6B35]/10 blur-3xl rounded-full pointer-events-none" />
+      <div className="relative bg-white rounded-3xl border border-[#0B1E3F]/10 card-shadow-lg overflow-hidden">
+        {/* window bar */}
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-[#0B1E3F]/10 bg-[#F5F3EE]/60">
+          <div className="flex gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#DC2626]/70" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]/70" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#16A34A]/70" />
+          </div>
+          <span className="text-[11px] mono text-[#0B1E3F]/45 truncate">haulock.com/verify</span>
+          <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">
+            <span className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-[#16A34A]' : 'bg-[#FF6B35] animate-pulse'}`} />
+            {done ? 'Done' : 'Live check'}
+          </span>
+        </div>
+
+        {/* what's being checked */}
+        <div className="px-5 pt-4 pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-[#0B1E3F] truncate">S•••••• Logistics LLC</div>
+              <div className="text-[11px] mono text-[#0B1E3F]/50">MC-58•••• · DOT-31•••• · Carrier</div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-[11px] mono text-[#0B1E3F]/55">{sourcesChecked} / 15 sources</div>
+            </div>
+          </div>
+          <div className="mt-3 h-1 rounded-full bg-[#0B1E3F]/[0.06] overflow-hidden">
+            <div className="h-full bg-[#FF6B35] transition-all duration-500 ease-out" style={{ width: `${(sourcesChecked / 15) * 100}%` }} />
+          </div>
+        </div>
+
+        {/* source rows */}
+        <ul className="px-3 pb-2">
+          {LIVE_CHECK_ROWS.map((row, i) => {
+            const revealed = i < shown;
+            const Icon = row.icon;
+            const t = toneStyle[row.tone];
+            const StatusIcon = t.icon;
+            return (
+              <li key={row.key} className={`flex items-center gap-3 px-2 py-2 rounded-xl transition-colors duration-300 ${revealed && row.tone !== 'ok' ? (row.tone === 'bad' ? 'bg-[#DC2626]/[0.05]' : 'bg-[#F59E0B]/[0.07]') : ''}`}>
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${row.tag ? 'bg-[#0B1E3F]' : 'bg-[#0B1E3F]/[0.05]'}`}>
+                  <Icon className={`w-4 h-4 ${row.tag ? 'text-white' : 'text-[#0B1E3F]/60'}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[13px] font-semibold text-[#0B1E3F]">{row.source}</span>
+                    {row.tag && (
+                      <span className={`px-1.5 py-px rounded-full text-[9px] mono uppercase tracking-wider ${row.tag === 'New' ? 'bg-[#FF6B35] text-white' : 'bg-[#0B1E3F]/[0.07] text-[#0B1E3F]/60'}`}>{row.tag}</span>
+                    )}
+                  </div>
+                  <div className={`text-xs truncate transition-opacity duration-300 ${revealed ? `opacity-100 ${t.text}` : 'opacity-100 text-[#0B1E3F]/30'}`}>
+                    {revealed ? row.result : i === shown ? 'Checking…' : 'Waiting'}
+                  </div>
+                </div>
+                <div className="w-5 h-5 shrink-0 flex items-center justify-center">
+                  {revealed ? (
+                    <StatusIcon className={`w-5 h-5 ${t.color}`} />
+                  ) : i === shown ? (
+                    <span className="w-3.5 h-3.5 rounded-full border-2 border-[#0B1E3F]/15 border-t-[#FF6B35] animate-spin" />
+                  ) : (
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#0B1E3F]/15" />
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
+        {/* verdict */}
+        <div className={`mx-5 mb-5 mt-1 rounded-2xl border px-4 py-3 flex items-center gap-4 transition-all duration-500 ${done ? 'border-[#F59E0B]/40 bg-[#F59E0B]/[0.08] opacity-100' : 'border-[#0B1E3F]/10 bg-[#F5F3EE] opacity-70'}`}>
+          <div className="shrink-0 text-center w-14">
+            <div className={`text-3xl font-semibold leading-none ${done ? 'text-[#B45309]' : 'text-[#0B1E3F]/25'}`}>{done ? '58' : '··'}</div>
+            <div className="text-[9px] mono uppercase tracking-wider text-[#0B1E3F]/45 mt-1">risk</div>
+          </div>
+          <div className="min-w-0">
+            <div className={`text-xs mono uppercase tracking-[0.18em] ${done ? 'text-[#B45309]' : 'text-[#0B1E3F]/40'}`}>{done ? 'Caution' : 'Verdict'}</div>
+            <div className="text-sm text-[#0B1E3F]/75 leading-snug">
+              {done ? 'Confirm two things before you book: the insurance cancellation and the new phone number.' : 'Building the verdict from every source…'}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1540,8 +2008,8 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
     return () => clearInterval(t);
   }, []);
 
-  // 14 source checks — matches the "14 data sources" promise on the
-  // homepage and FAQ. Distributed evenly around the radar (~25.7° apart)
+  // 15 source checks — matches the "15 data sources" promise on the
+  // homepage and FAQ. Distributed evenly around the radar (24° apart)
   // and sequenced ~750ms apart so the user sees real progress while the
   // backend scan runs in parallel.
   const sources: Array<{
@@ -1554,20 +2022,21 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
     radius: number;
     activateAt: number;
   }> = [
-    { key: 'fmcsa',      label: 'FMCSA SAFER',                desc: 'Authority status · MCS-150 · operating status · address',               chip: 'mobile.fmcsa.dot.gov',       icon: Shield,        angle:  13, radius: 92, activateAt:   500 },
-    { key: 'fmcsa-li',   label: 'FMCSA Licensing & Insurance', desc: 'Liability insurance · cargo coverage · surety bond on file',             chip: 'li-public.fmcsa.dot.gov',    icon: ShieldCheck,   angle:  39, radius: 70, activateAt:  1250 },
-    { key: 'fmcsa-name', label: 'MC name lookup',             desc: 'Socrata fallback · resolves company name to MC / DOT',                   chip: 'data.transportation.gov',    icon: Search,        angle:  64, radius: 92, activateAt:  2000 },
-    { key: 'sms',        label: 'FMCSA SMS · BASIC scores',   desc: 'Federal safety scoring · BASIC alerts · 24-mo inspections + crashes',    chip: 'ai.fmcsa.dot.gov/SMS',       icon: ShieldCheck,   angle:  90, radius: 70, activateAt:  2750 },
-    { key: 'places',     label: 'Google Places',              desc: 'Business address · operating status · mailbox detection',                 chip: 'places.googleapis.com',      icon: MapPin,        angle: 116, radius: 92, activateAt:  3500 },
-    { key: 'gsb',        label: 'Google Safe Browsing',       desc: 'Known malicious · phishing · malware domain check',                       chip: 'safebrowsing.google.com',    icon: Lock,          angle: 141, radius: 70, activateAt:  4250 },
-    { key: 'domain',     label: 'WHOIS · DNS · email infra',  desc: 'Domain age · registrar · MX records · SPF · DMARC',                       chip: 'WHOIS · DNS · DMARC',        icon: Mail,          angle: 167, radius: 92, activateAt:  5000 },
-    { key: 'social',     label: 'Social media footprint',     desc: 'Facebook · LinkedIn · Instagram · X · YouTube · TikTok',                  chip: '6 platforms',                icon: Users,         angle: 193, radius: 70, activateAt:  5750 },
-    { key: 'web',        label: 'Web presence',               desc: 'Carrier website discovery via Brave Search',                              chip: 'api.search.brave.com',       icon: Globe,         angle: 219, radius: 92, activateAt:  6500 },
-    { key: 'lookalike',  label: 'Lookalike-domain check',     desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',                 chip: 'Levenshtein ≤ 2',            icon: AlertTriangle, angle: 244, radius: 70, activateAt:  7250 },
-    { key: 'chameleon',  label: 'Cross-reference scan',       desc: 'Phone or address shared with another flagged FMCSA record',               chip: 'FMCSA Socrata · Haulock DB', icon: Eye,           angle: 270, radius: 92, activateAt:  8000 },
-    { key: 'reputation', label: 'Web fraud reputation',       desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',       chip: '5 fraud queries',            icon: Search,        angle: 296, radius: 70, activateAt:  8750 },
-    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Other companies and MC / DOT numbers named in news coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 321, radius: 92, activateAt:  9500 },
-    { key: 'archive',    label: 'Haulock Day-1 archive',      desc: '5-year FMCSA snapshot history · email-shared MC cross-reference',         chip: 'Haulock archive',            icon: Database,      angle: 347, radius: 70, activateAt: 10250 },
+    { key: 'fmcsa',      label: 'FMCSA SAFER',                desc: 'Authority status · MCS-150 · last FMCSA audit · address',               chip: 'mobile.fmcsa.dot.gov',       icon: Shield,        angle:  12, radius: 92, activateAt:   500 },
+    { key: 'motus',      label: 'FMCSA Motus',                desc: 'Newest authority · insurance · contacts · BOC-3 · suspension notices',  chip: 'Motus · data.transportation.gov', icon: Radio,    angle:  36, radius: 70, activateAt:  1250 },
+    { key: 'fmcsa-li',   label: 'FMCSA insurance filings',    desc: 'Liability · cargo · bond · start dates · pending cancellations',         chip: 'data.transportation.gov',    icon: ShieldCheck,   angle:  60, radius: 92, activateAt:  2000 },
+    { key: 'fmcsa-name', label: 'MC name lookup',             desc: 'Socrata fallback · resolves company name to MC / DOT',                   chip: 'data.transportation.gov',    icon: Search,        angle:  84, radius: 70, activateAt:  2750 },
+    { key: 'sms',        label: 'FMCSA SMS · BASIC scores',   desc: 'Federal safety scoring · BASIC alerts · 24-mo inspections + crashes',    chip: 'ai.fmcsa.dot.gov/SMS',       icon: ShieldCheck,   angle: 108, radius: 92, activateAt:  3500 },
+    { key: 'places',     label: 'Google Places',              desc: 'Business address · operating status · mailbox detection',                 chip: 'places.googleapis.com',      icon: MapPin,        angle: 132, radius: 70, activateAt:  4250 },
+    { key: 'gsb',        label: 'Google Safe Browsing',       desc: 'Known malicious · phishing · malware domain check',                       chip: 'safebrowsing.google.com',    icon: Lock,          angle: 156, radius: 92, activateAt:  5000 },
+    { key: 'domain',     label: 'WHOIS · DNS · email infra',  desc: 'Domain age · registrar · MX records · SPF · DMARC',                       chip: 'WHOIS · DNS · DMARC',        icon: Mail,          angle: 180, radius: 70, activateAt:  5750 },
+    { key: 'social',     label: 'Social media footprint',     desc: 'Facebook · LinkedIn · Instagram · X · YouTube · TikTok',                  chip: '6 platforms',                icon: Users,         angle: 204, radius: 92, activateAt:  6500 },
+    { key: 'web',        label: 'Web presence',               desc: 'Carrier website discovery via Brave Search',                              chip: 'api.search.brave.com',       icon: Globe,         angle: 228, radius: 70, activateAt:  7250 },
+    { key: 'lookalike',  label: 'Lookalike-domain check',     desc: 'Typosquat · homograph swap · TLD swap · subdomain spoof',                 chip: 'Levenshtein ≤ 2',            icon: AlertTriangle, angle: 252, radius: 92, activateAt:  8000 },
+    { key: 'chameleon',  label: 'Cross-reference scan',       desc: 'Phone or address shared with another flagged FMCSA record',               chip: 'FMCSA Socrata · Haulock DB', icon: Eye,           angle: 276, radius: 70, activateAt:  8750 },
+    { key: 'reputation', label: 'Web fraud reputation',       desc: 'FreightWaves · Land Line · TruckersReport · BBB · Reddit · NCCDB',       chip: '5 fraud queries',            icon: Search,        angle: 300, radius: 92, activateAt:  9500 },
+    { key: 'entities',   label: 'Linked-entity extractor',    desc: 'Other companies and MC / DOT numbers named in news coverage',       chip: 'NLP entity scan',            icon: Building2,     angle: 324, radius: 70, activateAt: 10250 },
+    { key: 'archive',    label: 'Haulock Day-1 archive',      desc: '5-year FMCSA snapshot history · email-shared MC cross-reference',         chip: 'Haulock archive',            icon: Database,      angle: 348, radius: 92, activateAt: 11000 },
   ];
   // The bar fills toward 95% and parks there until the API result arrives.
   // We tune the curve so it tracks the typical 12-15s real-world scan
@@ -1676,7 +2145,7 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
         );
       })()}
 
-      {/* Body — the 14-source radar (same design as the promo reels) on a dark
+      {/* Body — the 15-source radar (same design as the promo reels) on a dark
           panel, then the per-source detail list below it. */}
       <div className="px-4 md:px-10 pt-4 pb-6">
         {(() => {
@@ -1831,7 +2300,7 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
                 </div>
                 <div className="flex items-center gap-3 mono text-[10px] sm:text-[11px] uppercase tracking-[0.25em]">
                   <span className="px-2 py-1 rounded bg-[#FF6B35] text-white font-semibold">Live</span>
-                  <span className="text-[#F5F3EE]">14 data sources in parallel</span>
+                  <span className="text-[#F5F3EE]">15 data sources in parallel</span>
                 </div>
               </div>
             </div>
@@ -1840,7 +2309,7 @@ function VerifyScanProgress({ query, result }: { query?: string; result?: any | 
 
         {/* Sources list — detail for each check, under the radar. */}
         <div className="mt-5">
-          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-3">Cross-checking 14 sources in parallel</div>
+          <div className="text-[10px] mono uppercase tracking-[0.18em] text-[#0B1E3F]/50 mb-3">Cross-checking 15 sources in parallel</div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
             {sources.map((s) => {
               const active = elapsed >= s.activateAt;
@@ -2411,6 +2880,7 @@ function Nav({ navigate, user }: any) {
               COI check <span className="text-[9px] mono uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-[#FF6B35]/15 text-[#FF6B35] font-bold">New</span>
             </button>
           )}
+          <a href="/directory" className="hover:text-[#0B1E3F]">Directory</a>
           <button onClick={() => scrollTo('pricing')} className="hover:text-[#0B1E3F]">Pricing</button>
           <button onClick={() => navigate('blog')} className="hover:text-[#0B1E3F]">Blog</button>
         </div>
@@ -2557,6 +3027,7 @@ function Footer({ navigate }: any) {
     { t: 'Product', items: [
       { label: 'Verify broker / carrier', route: 'verify', data: { tab: 'quick' } },
       { label: 'Rate con analyzer',  route: 'verify',  data: { tab: 'ratecon' } },
+      { label: 'Broker & carrier directory', href: '/directory' },
       { label: 'API',                href: '/docs/api' },
     ] },
     { t: 'Company', items: [
@@ -3149,7 +3620,7 @@ function Pricing({ navigate, user }: any) {
 
 function LegalPage({ page, navigate, user }: { page: 'terms' | 'privacy'; navigate: any; user?: any }) {
   const isTerms = page === 'terms';
-  const lastUpdated = isTerms ? 'October 14, 2026' : 'April 25, 2026';
+  const lastUpdated = 'November 15, 2026';
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
@@ -3257,6 +3728,33 @@ function TermsContent() {
         <li>Attempt to interfere with, reverse engineer, disable, or overload the Service.</li>
       </LegalUl>
 
+      <LegalH3>Reports you file about other companies</LegalH3>
+      <LegalP>
+        Verified carriers, brokers, drivers, and shippers can file a report about a company they dealt with on a load. Every reporter is identity-verified. If you file one, you agree that:
+      </LegalP>
+      <LegalUl>
+        <li>You file it only about a load you were a party to, and only after we have verified who you are.</li>
+        <li>Everything in it is true to the best of your knowledge, states facts rather than opinions about people, and is supported by the documents you attach.</li>
+        <li>It is written professionally: no insults, threats, or profanity (curse words are hidden automatically), and no personal details of individuals such as personal phone numbers, home addresses, or license numbers.</li>
+        <li>It is published with your company&rsquo;s name and stays on record. If you file as a driver, it is published with your name, or as &ldquo;Verified driver&rdquo; if you choose to withhold it; we keep your verified identity either way, and you also attach a document showing you drove for the company. You can withdraw it or mark it resolved at any time.</li>
+        <li>You give Haulock permission to publish it, to show it to other users, and to count it in a company&rsquo;s score.</li>
+        <li><strong>You alone are responsible for what your report says.</strong> Section 7 (Indemnification) applies to any claim arising from it. If a court or a subpoena requires it, we may disclose who filed a report and the documents filed with it.</li>
+      </LegalUl>
+      <LegalP>
+        <strong>A report is the statement of the user who filed it, not a statement or finding by Haulock.</strong> Haulock is an interactive computer service; under 47 U.S.C. &sect; 230 it is not the publisher or speaker of content its users provide. Before a report is shown we check that it meets these rules; we do not verify that it is true and we do not edit what it says. Published reports count toward the reported company&rsquo;s score by a fixed rule that is shown on the report and is the same for every company.
+      </LegalP>
+
+      <LegalH3>If a report is about your company</LegalH3>
+      <LegalUl>
+        <li><strong>We tell you.</strong> When a report is published, we email the address on your company&rsquo;s FMCSA filing.</li>
+        <li><strong>You can reply publicly, free.</strong> Confirm the company is yours and your reply is shown directly under the report. You can mark the report as disputed.</li>
+        <li><strong>You can ask for removal.</strong> Write to <a href="mailto:contact@haulock.com" className="underline">contact@haulock.com</a> with the report, what in it is false, and the documents that show it. We review removal requests within 10 business days. We remove reports that break these rules, that are shown to be false, or that a court orders removed, and we may ask the reporter for more documents while we review.</li>
+        <li><strong>Removal is never for sale.</strong> We do not charge to reply to a report, to dispute it, or to have it removed, and a paid plan does not change whether a report is shown or how it counts.</li>
+      </LegalUl>
+      <LegalP>
+        Reports are about companies. Haulock does not accept reports about individual drivers and is not a consumer reporting agency: you may not use the Service to decide whether to hire, insure, extend credit to, or rent to an individual.
+      </LegalP>
+
       <LegalH2>9. Account, plan, and billing</LegalH2>
       <LegalP>
         Some Haulock features require a paid plan. Pricing, lookup limits, and feature inclusions are described on the pricing page and may change. Subscriptions renew automatically at the published price, monthly or yearly, until canceled. You are responsible for keeping your billing details up to date and for the actions taken under your account.
@@ -3316,6 +3814,13 @@ function PrivacyContent() {
       <LegalP>
         When we send you an email, we record the recipient, subject, type of email (welcome, alert, newsletter, etc.), and the timestamp. This is used to power your account dashboard, the admin newsletter view, and to comply with anti-spam law.
       </LegalP>
+      <LegalH3>Reports you file, and replies to them</LegalH3>
+      <LegalP>
+        To file a report or reply to one, we verify who you are. For a carrier or broker, we check your login email against the email on the company&rsquo;s FMCSA filing, or send a code to that address. For a shipper, we check that your login email is on your company&rsquo;s website domain. For a driver, an identity check by Stripe compares a photo of your driver&rsquo;s license with a selfie: Stripe keeps the photos, and Haulock receives only your name, your state, and whether the check passed.
+      </LegalP>
+      <LegalP>
+        When you file a report we store what you wrote, the load number, date, and amount, the documents you attach, the time you confirmed the report is true, and the IP address you sent it from. If you file as a driver, we also store the document you attach to show you drove for the company, and your choice to withhold your name from the public report; your verified identity is kept on file either way. <strong>A published report is shown to other Haulock users with your company&rsquo;s name, or your own name if you filed as a driver.</strong> The documents are not shown to other users: only Haulock&rsquo;s reviewers see them. A reply to a report is shown with the replying company&rsquo;s name.
+      </LegalP>
       <LegalH3>Cookies and similar technologies</LegalH3>
       <LegalP>
         We use a small number of cookies and similar technologies to keep you signed in, remember preferences, and protect against abuse. We do not sell or share cookie data for cross-site advertising.
@@ -3342,7 +3847,7 @@ function PrivacyContent() {
       <LegalUl>
         <li><strong>Supabase</strong> — account, authentication, and database hosting.</li>
         <li><strong>Resend</strong> — transactional email and newsletter delivery, plus email tracking metadata.</li>
-        <li><strong>Stripe</strong> — billing and subscription management. Card details are handled by Stripe and never stored on Haulock servers.</li>
+        <li><strong>Stripe</strong> — billing and subscription management. Card details are handled by Stripe and never stored on Haulock servers. Stripe Identity also runs the driver&rsquo;s-license check for drivers who file reports; the license photos and selfie stay with Stripe.</li>
         <li><strong>Vercel</strong> — application hosting and edge networking.</li>
         <li><strong>Google Cloud (Places API, Safe Browsing)</strong> — address verification and basic domain reputation.</li>
         <li><strong>Brave Search</strong> — public web search for company name and reputation lookups.</li>
@@ -3356,12 +3861,16 @@ function PrivacyContent() {
       <LegalUl>
         <li><strong>Email preferences.</strong> Manage which emails you receive from Settings &rarr; Notifications, or click the unsubscribe link in any newsletter.</li>
         <li><strong>Account deletion.</strong> You can delete your Haulock account from Settings. This removes your account, lookups, watchlist, alerts, and team membership, and removes you from our newsletter list. Backups may persist for up to 30 days before being purged.</li>
+        <li><strong>Reports you filed.</strong> You can withdraw a report or mark it resolved at any time from Reports &rarr; My reports. A withdrawn report is no longer shown or counted.</li>
         <li><strong>Access and correction.</strong> You can update your profile data from Settings. For other requests, email us.</li>
       </LegalUl>
 
       <LegalH2>6. Data retention</LegalH2>
       <LegalP>
         We retain account and usage data while your account is active and for a reasonable period afterwards to satisfy legal, accounting, and abuse-prevention requirements. Public report data (FMCSA snapshots, etc.) may be retained as part of the Haulock historical archive even after individual accounts are deleted, since it does not include your personal information.
+      </LegalP>
+      <LegalP>
+        Published reports stay on record so that other users can rely on them. If you delete your account, reports you filed remain with your company&rsquo;s name (or, for drivers, your name or &ldquo;Verified driver&rdquo; if you withheld it) as the reporter unless you withdraw them first. We keep a report&rsquo;s documents, your confirmation, and its history for as long as the report is on record and for a reasonable period afterwards, so that we can review disputes and respond to legal requests. We may disclose who filed a report, and its documents, when a court order or subpoena requires it.
       </LegalP>
 
       <LegalH2>7. Security</LegalH2>
@@ -3401,7 +3910,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
     if (typeof document === 'undefined') return;
     const original = document.title;
     document.title = 'About Haulock · Built for carriers who have been burned';
-    setMeta('description', 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a 14-source web-reputation scan. Built by people who lost loads to fraud and decided to stop it.');
+    setMeta('description', 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a 15-source web-reputation scan. Built by people who lost loads to fraud and decided to stop it.');
     return () => { document.title = original; };
   }, []);
 
@@ -3417,7 +3926,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
             Built for carriers who have been burned.
           </h1>
           <p className="text-lg text-[#0B1E3F]/65 leading-relaxed max-w-2xl">
-            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, and 14 data sources cross-checked on every lookup.
+            Haulock is a freight fraud platform for carriers, brokers, dispatchers, and owner-operators. We verify any motor carrier or broker in seconds using live FMCSA data, AI rate-con analysis, FMCSA&apos;s new Motus records, and 15 data sources cross-checked on every lookup.
           </p>
         </div>
       </section>
@@ -3434,7 +3943,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
 
           <LegalH2>What Haulock actually does</LegalH2>
           <LegalP>
-            Every lookup runs up to 14 sources in parallel: FMCSA SAFER for authority and address, FMCSA L&amp;I for insurance and surety bond, FMCSA SMS for inspection and crash history, public WHOIS and DNS for domain age and email infrastructure, Google Places for address verification, Google Safe Browsing for known threat domains, Brave Search across 50+ trusted news outlets and forums, FMCSA enforcement cross-reference, linked-entity extraction, plus our historical snapshot archive going back five years.
+            Every lookup runs up to 15 sources in parallel: FMCSA SAFER for authority and address, FMCSA&apos;s Motus system for the newest authority, insurance, contact and suspension records, FMCSA insurance filings for each policy&apos;s start date and any pending cancellation, FMCSA L&amp;I for insurance and surety bond, FMCSA SMS for inspection and crash history, the FMCSA company census for officers and the last FMCSA audit, public WHOIS and DNS for domain age and email infrastructure, Google Places for address verification, Google Safe Browsing for known threat domains, Brave Search across 50+ trusted news outlets and forums, FMCSA enforcement cross-reference, linked-entity extraction, plus our historical snapshot archive going back five years.
           </LegalP>
           <LegalP>
             We also analyze rate confirmation PDFs with Claude AI to extract the broker, the carrier, and the load, then cross-check the broker email domain against their FMCSA-registered website to catch lookalike domains. The whole scan usually takes under a minute.
@@ -3458,7 +3967,7 @@ function AboutPage({ navigate, user }: { navigate: any; user?: any }) {
 
           <LegalH2>The data behind the badge</LegalH2>
           <LegalUl>
-            <li><strong>14</strong> data sources cross-checked per scan</li>
+            <li><strong>15</strong> data sources cross-checked per scan</li>
             <li><strong>5 years</strong> of FMCSA snapshot history archived</li>
             <li><strong>$0</strong> required to run your first lookup</li>
           </LegalUl>
@@ -7885,7 +8394,7 @@ function SalesCampaigns() {
   );
 }
 
-type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsletter' | 'support';
+type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsletter' | 'support' | 'reports';
 
 type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
 type RoleFilter = 'all' | 'admin' | 'affiliate' | 'regular';
@@ -8250,6 +8759,7 @@ function AdminPage({ navigate }: any) {
     { id: 'data',       label: 'Data & storage' },
     { id: 'newsletter', label: 'Newsletter' },
     { id: 'support',    label: 'Support tickets' },
+    { id: 'reports',    label: 'Reports' },
   ];
 
   return (
@@ -8350,6 +8860,7 @@ function AdminPage({ navigate }: any) {
 
       {/* SUPPORT: every user's support tickets, replies, status changes */}
       {tab === 'support' && <SupportAdminPanel />}
+      {tab === 'reports' && <ReportsAdminPanel />}
 
       {/* AFFILIATES: pending payout requests + roster of affiliates with live earnings */}
       {tab === 'affiliates' && <AffiliatesAdminPanel />}
@@ -9517,6 +10028,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
     { id: 'planner', label: 'Load planner', icon: RouteIcon },
     { id: 'history', label: 'History', icon: Clock },
     { id: 'watchlist', label: 'Watchlist', icon: Eye },
+    { id: 'reports', label: 'Reports', icon: Flag, tag: 'New' },
     { id: 'alerts', label: 'Alerts', icon: Bell, badge: alertCount > 0 ? alertCount : null },
     { id: 'plan', label: 'Plan & billing', icon: Zap },
     { id: 'settings', label: 'Settings', icon: Settings },
@@ -9544,6 +10056,7 @@ function AppShell({ user, route, navigate, logout, children }: any) {
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition ${active ? 'bg-[#0B1E3F] text-white' : 'text-[#0B1E3F]/70 hover:bg-[#0B1E3F]/5 hover:text-[#0B1E3F]'}`}>
                 <item.icon className="w-4 h-4" />
                 <span className="flex-1 text-left">{item.label}</span>
+                {(item as any).tag && <span className="px-1.5 py-0.5 rounded-full bg-[#FF6B35] text-white text-[9px] mono uppercase tracking-wider font-bold">{(item as any).tag}</span>}
                 {item.badge && <span className="px-1.5 py-0.5 bg-[#FF6B35] text-white text-xs rounded-full min-w-[20px] text-center">{item.badge}</span>}
               </button>
             );
@@ -9590,8 +10103,10 @@ function AppShell({ user, route, navigate, logout, children }: any) {
         <header className="bg-white border-b border-[#0B1E3F]/10 px-6 py-3 flex items-center justify-between sticky top-0 z-20 gap-3">
           <button onClick={() => setSidebarOpen(true)} className="md:hidden"><Menu className="w-5 h-5 text-[#0B1E3F]" /></button>
           <HeaderSearch navigate={navigate} />
+          <WhatsNewButton />
           <OwnScoreChip navigate={navigate} />
         </header>
+        <WhatsNewModal navigate={navigate} autoOpen={route === 'dashboard'} />
         <main className="p-6 md:p-10 max-w-7xl mx-auto text-[#0B1E3F]">{children}</main>
         <CompanyCheckToaster userId={user?.id} />
         <DeviceGuard userId={user?.id} navigate={navigate} logout={logout} />
@@ -11012,7 +11527,17 @@ function VerifyTool({ navigate }: any) {
   useEffect(() => {
     if (launch.ready && !launch.coi && tab === 'coi') setTab('quick');
   }, [launch.ready, launch.coi, tab]);
-  const [input, setInput] = useState('');
+  // A search typed into the homepage hero arrives here once (HeroSearch).
+  const [input, setInput] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const q = sessionStorage.getItem('haulock:verifyQuery');
+      if (q) sessionStorage.removeItem('haulock:verifyQuery');
+      return q || '';
+    } catch {
+      return '';
+    }
+  });
   // Identifier-type selector. MC and DOT are separate registries that
   // frequently collide on the same number — e.g. MC-1162901 (Leader
   // Group) vs DOT-1162901 (Kiril Georgiev). The user must pick which
@@ -12618,6 +13143,15 @@ function CarrierReport({ report, navigate }: any) {
                 <Clock className="w-3.5 h-3.5" /> Cached from {r.cachedAt ? timeAgo(r.cachedAt) : 'earlier'} · no credit used
               </div>
             )}
+            {/* A report saved before insurance filings and Motus were added
+                has none of them; say so instead of looking like nothing was found. */}
+            {rescanQuery && !r.insuranceFilings && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 px-4 py-3 bg-[#FF6B35]/[0.08] border border-[#FF6B35]/30 rounded-xl text-sm text-[#0B1E3F] max-w-2xl">
+                <Info className="w-4 h-4 text-[#FF6B35] shrink-0" />
+                <span className="flex-1 min-w-[220px]"><strong>This is an older saved report.</strong> It was made before Haulock added insurance filing dates, cancellations, FMCSA audits and Motus records, so those sections are missing.</span>
+                <button onClick={onRescan} disabled={rescanning} className="px-4 py-1.5 bg-[#0B1E3F] text-white rounded-full text-xs font-semibold hover:bg-[#0B1E3F]/90 disabled:opacity-60">{rescanning ? 'Scanning…' : 'Scan again to add them'}</button>
+              </div>
+            )}
             {rescanError && <div className="mt-2 text-sm text-[#DC2626]">{rescanError}</div>}
             {exportError && <div className="mt-2 text-sm text-[#DC2626]">{exportError}</div>}
           </div>
@@ -12758,6 +13292,13 @@ function CarrierReport({ report, navigate }: any) {
           { icon: Building2, label: 'Legal name', val: r.name || '—' },
           { icon: Building2, label: 'DBA', val: r.dba || '—' },
           { icon: MapPin, label: 'Physical address', val: r.address || '—' },
+          // Only when FMCSA (Motus) has a mailing address that is a different place.
+          ...(r.motus?.mailingAddress ? [{
+            icon: Mail, label: 'Mailing address', val: r.motus.mailingAddress, sub: 'From FMCSA Motus',
+            hint: 'Where FMCSA sends this company’s mail. A PO box or an office in another city is common and not a problem by itself. It matters when someone tells you to send documents or payment to an address that is neither of these.',
+          }] : []),
+          ...(r.motus?.country ? [{ icon: Globe, label: 'Country', val: r.motus.country === 'MX' ? 'Mexico' : r.motus.country === 'CA' ? 'Canada' : r.motus.country, sub: 'Business address is outside the US' }] : []),
+          ...(r.motus?.rfc ? [{ icon: FileText, label: 'RFC (Mexican tax ID)', val: r.motus.rfc, hint: 'The tax ID that Mexico-domiciled carriers file with FMCSA.' }] : []),
           { icon: Phone, label: 'Phone', val: r.phone || '— (not in FMCSA)' },
           // Officers and email as filed on the company's MCS-150 (FMCSA
           // census) — the person to ask for when calling the FMCSA number.
@@ -12779,27 +13320,71 @@ function CarrierReport({ report, navigate }: any) {
             const noneActive = known && !carrierActive && !brokerActive && !(r.authorityStatus === 'Active' && !r.commonAuthority && !r.contractAuthority && !r.brokerAuthority);
             const carrierVal = carrierAuthorityLabel(r);
             return [
-              { label: 'Carrier authority', val: carrierVal, good: carrierActive, warn: noneActive },
-              { label: 'Broker authority', val: r.brokerAuthority || '—', good: brokerActive, warn: noneActive },
+              // An application FMCSA hasn't granted is not an authority; say so in words.
+              { label: 'Carrier authority', val: carrierVal === 'Pending' ? 'Applied for, not granted' : carrierVal, good: carrierActive, warn: noneActive,
+                sub: (r.motusApplied || []).includes('carrier authority') ? 'From FMCSA Motus: not in FMCSA’s older record yet'
+                  : !carrierActive && r.motus?.carrierStatus === 'Pending' ? 'Application pending with FMCSA (Motus)' : undefined,
+                hint: !carrierActive && r.motus?.carrierStatus === 'Pending' ? 'FMCSA has an application for carrier authority that it hasn’t granted. Until it does, this company can’t legally haul for-hire loads across state lines.' : undefined },
+              { label: 'Broker authority', val: r.brokerAuthority === 'Pending' ? 'Applied for, not granted' : r.brokerAuthority || '—', good: brokerActive, warn: noneActive,
+                sub: (r.motusApplied || []).includes('broker authority') ? 'From FMCSA Motus: not in FMCSA’s older record yet'
+                  : !brokerActive && r.motus?.brokerStatus === 'Pending' ? 'Application pending with FMCSA (Motus)' : undefined,
+                hint: !brokerActive && r.motus?.brokerStatus === 'Pending' ? 'FMCSA has an application for broker authority that it hasn’t granted. Until it does, this company can’t legally arrange loads for other carriers.' : undefined },
             ];
           })(),
-          { label: 'Safety rating', val: r.safetyRating || 'Not rated' },
+          { label: 'Safety rating', val: r.safetyRating || 'Not rated', warn: /unsatisfactory|conditional/i.test(r.safetyRating || ''),
+            sub: r.safetyRatingDate ? `Rated ${fmtDay(r.safetyRatingDate)}` : undefined,
+            hint: 'FMCSA gives a safety rating only after a compliance review: Satisfactory, Conditional (violations found) or Unsatisfactory (can lose the right to operate). Most companies are never reviewed, so "Not rated" is normal and not a bad sign.' },
+          // FMCSA's latest audit of the company (MCS-150 census). Only on new reports.
+          ...(r.insuranceFilings || r.lastReview ? [{
+            label: 'Last FMCSA audit',
+            val: r.lastReview ? r.lastReview.label : 'None on record',
+            sub: r.lastReview ? `${fmtDay(r.lastReview.date)}${daysFromToday(r.lastReview.date) < -3 * 365 ? ` · ${Math.floor(-daysFromToday(r.lastReview.date) / 365)} years ago` : ''}` : undefined,
+            hint: 'FMCSA’s latest review of this company. A compliance review is a full audit of safety records (at the office or remotely) and can change the safety rating. New companies get a new-entrant safety audit during their first 18 months. Most established carriers haven’t been reviewed in years; that’s normal.',
+          }] : []),
           { label: 'Out-of-service', val: r.outOfService ? 'Yes' : 'No', good: r.outOfService === false, warn: r.outOfService === true },
-          { label: 'Insurance on file', val: r.insuranceSummary || '—', warn: r.bipdOnFile === 0 || (r.cargoRequired && r.cargoOnFile === 0), good: r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.cargoRequired && r.cargoOnFile === 0) },
+          { label: 'Insurance on file',
+            // A broker that runs no trucks is judged on its $75,000 bond or
+            // trust fund; FMCSA doesn't require liability insurance from it.
+            ...(r.brokerAuthority === 'Active' && r.commonAuthority !== 'Active' && r.contractAuthority !== 'Active' && r.bondOnFile != null
+              ? { val: r.bondOnFile > 0 ? `$${(r.bondOnFile * 1000).toLocaleString('en-US')} broker bond or trust fund` : 'No broker bond or trust fund', warn: r.bondOnFile < 75, good: r.bondOnFile >= 75 }
+              : { val: r.insuranceSummary || '—', warn: r.bipdOnFile === 0 || (r.cargoRequired && r.cargoOnFile === 0), good: r.bipdOnFile != null && r.bipdOnFile > 0 && !(r.cargoRequired && r.cargoOnFile === 0) }),
+            sub: (() => {
+              const fs: any[] = r.insuranceFilings?.filings || [];
+              const primary = fs.find((f) => /^BIPD\/Primary/i.test(f.coverage) && f.effectiveDate) || fs.find((f) => /^BIPD/i.test(f.coverage) && f.effectiveDate) || fs.find((f) => /SURETY|TRUST/i.test(f.coverage) && f.effectiveDate);
+              return primary ? `${/SURETY|TRUST/i.test(primary.coverage) ? 'Bond' : 'Liability'} since ${fmtDay(primary.effectiveDate)}${primary.insurer ? ` · ${primary.insurer}` : ''}` : undefined;
+            })(),
+            hint: 'Coverage amounts FMCSA has on file. FMCSA has no expiration date: a filing stays in force until the insurer cancels it. See Insurance filings below for every policy and any cancellation that’s been filed.' },
+          ...(r.motus?.boc3 ? [{
+            label: 'Process agent (BOC-3)',
+            val: r.motus.boc3.agent,
+            sub: [r.motus.boc3.city, r.motus.boc3.state].filter(Boolean).join(', ') || undefined,
+            hint: 'Every carrier and broker must name a process agent in each state (form BOC-3) before FMCSA grants authority. A lapse is one reason FMCSA suspends authority.',
+          }] : []),
           // Only claim a status FMCSA actually gave us: a date, or its overdue flag.
           { label: 'MCS-150', val: r.mcs150Outdated === true ? (r.mcs150Date ? `Overdue (${r.mcs150Date})` : 'Overdue') : r.mcs150Date || (r.mcs150Outdated === false ? 'Not overdue' : '—'), warn: r.mcs150Outdated === true },
         ]} />
       </div>
+      <InsuranceFilingsPanel r={r} />
+      <AuthorityHistoryPanel r={r} />
+      <MotusPanel r={r} />
+      <CompanyReportsSection r={r} navigate={navigate} />
       <div className="grid md:grid-cols-2 gap-6">
         <DetailPanel title="Operations" items={[
           { label: 'Fleet size', val: r.powerUnits != null ? `${r.powerUnits} power units${r.drivers != null ? ` · ${r.drivers} drivers` : ''}` : '—' },
           { label: 'Classification', val: r.operation || '—' },
         ]} />
         <DetailPanel title="Safety record" items={[
-          { label: 'Total crashes', val: r.crashTotal != null ? String(r.crashTotal) : '—', warn: (r.crashTotal ?? 0) >= 10 },
-          { label: 'Fatal crashes', val: r.fatalCrash != null ? String(r.fatalCrash) : '—', warn: (r.fatalCrash ?? 0) > 0 },
-          { label: 'Driver OOS rate', val: r.driverOosRate != null ? `${r.driverOosRate.toFixed(2)}%${r.driverOosRateNat != null ? ` (nat. avg ${r.driverOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate > r.driverOosRateNat * 1.5, good: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate < r.driverOosRateNat },
-          { label: 'Vehicle OOS rate', val: r.vehicleOosRate != null ? `${r.vehicleOosRate.toFixed(2)}%${r.vehicleOosRateNat != null ? ` (nat. avg ${r.vehicleOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate > r.vehicleOosRateNat * 1.5, good: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate < r.vehicleOosRateNat },
+          { label: 'Total crashes', val: r.crashTotal != null ? String(r.crashTotal) : '—', warn: (r.crashTotal ?? 0) >= 10,
+            sub: r.crashTotal != null && r.powerUnits ? `Last 24 months · ${r.powerUnits} trucks in the fleet` : r.crashTotal != null ? 'Last 24 months' : undefined,
+            hint: 'Crashes involving this company’s trucks that were reported to FMCSA in the last 24 months: tow-away, injury and fatal crashes. It doesn’t say who was at fault. A bigger fleet drives more miles and has more crashes, so compare it with the number of trucks. Red at 10 or more.' },
+          { label: 'Fatal crashes', val: r.fatalCrash != null ? String(r.fatalCrash) : '—', warn: (r.fatalCrash ?? 0) > 0,
+            hint: 'Crashes in the last 24 months in which someone died. Like the total, it doesn’t say who was at fault.' },
+          { label: 'Driver OOS rate', val: r.driverOosRate != null ? `${r.driverOosRate.toFixed(2)}%${r.driverOosRateNat != null ? ` (nat. avg ${r.driverOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate > r.driverOosRateNat * 1.5, good: r.driverOosRate != null && r.driverOosRateNat != null && r.driverOosRate < r.driverOosRateNat,
+            sub: r.driverInspections ? `${r.driverOosInspections ?? 0} of ${r.driverInspections} driver inspections` : undefined,
+            hint: 'OOS means out of service. Out of this company’s roadside driver inspections in the last 24 months, the share where the inspector took the driver off the road on the spot — for example over hours of service, no valid CDL, or unfit to drive. Lower is better. Green when below the national average, red when more than 1.5× it.' },
+          { label: 'Vehicle OOS rate', val: r.vehicleOosRate != null ? `${r.vehicleOosRate.toFixed(2)}%${r.vehicleOosRateNat != null ? ` (nat. avg ${r.vehicleOosRateNat.toFixed(2)}%)` : ''}` : '—', warn: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate > r.vehicleOosRateNat * 1.5, good: r.vehicleOosRate != null && r.vehicleOosRateNat != null && r.vehicleOosRate < r.vehicleOosRateNat,
+            sub: r.vehicleInspections ? `${r.vehicleOosInspections ?? 0} of ${r.vehicleInspections} vehicle inspections` : undefined,
+            hint: 'Out of this company’s roadside truck and trailer inspections in the last 24 months, the share where the equipment was parked until repaired — for example bad brakes, tires or lights. Lower is better. Well above the national average usually means poor maintenance. Green when below the national average, red when more than 1.5× it.' },
         ]} />
       </div>
       {r.webPresence?.configured && (
@@ -14669,23 +15254,366 @@ function CarrierHistoryPanel({ dot, mc }: { dot?: string; mc?: string }) {
   );
 }
 
+// "2026-09-01" → "Sep 1, 2026", read as a calendar day (no timezone shift).
+function fmtDay(iso?: string | null): string {
+  if (!iso) return '—';
+  const t = Date.parse(`${String(iso).slice(0, 10)}T00:00:00Z`);
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' }) : String(iso);
+}
+
+function daysFromToday(iso: string): number {
+  const today = new Date().toISOString().slice(0, 10);
+  return Math.round((Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+}
+
+function coverageLabel(coverage: string): string {
+  if (/^BIPD\/Primary/i.test(coverage)) return 'Liability · primary';
+  if (/^BIPD\/Excess/i.test(coverage)) return 'Liability · excess';
+  if (/^BIPD/i.test(coverage)) return 'Liability';
+  if (/CARGO/i.test(coverage)) return 'Cargo';
+  if (/SURETY/i.test(coverage)) return 'Broker bond';
+  if (/TRUST/i.test(coverage)) return 'Broker trust fund';
+  return coverage;
+}
+
+// Every insurance filing FMCSA has for the company: since when, who, how
+// much, and any cancellation the insurer filed. Free on every report.
+function InsuranceFilingsPanel({ r }: { r: any }) {
+  const [showAllPast, setShowAllPast] = useState(false);
+  const ins = r.insuranceFilings;
+  if (!ins) return null; // reports saved before filings were added
+  const today = new Date().toISOString().slice(0, 10);
+  // Policies that ended, and how (FMCSA insurance history). Absent on
+  // reports saved before it was added.
+  const past: any[] | null = Array.isArray(ins.history) ? ins.history : null;
+  const cancelled24m = Number(ins.cancelled24m) || 0;
+  const ENDED: Record<string, { text: string; cls: string }> = {
+    cancelled: { text: 'Cancelled by insurer', cls: 'bg-[#F59E0B]/15 text-[#B45309]' },
+    replaced: { text: 'Replaced, no gap', cls: 'bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/60' },
+    'name-change': { text: 'Re-filed: name change', cls: 'bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/60' },
+    transferred: { text: 'Transferred', cls: 'bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/60' },
+    ended: { text: 'Ended', cls: 'bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/60' },
+  };
+  const filings: any[] = [...(ins.filings || [])].sort((a, b) => {
+    const order = (f: any) => (/^BIPD\/Primary/i.test(f.coverage) ? 0 : /^BIPD/i.test(f.coverage) ? 1 : /SURETY|TRUST/i.test(f.coverage) ? 2 : 3);
+    return order(a) - order(b) || String(b.effectiveDate || '').localeCompare(String(a.effectiveDate || ''));
+  });
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-5">
+        <div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">Insurance filings</h2>
+          <div className="text-sm text-[#0B1E3F]/60 mt-1 max-w-2xl">
+            What insurers have filed with FMCSA. FMCSA has no expiration date: a filing stays in force until the insurer cancels it, with at least 30 days&apos; notice, and that notice shows up here.
+          </div>
+        </div>
+        {ins.asOf && <span className="text-[11px] mono text-[#0B1E3F]/45">FMCSA data as of {fmtDay(ins.asOf)}</span>}
+      </div>
+      {!ins.checked ? (
+        <div className="text-sm text-[#0B1E3F]/60">Couldn&apos;t load FMCSA&apos;s insurance filings right now. Run Scan again in a minute.</div>
+      ) : filings.length === 0 ? (
+        <div className="text-sm text-[#0B1E3F]/70">No active insurance filings on record with FMCSA.</div>
+      ) : (
+        <div className="divide-y divide-[#0B1E3F]/5">
+          {filings.map((f, i) => {
+            const pending = f.cancelEffectiveDate && f.cancelEffectiveDate >= today && f.cancelEffectiveDate !== f.effectiveDate;
+            const days = pending ? daysFromToday(f.cancelEffectiveDate) : null;
+            return (
+              <div key={i} className="py-3 flex items-start justify-between gap-4 flex-wrap">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">{coverageLabel(f.coverage)}</span>
+                    {f.maxCoverageK != null && f.maxCoverageK > 0 && <span className="text-sm font-semibold">${(f.maxCoverageK * 1000).toLocaleString('en-US')}</span>}
+                  </div>
+                  <div className="text-sm text-[#0B1E3F] mt-0.5">{f.insurer || 'Insurer not listed'}{f.policyNumber ? <span className="mono text-[#0B1E3F]/55"> · {f.policyNumber}</span> : null}</div>
+                  <div className="text-xs text-[#0B1E3F]/55 mt-0.5">
+                    {f.effectiveDate ? `In force since ${fmtDay(f.effectiveDate)}` : 'Start date not listed'}
+                    {f.postedDate ? ` · filed with FMCSA ${fmtDay(f.postedDate)}` : ''}
+                  </div>
+                </div>
+                {pending ? (
+                  <span className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] mono uppercase tracking-wider ${days! <= 30 ? 'bg-[#DC2626] text-white' : 'bg-[#F59E0B]/15 text-[#B45309]'}`}>
+                    <Bell className="w-3 h-3" /> Cancels {fmtDay(f.cancelEffectiveDate)} · {days} day{days === 1 ? '' : 's'}
+                  </span>
+                ) : (
+                  <span className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] mono uppercase tracking-wider bg-[#16A34A]/10 text-[#16A34A]">
+                    <CheckCircle2 className="w-3 h-3" /> In force
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {ins.checked && past && (
+        <div className="mt-6 pt-5 border-t border-[#0B1E3F]/10">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">Past policies</div>
+            {past.length > 0 && (
+              <span className={`text-xs ${cancelled24m >= 2 ? 'text-[#B45309] font-medium' : 'text-[#0B1E3F]/55'}`}>
+                {cancelled24m === 0 ? 'None cancelled by an insurer in the last 24 months' : `${cancelled24m} cancelled by the insurer in the last 24 months`}
+              </span>
+            )}
+          </div>
+          {past.length === 0 ? (
+            <div className="text-sm text-[#0B1E3F]/60 mt-2">No ended policies on record with FMCSA.</div>
+          ) : (
+            <>
+              <p className="text-xs text-[#0B1E3F]/55 mt-1.5 max-w-2xl">
+                How each earlier policy ended. &ldquo;Cancelled by insurer&rdquo; can be non-payment or simply a move to another insurer; &ldquo;Replaced&rdquo; means a new filing took over the same day.
+              </p>
+              <div className="divide-y divide-[#0B1E3F]/5 mt-2">
+                {(showAllPast ? past : past.slice(0, 4)).map((f, i) => {
+                  const how = ENDED[f.ended] || ENDED.ended;
+                  return (
+                    <div key={i} className="py-2.5 flex items-start justify-between gap-4 flex-wrap">
+                      <div className="min-w-0">
+                        <div className="text-sm text-[#0B1E3F]/85">
+                          <span className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">{coverageLabel(f.coverage)}</span>
+                          {f.maxCoverageK != null && f.maxCoverageK > 0 ? <span className="text-[#0B1E3F]/70"> · ${(f.maxCoverageK * 1000).toLocaleString('en-US')}</span> : null}
+                          <span> · {f.insurer || 'Insurer not listed'}</span>
+                          {f.policyNumber ? <span className="mono text-[#0B1E3F]/50"> · {f.policyNumber}</span> : null}
+                        </div>
+                        <div className="text-xs text-[#0B1E3F]/55 mt-0.5">{f.effectiveDate ? `${fmtDay(f.effectiveDate)} to ${fmtDay(f.endedDate)}` : `Ended ${fmtDay(f.endedDate)}`}</div>
+                      </div>
+                      <span className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] mono uppercase tracking-wider ${how.cls}`}>{how.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {past.length > 4 && (
+                <button type="button" onClick={() => setShowAllPast((v) => !v)} className="mt-2 text-xs font-medium underline text-[#0B1E3F]/70 hover:text-[#0B1E3F]">
+                  {showAllPast ? 'Show fewer' : `Show all ${past.length} past policies`}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Every action FMCSA has on record for the company's operating authority:
+// grants, suspensions and why, reinstatements, revocation notices that were
+// dropped, applications. From FMCSA's authority history (Motus plus the
+// older system); built by lib/fmcsa-authority-history.
+function AuthorityHistoryPanel({ r }: { r: any }) {
+  const [showAll, setShowAll] = useState(false);
+  const h = r.authorityHistory;
+  const events: any[] = Array.isArray(h?.events) ? h.events : [];
+  if (!h?.checked || events.length === 0) return null;
+  const lapses = Number(h.lapses24m) || 0;
+  const notices = Number(h.notices24m) || 0;
+  const dot = (e: any) => (e.corrected ? 'bg-[#0B1E3F]/25'
+    : e.kind === 'suspended' || e.kind === 'revoked' ? 'bg-[#DC2626]'
+      : e.kind === 'notice' ? 'bg-[#F59E0B]'
+        : e.kind === 'granted' || e.kind === 'reinstated' ? 'bg-[#16A34A]' : 'bg-[#0B1E3F]/30');
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <h2 className="text-xl font-semibold text-[#0B1E3F]">Authority history</h2>
+      <div className="text-sm text-[#0B1E3F]/60 mt-1 max-w-2xl">
+        Every action FMCSA has on record for this company&apos;s operating authority, newest first.
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 text-xs">
+        {h.firstGrantDate && <span className="px-2.5 py-1 rounded-full bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/75">First granted {fmtDay(h.firstGrantDate)}</span>}
+        {h.incomplete ? (
+          // FMCSA's Motus history didn't answer: no claim about suspensions.
+          <span className="px-2.5 py-1 rounded-full bg-[#F59E0B]/15 text-[#B45309]">Changes since May 2026 couldn&apos;t be loaded. Run Scan again.</span>
+        ) : (
+          <>
+            <span className={`px-2.5 py-1 rounded-full ${lapses === 0 ? 'bg-[#16A34A]/10 text-[#16A34A]' : lapses === 1 ? 'bg-[#F59E0B]/15 text-[#B45309]' : 'bg-[#DC2626]/10 text-[#DC2626]'}`}>
+              {lapses === 0 ? 'No suspensions in the last 24 months' : `Suspended ${lapses === 1 ? 'once' : `${lapses} times`} in the last 24 months`}
+            </span>
+            {notices > 0 && <span className="px-2.5 py-1 rounded-full bg-[#F59E0B]/15 text-[#B45309]">{notices} revocation notice{notices === 1 ? '' : 's'} in 24 months, dropped in time</span>}
+          </>
+        )}
+      </div>
+      <ol className="mt-5 space-y-3">
+        {(showAll ? events : events.slice(0, 6)).map((e, i) => (
+          <li key={i} className="flex items-start gap-3">
+            <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dot(e)}`} />
+            <span className="w-24 shrink-0 text-xs mono text-[#0B1E3F]/55 mt-0.5">{fmtDay(e.date)}</span>
+            <span className="min-w-0 text-sm">
+              <span className={e.corrected ? 'line-through text-[#0B1E3F]/50' : 'font-medium'}>{e.text}</span>
+              <span className="text-[#0B1E3F]/50"> · {e.authority}</span>
+              {e.detail && <span className="block text-xs text-[#0B1E3F]/60 mt-0.5">{e.detail}</span>}
+              {e.corrected && <span className="block text-xs text-[#0B1E3F]/60 mt-0.5">FMCSA later reversed this as its own error. It isn&apos;t counted against the company.</span>}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {events.length > 6 && (
+        <button type="button" onClick={() => setShowAll((v) => !v)} className="mt-3 text-xs font-medium underline text-[#0B1E3F]/70 hover:text-[#0B1E3F]">
+          {showAll ? 'Show fewer' : `Show all ${events.length} entries`}
+        </button>
+      )}
+      <p className="mt-4 text-xs text-[#0B1E3F]/50 max-w-2xl">
+        A revocation notice is FMCSA&apos;s warning when an insurer files a cancellation. It is dropped if new coverage is filed in time; if not, FMCSA suspends the authority.
+      </p>
+    </div>
+  );
+}
+
+// What FMCSA's Motus system (its licensing system since May 2026) has on
+// file for the company: the registered details, every authority and
+// application with its status, required and filed coverage, the process
+// agent; then where Motus differs from FMCSA's older record, and the
+// suspension notices it served.
+function MotusPanel({ r }: { r: any }) {
+  const m = r.motus;
+  const diffs: any[] = r.registryDiffs || [];
+  const recentNotices = (m?.suspensions || []).slice(0, 3);
+  if (!m?.found) return null;
+  const phone = m.phone && String(m.phone).length === 10 ? `(${m.phone.slice(0, 3)}) ${m.phone.slice(3, 6)}-${m.phone.slice(6)}` : m.phone;
+  const money = (k: any) => (typeof k === 'number' ? `$${(k * 1000).toLocaleString('en-US')}` : null);
+  const yesNo = (v: any) => (v === true ? 'Yes' : v === false ? 'No' : 'Not stated');
+  const STATUS: Record<string, { text: string; cls: string }> = {
+    active: { text: 'Active', cls: 'bg-[#16A34A]/10 text-[#16A34A]' },
+    inactive: { text: 'Not active', cls: 'bg-[#DC2626]/10 text-[#DC2626]' },
+    pending: { text: 'Applied for, not granted', cls: 'bg-[#F59E0B]/15 text-[#B45309]' },
+    withdrawn: { text: 'Application withdrawn', cls: 'bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/60' },
+  };
+  const facts: { label: string; val: React.ReactNode }[] = [
+    ...(m.legalName ? [{ label: 'Registered name', val: m.legalName }] : []),
+    ...(m.dbaName ? [{ label: 'DBA', val: m.dbaName }] : []),
+    ...(m.mc ? [{ label: 'MC number', val: m.mc }] : []),
+    ...(phone ? [{ label: 'Phone', val: phone }] : []),
+    ...(m.address ? [{ label: 'Business address', val: m.address }] : []),
+    { label: 'Mailing address', val: m.mailingAddress || 'Same as the business address' },
+    ...(m.country ? [{ label: 'Country', val: m.country === 'MX' ? 'Mexico' : m.country === 'CA' ? 'Canada' : m.country }] : []),
+    ...(m.rfc ? [{ label: 'RFC (Mexican tax ID)', val: m.rfc }] : []),
+    ...(money(m.bipdOnFile) || money(m.bipdRequired) ? [{ label: 'Liability insurance', val: `${money(m.bipdOnFile) || 'None'} on file${money(m.bipdRequired) ? ` · ${money(m.bipdRequired)} required` : ''}` }] : []),
+    ...(m.cargoRequired != null || m.cargoOnFile != null ? [{ label: 'Cargo insurance', val: `Required: ${yesNo(m.cargoRequired)} · On file: ${yesNo(m.cargoOnFile)}` }] : []),
+    ...(m.bondRequired != null || m.bondOnFile != null ? [{ label: 'Bond or trust fund', val: `Required: ${yesNo(m.bondRequired)} · On file: ${yesNo(m.bondOnFile)}` }] : []),
+    ...(m.boc3?.agent ? [{ label: 'Process agent (BOC-3)', val: `${m.boc3.agent}${m.boc3.city ? `, ${[m.boc3.city, m.boc3.state].filter(Boolean).join(', ')}` : ''}` }] : []),
+  ];
+  return (
+    <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-5">
+        <div>
+          <h2 className="text-xl font-semibold text-[#0B1E3F]">FMCSA Motus record</h2>
+          <div className="text-sm text-[#0B1E3F]/60 mt-1 max-w-2xl">
+            What FMCSA&apos;s licensing system has on file. Since May 2026 changes are recorded in Motus first and FMCSA&apos;s other records catch up later, so when they disagree, go by Motus.
+          </div>
+        </div>
+        {m.asOf && <span className="text-[11px] mono text-[#0B1E3F]/45">Motus data as of {fmtDay(m.asOf)}</span>}
+      </div>
+
+      {(m.authorities || []).length > 0 && (
+        <div className="mb-5">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Authorities and applications</div>
+          <ul className="space-y-1.5">
+            {m.authorities.map((a: any, i: number) => {
+              const st = STATUS[String(a.status || '').toLowerCase()] || { text: a.status || 'Not stated', cls: 'bg-[#0B1E3F]/[0.06] text-[#0B1E3F]/60' };
+              return (
+                <li key={i} className="flex items-center justify-between gap-3 flex-wrap text-sm">
+                  <span>{a.type}</span>
+                  <span className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] mono uppercase tracking-wider ${st.cls}`}>{st.text}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      <dl className="grid sm:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
+        {facts.map((f) => (
+          <div key={f.label} className="min-w-0">
+            <dt className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/55">{f.label}</dt>
+            <dd className="text-[#0B1E3F] break-words">{f.val}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="mt-6 pt-5 border-t border-[#0B1E3F]/10">
+        <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Motus compared with FMCSA&apos;s older record</div>
+        {diffs.length === 0 && <div className="text-sm text-[#0B1E3F]/70 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#16A34A] shrink-0" /> No differences in name, phone, address, authority or liability insurance.</div>}
+      </div>
+      {diffs.length > 0 && (
+        <div className="overflow-x-auto -mx-2">
+          <table className="w-full text-sm min-w-[520px]">
+            <thead>
+              <tr className="text-left text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">
+                <th className="px-2 py-2 font-normal">Field</th>
+                <th className="px-2 py-2 font-normal">Motus (newer)</th>
+                <th className="px-2 py-2 font-normal">FMCSA older record{r.mcs150Date ? ` · MCS-150 ${fmtDay(r.mcs150Date)}` : ''}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#0B1E3F]/5">
+              {diffs.map((d) => (
+                <tr key={d.field}>
+                  <td className="px-2 py-2.5 text-[#0B1E3F]/70 whitespace-nowrap">{d.label}</td>
+                  <td className={`px-2 py-2.5 font-medium ${d.concern && /Authority|bipd/i.test(d.field) ? 'text-[#DC2626]' : 'text-[#0B1E3F]'}`}>{d.motus}</td>
+                  <td className="px-2 py-2.5 text-[#0B1E3F]/55">{d.fmcsa}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {recentNotices.length > 0 && (
+        <div className="mt-6">
+          <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60 mb-2">Suspension notices FMCSA served</div>
+          <ul className="space-y-1.5 text-sm">
+            {recentNotices.map((n: any, i: number) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full mt-2 shrink-0 ${/involuntary/i.test(n.type) ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'}`} />
+                <span>{n.type}{n.servedDate ? <span className="text-[#0B1E3F]/55"> · served {fmtDay(n.servedDate)}</span> : null}{n.authority ? <span className="text-[#0B1E3F]/55"> · {n.authority}</span> : null}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DetailPanel({ title, items }: any) {
   return (
     <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 p-8 card-shadow text-[#0B1E3F]">
       <h2 className="text-xl font-semibold text-[#0B1E3F] mb-5">{title}</h2>
       <div className="space-y-3">
-        {items.map((item: any, i: number) => {
-          const Icon = item.icon;
-          return (
-            <div key={i} className="flex items-start gap-3 py-2 border-b border-[#0B1E3F]/5 last:border-0">
-              {Icon && <Icon className="w-4 h-4 text-[#0B1E3F]/50 mt-0.5" />}
-              <div className="flex-1 min-w-0">
-                <div className="text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">{item.label}</div>
-                <div className={`text-sm font-medium mt-0.5 ${item.warn ? 'text-[#DC2626]' : item.good ? 'text-[#16A34A]' : 'text-[#0B1E3F]'}`}>{item.val}</div>
-              </div>
-            </div>
-          );
-        })}
+        {items.map((item: any, i: number) => <DetailRow key={i} item={item} />)}
+      </div>
+    </div>
+  );
+}
+
+// One label/value row. An item with a `hint` gets an info button that opens
+// a plain-English explanation on hover (desktop) or tap (phone).
+function DetailRow({ item }: { item: any }) {
+  const [pinned, setPinned] = useState(false);
+  const [hover, setHover] = useState(false);
+  const Icon = item.icon;
+  const open = Boolean(item.hint) && (pinned || hover);
+  return (
+    <div className="flex items-start gap-3 py-2 border-b border-[#0B1E3F]/5 last:border-0">
+      {Icon && <Icon className="w-4 h-4 text-[#0B1E3F]/50 mt-0.5" />}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 text-xs mono uppercase tracking-wider text-[#0B1E3F]/60">
+          {item.label}
+          {item.hint && (
+            <button
+              type="button"
+              onClick={() => setPinned((p) => !p)}
+              onMouseEnter={() => setHover(true)}
+              onMouseLeave={() => setHover(false)}
+              aria-expanded={open}
+              aria-label={`What is ${String(item.label).toLowerCase()}?`}
+              className="text-[#0B1E3F]/40 hover:text-[#0B1E3F]/80 transition"
+            >
+              <Info className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <div className={`text-sm font-medium mt-0.5 ${item.warn ? 'text-[#DC2626]' : item.good ? 'text-[#16A34A]' : 'text-[#0B1E3F]'}`}>{item.val}</div>
+        {item.sub && <div className="text-xs text-[#0B1E3F]/55 mt-0.5">{item.sub}</div>}
+        {open && (
+          <div className="mt-2 text-xs leading-relaxed text-[#0B1E3F]/75 bg-[#0B1E3F]/[0.04] border border-[#0B1E3F]/10 rounded-lg px-3 py-2">
+            {item.hint}
+          </div>
+        )}
       </div>
     </div>
   );

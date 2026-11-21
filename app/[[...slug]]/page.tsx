@@ -17,7 +17,7 @@ const PAGES: Record<string, { title: string; description: string }> = {
   },
   about: {
     title: 'About Haulock',
-    description: 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a 14-source web-reputation scan.',
+    description: 'Haulock verifies freight brokers and carriers using live FMCSA data, AI rate-con analysis, and a 15-source web-reputation scan.',
   },
   signup: { title: 'Create your account', description: 'Start free: verify any broker or carrier against FMCSA records, the web and Google Business in seconds.' },
   login: { title: 'Log in', description: 'Log in to Haulock.' },

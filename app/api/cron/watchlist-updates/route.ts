@@ -7,6 +7,7 @@ import { attachViolationDetails, fetchRecentSafetyEvents } from '@/lib/fmcsa-ins
 import { currentPlansFor } from '@/lib/teams';
 import { isAdmin } from '@/lib/admin';
 import { sendEmail, safetyEventsTemplate, watchlistUpdateTemplate, isResendConfigured, type WatchlistChange, type WatchlistFieldChange } from '@/lib/email';
+import { fetchInsuranceFilings } from '@/lib/fmcsa-insurance';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,7 +18,11 @@ export const maxDuration = 300;
 //   2. Compare only FMCSA registry fields — authority per role, insurance,
 //      bond, out-of-service, safety rating, address, phone, name — with the
 //      last FMCSA snapshot for that row.
-//   3. If any of them changed, email the owner (subject to their
+//   3. Check FMCSA's insurance filings for cancellations the insurer has
+//      filed (usually 30 days before coverage ends); a new one counts as a
+//      change. The first check after this was added reports any already
+//      pending.
+//   4. If anything changed, email the owner (subject to their
 //      notify_watchlist preference) listing exactly what changed.
 //
 // This is NOT a full scan: web reputation, Places, website, SMS and
@@ -62,8 +67,47 @@ type FmcsaWatchSnapshot = {
   // phone fields from one response to the next, so a number we've already
   // seen isn't reported as a change.
   seenPhones?: string[];
+  // Insurance cancellations pending on FMCSA's filings at the last check
+  // (lib/fmcsa-insurance). A new one is emailed the day it's filed, usually
+  // 30 days before coverage ends.
+  insuranceCancels?: PendingCancel[];
   checkedAt?: string;
 };
+
+type PendingCancel = { key: string; text: string; date: string };
+
+const COVERAGE_NAME = (c: string) =>
+  /^BIPD/i.test(c) ? 'Liability insurance' : /CARGO/i.test(c) ? 'Cargo insurance' : /SURETY/i.test(c) ? 'Broker bond' : /TRUST/i.test(c) ? 'Broker trust fund' : c;
+const dayLabel = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+
+async function pendingCancellations(ids: { mc?: string | null; dot?: string | null }, today: string): Promise<PendingCancel[] | null> {
+  const ins = await fetchInsuranceFilings(ids).catch(() => null);
+  if (!ins || ins.error) return null; // not checked: never reported as a change
+  return ins.filings
+    .filter((f) => f.cancelEffectiveDate && f.cancelEffectiveDate >= today && f.cancelEffectiveDate !== f.effectiveDate)
+    .map((f) => ({
+      key: `${COVERAGE_NAME(f.coverage)}|${String(f.policyNumber || f.insurer).toUpperCase().replace(/[^A-Z0-9]/g, '')}|${f.cancelEffectiveDate}`,
+      text: `${COVERAGE_NAME(f.coverage)} · ${f.insurer}${f.policyNumber ? ` ${f.policyNumber}` : ''} · cancels ${dayLabel(f.cancelEffectiveDate!)}`,
+      date: f.cancelEffectiveDate!,
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+// New cancellations are a concern. One that disappears while its date is
+// still ahead was withdrawn (premium paid, reinstated); one whose date passed
+// took effect, which the insurance-on-file amounts already report.
+function diffCancellations(prev: PendingCancel[] | undefined, next: PendingCancel[], today: string): WatchlistFieldChange[] {
+  const before = new Map((prev || []).map((c) => [c.key, c]));
+  const after = new Set(next.map((c) => c.key));
+  const out: WatchlistFieldChange[] = [];
+  for (const c of next) {
+    if (!before.has(c.key)) out.push({ field: 'insuranceCancel', label: 'Insurance cancellation', from: 'None pending', to: c.text, concern: true });
+  }
+  for (const c of prev || []) {
+    if (!after.has(c.key) && c.date > today) out.push({ field: 'insuranceCancel', label: 'Insurance cancellation', from: c.text, to: 'Withdrawn', concern: false });
+  }
+  return out;
+}
 
 const WATCH_KEYS = ['name', 'dba', 'address', 'phone', 'commonAuthority', 'contractAuthority', 'brokerAuthority', 'bipdOnFile', 'cargoOnFile', 'bondOnFile', 'outOfService', 'safetyRating', 'officers', 'fmcsaEmail'] as const;
 
@@ -327,7 +371,13 @@ async function run(req: Request) {
     const legacyBaseline = !saved.fmcsaWatch;
     const prevSnap: FmcsaWatchSnapshot = saved.fmcsaWatch || snapshotOf(saved);
     const freshSnap = snapshotOf(fresh);
-    const changes = diffSnapshots(prevSnap, freshSnap, { legacyBaseline });
+    const today = checkedAt.slice(0, 10);
+    const cancels = await pendingCancellations({ mc: fresh.mc || row.mc, dot: fresh.dot || row.dot }, today);
+    if (cancels) freshSnap.insuranceCancels = cancels;
+    const changes = [
+      ...diffSnapshots(prevSnap, freshSnap, { legacyBaseline }),
+      ...(cancels ? diffCancellations(prevSnap.insuranceCancels, cancels, today) : []),
+    ];
 
     // Next baseline: fresh values, keeping previous values for fields this
     // response didn't include, plus the phones seen so far.

@@ -107,7 +107,10 @@ export async function GET(req: Request) {
       // longer fills 24-month crash/inspection fields; web reputation only
       // scores pages that mention fraud; websites must be confirmed as the
       // company's; chameleon links use FMCSA facts only.
-      const SCHEMA_VERSION = 12;
+      // 13: insurance filings with dates, last FMCSA review, Motus record.
+      // 14: authority timeline, past policies, pending applications, the
+      // rest of the Motus record (mailing address, required filings).
+      const SCHEMA_VERSION = 14;
       const hasMatchingSchemaVersion = row.schemaVersion === SCHEMA_VERSION;
       // A report built from fallback data (FMCSA didn't answer) is never
       // replayed: the next search should try the live service again.
@@ -284,6 +287,22 @@ export async function GET(req: Request) {
   const censusPromise = carrier.dot
     ? import('@/lib/fmcsa-census').then((m) => m.fetchCensusContact(carrier.dot)).catch(() => null)
     : Promise.resolve(null);
+  // Insurance filings (policies with dates, pending cancellations) and the
+  // Motus record are free FMCSA open data, fetched alongside everything else.
+  const insurancePromise = timed('insurance',
+    import('@/lib/fmcsa-insurance').then((m) => m.fetchInsuranceFilings({ mc: carrier.mc, dot: carrier.dot })).catch((e) => ({ filings: [], asOf: null, error: e?.message || 'unavailable' })),
+    { filings: [], asOf: null, error: 'FMCSA insurance data took too long' },
+  );
+  const motusPromise = timed('motus',
+    import('@/lib/fmcsa-motus').then((m) => m.fetchMotusRecord({ mc: carrier.mc, dot: carrier.dot })).catch((e) => ({ checked: false, found: false, authorities: [], suspensions: [], error: e?.message || 'unavailable' })),
+    { checked: false, found: false, authorities: [], suspensions: [], error: 'Motus data took too long' },
+  );
+  // Published reports from verified users about this company. null = not
+  // checked (reports not set up, or the read failed): no flag either way.
+  const reportsPromise = timed('reports',
+    import('@/lib/reports-server').then((m) => m.publishedReportsFor({ mc: carrier.mc, dot: carrier.dot })).catch(() => null),
+    null,
+  );
   const [addressResult, webResult, chameleonLinks, webReputation, legacyReference, smsData] = await Promise.all([
     timed('places',
       carrier.address
@@ -353,7 +372,9 @@ export async function GET(req: Request) {
   // Apply the MCS-150 contact details. The email of record is current
   // (filed with FMCSA), so it sets emailDomain before any snapshot backfill.
   const census = await Promise.race([censusPromise, deadline.then(() => null)]);
+  const [insurance, motus, userReports] = await Promise.all([insurancePromise, motusPromise, reportsPromise]);
   clearTimeout(deadlineTimer);
+  if (userReports) carrier.userReports = userReports.score;
   if (census) {
     if (census.officers.length) carrier.officers = census.officers;
     if (census.email) {
@@ -363,6 +384,14 @@ export async function GET(req: Request) {
     if (!carrier.phone && census.phone) carrier.phone = census.phone;
     if (!carrier.mcs150Date && census.mcs150Date) carrier.mcs150Date = census.mcs150Date;
     carrier.censusAsOf = census.mcs150Date;
+    if (census.lastReview) carrier.lastReview = census.lastReview;
+    if (!carrier.safetyRatingDate && census.safetyRatingDate) carrier.safetyRatingDate = census.safetyRatingDate;
+  }
+  // Insurance filings + Motus onto the report (shared with the daily report
+  // on the user's own company, so both always show the same things).
+  {
+    const { attachFilings } = await import('@/lib/fmcsa-motus');
+    await attachFilings(carrier, insurance, motus as any);
   }
 
   // Friendly per-source breakdown — operator opens the dev terminal,
@@ -834,6 +863,28 @@ export async function GET(req: Request) {
       note: carrier.mc || carrier.dot ? `Authority, insurance, safety${carrier.crashTotal != null ? ', crashes' : ''}` : 'Not found',
     },
     {
+      name: 'FMCSA insurance filings',
+      ok: Boolean(carrier.insuranceFilings?.checked),
+      note: !carrier.insuranceFilings?.checked
+        ? 'Couldn’t check right now'
+        : (() => {
+            const fs = carrier.insuranceFilings.filings;
+            const pending = fs.filter((f) => f.cancelEffectiveDate && f.cancelEffectiveDate >= new Date().toISOString().slice(0, 10)).length;
+            return fs.length === 0 ? 'No active filings' : `${fs.length} active filing${fs.length === 1 ? '' : 's'}${pending ? ` · ${pending} cancellation${pending === 1 ? '' : 's'} pending` : ''}`;
+          })(),
+    },
+    {
+      name: 'FMCSA Motus',
+      ok: Boolean(carrier.motus?.checked),
+      note: !carrier.motus?.checked
+        ? 'Couldn’t check right now'
+        : !carrier.motus.found
+          ? 'No changes filed since FMCSA moved to Motus'
+          : carrier.registryDiffs?.length
+            ? `${carrier.registryDiffs.length} field${carrier.registryDiffs.length === 1 ? '' : 's'} newer than FMCSA’s other records`
+            : 'Matches FMCSA’s other records',
+    },
+    {
       name: 'Google Places',
       ok: Boolean(carrier.addressCheck?.configured && carrier.addressCheck.found && !carrier.addressCheck.error),
       note: !carrier.addressCheck?.configured
@@ -965,7 +1016,7 @@ export async function GET(req: Request) {
   // generated by this version of the verify route. Bump whenever the
   // payload shape changes meaningfully.
   // Must equal SCHEMA_VERSION in the user-cache check above.
-  scored.schemaVersion = 12;
+  scored.schemaVersion = 14;
   const verdictLabel = scored.verdict === 'high' ? 'HIGH RISK' : scored.verdict === 'medium' ? 'CAUTION' : 'LOW RISK';
   console.log(`[verify] ─── RESULT · score ${scored.score}/100 · ${verdictLabel} · ${scored.flags?.length ?? 0} red flag${(scored.flags?.length ?? 0) === 1 ? '' : 's'} ───`);
   if (scored.flags && scored.flags.length > 0) {

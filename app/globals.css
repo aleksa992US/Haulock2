@@ -99,6 +99,19 @@ body {
 .scan-line { animation: scanLine 2.5s ease-in-out infinite; }
 .ticker { animation: tickerScroll 40s linear infinite; }
 
+/* Homepage hero slider: the active tab's bar fills over the slide's time;
+   when it finishes, the slider moves on (onAnimationEnd). With reduced
+   motion, and below the lg breakpoint (phones/tablets, where slides have
+   different heights and rotating would shift the page), the bar stays full
+   and the slider only changes when a tab is tapped. */
+@keyframes heroProgress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.hero-progress { transform-origin: left; animation: heroProgress 9s linear forwards; }
+@media (prefers-reduced-motion: reduce), (max-width: 1023px) {
+  .hero-progress { animation: none; transform: scaleX(1); }
+}
 .card-shadow {
   box-shadow:
     0 1px 2px rgba(11, 30, 63, 0.04),

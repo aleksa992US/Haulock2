@@ -239,7 +239,7 @@ const jsonLd = {
           acceptedAnswer: {
             '@type': 'Answer',
             text:
-              'A full lookup cross-checks 14 data sources in parallel and usually finishes in under half a minute; repeat lookups are faster.',
+              'A full lookup cross-checks 15 data sources, FMCSA and its Motus records included, in parallel and usually finishes in under half a minute; repeat lookups are faster.',
           },
         },
       ],

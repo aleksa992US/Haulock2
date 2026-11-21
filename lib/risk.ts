@@ -106,7 +106,10 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
   // BIPD (liability) insurance — only for motor carriers, or when FMCSA
   // itself lists a required amount. Brokers don't haul freight, so FMCSA
   // doesn't require BIPD from them; they need a surety bond (checked below).
-  if (isCarrier || (c.bipdRequired != null && c.bipdRequired > 0)) {
+  // FMCSA keeps the required amount on a broker's record when its carrier
+  // authority went inactive, so a required amount on a broker that holds no
+  // active carrier authority means nothing.
+  if (isCarrier || (!isPureBroker && c.bipdRequired != null && c.bipdRequired > 0)) {
     if (c.bipdOnFile != null && c.bipdOnFile === 0) {
       flags.push({
         sev: 'critical',
@@ -192,6 +195,246 @@ export function scoreCarrier(c: CarrierReport): CarrierReport {
         recommendation: 'Confirm current bond status with the broker before booking.',
       });
     }
+  }
+
+  // Insurance cancellations filed with FMCSA (lib/fmcsa-insurance). Coverage
+  // stays in force until the date; insurers usually cancel for non-payment,
+  // giving FMCSA 30 days' notice. Another policy of the same kind on file
+  // without a cancellation is a renewal or switch, so that's only noted.
+  const today = new Date().toISOString().slice(0, 10);
+  const daysUntil = (iso: string) => Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  const filings = c.insuranceFilings?.checked ? c.insuranceFilings.filings : [];
+  const kindOf = (cov: string) => (/^BIPD/i.test(cov) ? 'bipd' : /CARGO/i.test(cov) ? 'cargo' : /SURETY|TRUST/i.test(cov) ? 'bond' : 'other');
+  const kinds: { kind: 'bipd' | 'bond' | 'cargo'; applies: boolean; label: string }[] = [
+    { kind: 'bipd', applies: isCarrier || (c.bipdRequired ?? 0) > 0, label: 'liability insurance' },
+    { kind: 'bond', applies: isBrokerActive, label: 'broker bond' },
+    { kind: 'cargo', applies: isCarrier && Boolean(c.cargoRequired), label: 'cargo insurance' },
+  ];
+  for (const { kind, applies, label } of kinds) {
+    if (!applies) continue;
+    const ofKind = filings.filter((f) => kindOf(f.coverage) === kind);
+    const pending = ofKind
+      .filter((f) => f.cancelEffectiveDate && f.cancelEffectiveDate >= today && f.cancelEffectiveDate !== f.effectiveDate)
+      .sort((a, b) => String(a.cancelEffectiveDate).localeCompare(String(b.cancelEffectiveDate)));
+    if (pending.length === 0) continue;
+    const soonest = pending[0];
+    const days = daysUntil(soonest.cancelEffectiveDate!);
+    const replacement = ofKind.find((f) => !pending.includes(f) && !/Excess/i.test(f.coverage));
+    const policy = `${soonest.insurer || 'Insurer'}${soonest.policyNumber ? ` policy ${soonest.policyNumber}` : ''}`;
+    const metrics = [
+      { label: 'Policy', value: policy },
+      { label: 'Cancellation effective', value: `${soonest.cancelEffectiveDate} (${days} day${days === 1 ? '' : 's'})` },
+      ...(replacement ? [{ label: 'Other policy on file', value: `${replacement.insurer}${replacement.policyNumber ? ` ${replacement.policyNumber}` : ''}${replacement.effectiveDate ? `, since ${replacement.effectiveDate}` : ''}` }] : []),
+      { label: 'Source', value: 'FMCSA insurance filings' },
+    ];
+    if (replacement) {
+      flags.push({
+        sev: 'info',
+        title: `Older ${label} policy being cancelled, another is on file`,
+        desc: `${policy} cancels on ${soonest.cancelEffectiveDate}; ${replacement.insurer} is also on file.`,
+        pts: 0,
+        metrics,
+        details: 'Usually a renewal or a switch to a new insurer. Coverage continues under the other policy.',
+      });
+    } else if (days <= 30) {
+      flags.push({
+        sev: 'critical',
+        title: `${label[0].toUpperCase()}${label.slice(1)} cancellation filed: ends in ${days} day${days === 1 ? '' : 's'}`,
+        desc: `${policy} is cancelled effective ${soonest.cancelEffectiveDate}, and no other ${label} is on file.`,
+        pts: 40,
+        metrics,
+        details: kind === 'bond'
+          ? 'Brokers must keep a $75,000 bond or trust fund. When it cancels, FMCSA suspends the broker authority, and carriers lose the bond they would claim against for unpaid loads.'
+          : 'The insurer has told FMCSA it is cancelling, usually for non-payment. Coverage holds until that date; after it, the authority is suspended unless a new policy is filed.',
+        recommendation: kind === 'bond'
+          ? 'Ask the broker for proof of a new bond before agreeing to payment terms that run past the cancellation date.'
+          : 'Ask for a current certificate and confirm with the insurer that the policy is paid and in force for the whole load.',
+      });
+    } else if (days <= 120) {
+      flags.push({
+        sev: 'warning',
+        title: `${label[0].toUpperCase()}${label.slice(1)} cancellation filed for ${soonest.cancelEffectiveDate}`,
+        desc: `${policy} cancels in ${days} days, and no other ${label} is on file yet.`,
+        pts: 15,
+        metrics,
+        recommendation: 'Confirm with the insurer before booking loads that deliver close to that date.',
+      });
+    } else {
+      flags.push({
+        sev: 'info',
+        title: `${label[0].toUpperCase()}${label.slice(1)} cancellation filed for ${soonest.cancelEffectiveDate}`,
+        desc: `${policy} has a cancellation on file ${days} days out, often just the end of the policy term.`,
+        pts: 0,
+        metrics,
+      });
+    }
+  }
+
+  // Suspension notices FMCSA served (Motus). FMCSA serves an involuntary one
+  // automatically when insurance or the BOC-3 filing is cancelled, and it's
+  // moot once a new filing arrives, so most carriers that ever switched
+  // insurers have one. Only a suspension still scheduled counts, and not
+  // when a cancellation flag above already says the same thing. Past notices
+  // stay listed in the report's Motus panel, without points.
+  const insuranceFlagged = flags.some((f) => /cancellation filed/i.test(f.title) && f.pts > 0);
+  const scheduled = (c.motus?.suspensions || []).find((n) => /involuntary/i.test(n.type) && n.effectiveDate && daysUntil(n.effectiveDate) >= 0);
+  if (scheduled && !insuranceFlagged) {
+    const days = daysUntil(scheduled.effectiveDate!);
+    flags.push({
+      sev: 'warning',
+      title: `FMCSA scheduled a suspension for ${scheduled.effectiveDate}`,
+      desc: `An involuntary suspension notice was served${scheduled.servedDate ? ` on ${scheduled.servedDate}` : ''}; the authority is suspended in ${days} day${days === 1 ? '' : 's'} unless the missing filing arrives.`,
+      pts: 15,
+      details: 'FMCSA serves this notice when required insurance or the BOC-3 process agent filing lapses. It is cancelled as soon as the company files again.',
+      metrics: [
+        { label: 'Notice', value: scheduled.type },
+        ...(scheduled.servedDate ? [{ label: 'Served', value: scheduled.servedDate }] : []),
+        { label: 'Suspension date', value: scheduled.effectiveDate! },
+        ...(scheduled.authority ? [{ label: 'Authority', value: scheduled.authority }] : []),
+        { label: 'Source', value: 'FMCSA Motus' },
+      ],
+      recommendation: 'Ask what filing lapsed and get proof it was filed again before booking loads that run past the suspension date.',
+    });
+  }
+
+  // Authority history. One suspension in two years is common (a gap while
+  // changing insurers) and is only noted. A company FMCSA has suspended
+  // repeatedly keeps running close to having no insurance or process agent on
+  // file. Suspensions FMCSA reversed as its own error aren't counted (see
+  // buildAuthorityEvents).
+  const lapses = hist?.checked && !hist.incomplete ? hist.lapses24m || 0 : 0;
+  if (lapses > 0) {
+    const recent = (hist?.events || []).filter((e) => e.kind === 'suspended' && e.bad && !e.corrected).slice(0, 4);
+    const metrics = [
+      ...recent.map((e) => ({ label: e.date, value: `${e.authority}: ${e.detail || e.text}` })),
+      { label: 'Source', value: 'FMCSA authority history (Motus)' },
+    ];
+    if (lapses >= 2) {
+      flags.push({
+        sev: 'warning',
+        title: `Authority suspended ${lapses} times in 24 months`,
+        desc: 'FMCSA took this company’s operating authority away more than once in the last two years because a required filing lapsed.',
+        pts: lapses >= 3 ? 15 : 10,
+        metrics,
+        details: 'FMCSA suspends authority when insurance or the process agent filing is cancelled and nothing replaces it. Once is usually a short gap while changing insurers. Repeated suspensions mean the company keeps letting required coverage run out.',
+        recommendation: 'Get a current certificate of insurance and confirm with the insurer that the policy is in force before each load.',
+      });
+    } else {
+      flags.push({
+        sev: 'info',
+        title: 'Authority was suspended once in the last 24 months',
+        desc: recent[0] ? `${recent[0].detail || recent[0].text} (${recent[0].date}).` : 'FMCSA suspended the authority once; see Authority history.',
+        pts: 0,
+        metrics,
+        details: 'A single suspension is common and usually a short gap while changing insurers.',
+      });
+    }
+  }
+
+  // An application FMCSA hasn't granted yet isn't an authority. It matters
+  // most for a carrier that offers to broker a load.
+  const pendingApps = (c.motus?.authorities || []).filter((a) => /^pending$/i.test(a.status));
+  const pendingBroker = pendingApps.find((a) => /^Broker/i.test(a.type));
+  const pendingCarrier = pendingApps.find((a) => /Motor Carrier/i.test(a.type));
+  if (pendingBroker && c.brokerAuthority !== 'Active') {
+    flags.push({
+      sev: 'info',
+      title: 'Broker authority applied for, not granted yet',
+      desc: 'FMCSA has a pending application for broker authority. Until it is granted, this company can’t legally arrange loads for other carriers.',
+      pts: 0,
+      metrics: [{ label: 'Application', value: pendingBroker.type }, { label: 'Status', value: 'Pending' }, { label: 'Source', value: 'FMCSA Motus' }],
+    });
+  }
+  if (pendingCarrier && c.commonAuthority !== 'Active' && c.contractAuthority !== 'Active') {
+    flags.push({
+      sev: 'info',
+      title: 'Carrier authority applied for, not granted yet',
+      desc: 'FMCSA has a pending application for carrier authority. Until it is granted, this company can’t legally haul for-hire loads across state lines.',
+      pts: 0,
+      metrics: [{ label: 'Application', value: pendingCarrier.type }, { label: 'Status', value: 'Pending' }, { label: 'Source', value: 'FMCSA Motus' }],
+    });
+  }
+
+  // Past policies the insurer cancelled. On its own this is only a note: a
+  // cancellation is also how a change of insurer is often filed. The
+  // suspension flag above is what says coverage actually lapsed.
+  const cancelled24m = c.insuranceFilings?.checked ? c.insuranceFilings.cancelled24m || 0 : 0;
+  if (cancelled24m >= 2) {
+    const rows = (c.insuranceFilings?.history || []).filter((f) => f.ended === 'cancelled').slice(0, 4);
+    flags.push({
+      sev: 'info',
+      title: `Insurers cancelled ${cancelled24m} policies in 24 months`,
+      desc: 'More than one policy ended by cancellation in the last two years. That can be a change of insurer; with a suspension in Authority history it means coverage ran out.',
+      pts: 0,
+      metrics: [
+        ...rows.map((f) => ({ label: f.endedDate, value: `${f.insurer || 'Insurer'}${f.policyNumber ? ` ${f.policyNumber}` : ''}` })),
+        { label: 'Source', value: 'FMCSA insurance history' },
+      ],
+    });
+  }
+
+  // Motus has newer values than FMCSA's other records. Authority or insurance
+  // getting worse there is a warning; changed contact details are noted.
+  const diffs = c.registryDiffs || [];
+  const motusDate = c.motus?.asOf ? ` (as of ${c.motus.asOf})` : '';
+  for (const d of diffs.filter((x) => (x.field === 'carrierAuthority' || x.field === 'brokerAuthority' || x.field === 'bipdOnFile') && x.concern)) {
+    flags.push({
+      sev: 'warning',
+      title: `FMCSA's newest record: ${d.label.toLowerCase()} ${d.motus}`,
+      desc: `Motus${motusDate} shows ${d.label.toLowerCase()} ${d.motus}; FMCSA's older record still shows ${d.fmcsa}.`,
+      pts: d.field === 'bipdOnFile' ? 15 : 25,
+      details: 'Since May 2026 FMCSA records changes in its new Motus system first; its other records catch up later.',
+      metrics: [{ label: 'Motus', value: d.motus }, { label: 'FMCSA older record', value: d.fmcsa }],
+      recommendation: 'Go by the newer Motus value until the records agree.',
+    });
+  }
+  const taken = (c.motusApplied || []).filter((x) => x !== 'MC number');
+  if (taken.length > 0) {
+    flags.push({
+      sev: 'info',
+      title: `${taken[0][0].toUpperCase()}${taken[0].slice(1)}${taken.length > 1 ? ` and ${taken.length - 1} more` : ''} read from FMCSA's Motus records`,
+      desc: `FMCSA's older record doesn't show ${taken.join(', ')} for this company yet; Motus${motusDate} does, so the report goes by Motus.`,
+      pts: 0,
+      details: 'Companies registered or changed since May 2026 are recorded in Motus first. Their older FMCSA record can read as "no authority" or "no insurance" until it catches up.',
+      metrics: taken.map((x) => ({ label: x[0].toUpperCase() + x.slice(1), value: 'From Motus' })),
+    });
+  }
+  const contact = diffs.filter((x) => x.field === 'name' || x.field === 'phone' || x.field === 'address');
+  if (contact.length > 0) {
+    flags.push({
+      sev: 'info',
+      title: `Newer ${contact.map((x) => x.label.toLowerCase()).join(', ')} in FMCSA's Motus records`,
+      desc: 'The company changed these with FMCSA recently; the older records haven\'t caught up yet.',
+      pts: 5,
+      details: 'A recent change is usually routine, like a move or a new phone. It is also how stolen carrier identities start, so make sure the number you call is the new one.',
+      metrics: contact.flatMap((x) => [{ label: `${x.label} (Motus)`, value: x.motus }, { label: `${x.label} (older)`, value: x.fmcsa }]),
+    });
+  }
+
+  // Reports from verified users (lib/reports). Counted by a fixed rule, the
+  // same for every company: each reporter once, 8 points (4 when their
+  // newest open report is over two years old), 0 once resolved, 30 at most.
+  // The flag states what's on record; the reports are the reporters' own
+  // statements, shown with the company's replies on the report page.
+  const ur = c.userReports;
+  if (ur && ur.published > 0) {
+    const from = `${ur.reporters} verified reporter${ur.reporters === 1 ? '' : 's'}`;
+    flags.push({
+      sev: ur.points > 0 ? 'warning' : 'info',
+      title: ur.open > 0
+        ? `${ur.open} open report${ur.open === 1 ? '' : 's'} from ${from}`
+        : `${ur.published} report${ur.published === 1 ? '' : 's'} on record, all marked resolved`,
+      desc: 'Reports filed on Haulock by verified carriers, brokers, drivers or shippers, each with documents. They are the reporters’ statements, not findings by Haulock.',
+      pts: ur.points,
+      details: 'How reports count: each reporter counts once per company, however many loads they report. 8 points each, 4 when their newest open report is more than two years old, 0 once they mark it resolved. 30 points at most.',
+      metrics: [
+        { label: 'Published reports', value: String(ur.published) },
+        { label: 'Open', value: String(ur.open) },
+        { label: 'Marked resolved', value: String(ur.resolved) },
+        { label: 'Reporters counted', value: `${ur.countedReporters}${ur.oldReporters ? ` (${ur.oldReporters} at the reduced rate)` : ''}` },
+      ],
+      recommendation: ur.open > 0 ? 'Read the reports and the company’s replies below, then ask the company about any that are still open.' : undefined,
+    });
   }
 
   if (!isPureBroker && c.safetyRating && /unsatisfactory|conditional/i.test(c.safetyRating)) {

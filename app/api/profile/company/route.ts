@@ -11,10 +11,14 @@ import { companyVerificationCodeTemplate, getEmailSiteUrl, sendEmail } from '@/l
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// "Your company" for paid accounts:
+// "Your company":
 //   GET                          → status, check counts (verified owners), monitoring state
 //   POST { action: 'verify' }    → match login email with the FMCSA filing email
+//   POST { action: 'send_code' | 'confirm_code' } → code to the FMCSA filing email
 //   POST { action: 'monitor', on } → daily FMCSA monitoring of the company (watchlist row, data.own)
+// Proving the company is yours is free: it's what lets a carrier or broker
+// file a verified report or reply to one. The check counts and monitoring
+// that come with it stay on the paid plans.
 
 async function context() {
   const supabase = getServerSupabase();
@@ -79,8 +83,9 @@ export async function POST(req: Request) {
   const c = await context();
   if ('error' in c) return c.error;
   const { user, svc, paid } = c;
-  if (!paid) return NextResponse.json({ error: 'Available on paid plans.', code: 'not_in_plan' }, { status: 402 });
   const b = await req.json().catch(() => null) as { action?: string; on?: boolean } | null;
+  // Verifying is free; monitoring is a paid feature.
+  if (!paid && b?.action === 'monitor') return NextResponse.json({ error: 'Available on paid plans.', code: 'not_in_plan' }, { status: 402 });
   const { mc, dot } = ownIds(user);
   if (!mc && !dot) return NextResponse.json({ error: 'Set your MC or DOT in Settings → Profile first.' }, { status: 400 });
 

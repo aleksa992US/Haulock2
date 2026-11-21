@@ -97,7 +97,7 @@ export default async function Image() {
           }}
         >
           <span>• For carriers and brokers</span>
-          <span>• 14 data sources</span>
+          <span>• 15 data sources</span>
           <span>• PDF tamper check</span>
         </div>
       </div>

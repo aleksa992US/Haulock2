@@ -1,3 +1,6 @@
+import type { InsuranceFiling, PastFiling } from './fmcsa-insurance';
+import type { MotusRecord, RegistryDiff } from './fmcsa-motus';
+import type { ReportScore } from './reports';
 import {
   selectNameMatch,
   scoreCompany,
@@ -49,10 +52,46 @@ export type CarrierReport = {
     activeSince?: string;        // start of the current unbroken authority period
     reactivatedDate?: string;    // set when that period began after a long gap
     dormantMonths?: number;      // length of the gap before reactivatedDate
+    // Every authority action on record, newest first, in plain words
+    // (lib/fmcsa-authority-history → buildAuthorityEvents).
+    events?: {
+      date: string; authority: string; kind: string; text: string; detail?: string;
+      bad?: boolean; corrected?: boolean; source: 'motus' | 'older';
+    }[];
+    lapses24m?: number;          // times FMCSA took the authority away, last 24 months
+    notices24m?: number;         // revocation notices that were dropped, last 24 months
+    // FMCSA's Motus history didn't answer: the timeline only has the older
+    // system's entries (up to May 2026) and no counts are given.
+    incomplete?: boolean;
     error?: string;
   };
   safetyRating?: string;
   safetyRatingDate?: string;
+  // FMCSA's latest review of the company (compliance review, safety audit…),
+  // from the MCS-150 census. Filled by the verify route.
+  lastReview?: { code: string; label: string; date: string };
+  // Insurance filings on record with FMCSA (lib/fmcsa-insurance): each active
+  // policy with the date it took effect and any cancellation the insurer has
+  // filed. FMCSA has no expiration date: a filing stays until cancelled.
+  insuranceFilings?: {
+    checked: boolean;
+    asOf?: string | null;
+    filings: InsuranceFiling[];
+    // Policies that ended, newest first, and how each ended.
+    history?: PastFiling[];
+    cancelled24m?: number;       // of those, cancelled by the insurer in the last 24 months
+    error?: string;
+  };
+  // FMCSA's Motus record (lib/fmcsa-motus) and where it disagrees with the
+  // older FMCSA records the rest of the report reads.
+  motus?: MotusRecord;
+  registryDiffs?: RegistryDiff[];
+  // What the report took from Motus because FMCSA's older record didn't
+  // have it yet: 'MC number', 'carrier authority', 'liability insurance'…
+  motusApplied?: string[];
+  // Published reports from verified users (lib/reports) at the time of this
+  // lookup, and the points they add by the fixed rule in scoreReports.
+  userReports?: ReportScore;
   // True only when FMCSA lists an out-of-service order AND does not allow
   // the carrier to operate. QCMobile keeps `oosDate` after an order is
   // lifted, so the date alone isn't enough. Undefined = the source didn't say.
@@ -441,7 +480,7 @@ function toNum(v: any): number | undefined {
   return isNaN(n) ? undefined : n;
 }
 
-function buildInsuranceSummary(bipd?: number, cargo?: number, cargoReq?: boolean): string | undefined {
+export function buildInsuranceSummary(bipd?: number, cargo?: number, cargoReq?: boolean): string | undefined {
   if (bipd == null && cargo == null) return undefined;
   const parts: string[] = [];
   if (bipd != null) parts.push(`${fmtMoneyK(bipd)} liability`);
@@ -715,7 +754,20 @@ export type LookupOpts = {
 // latency on the user's request. The snapshot helper diffs against the
 // last known state and only writes a row when something actually changed.
 export async function lookupCarrier(query: ParsedQuery, opts: LookupOpts = {}): Promise<CarrierReport> {
-  const carrier = await lookupCarrierImpl(query, opts);
+  let carrier: CarrierReport;
+  try {
+    carrier = await lookupCarrierImpl(query, opts);
+  } catch (err) {
+    // MC numbers issued since FMCSA moved to Motus (May 2026) aren't in its
+    // older lookup API at all, but the company is there under its USDOT
+    // number. Find the USDOT in the Motus registry and look that up instead.
+    if (query.kind !== 'mc' || !process.env.FMCSA_WEB_KEY) throw err;
+    const { dotForMc } = await import('./fmcsa-census');
+    const dot = await dotForMc(query.value).catch(() => null);
+    if (!dot) throw err;
+    carrier = await lookupCarrierImpl({ kind: 'dot', value: dot }, opts);
+    if (!carrier.mc) carrier.mc = String(query.value).replace(/\D/g, '').replace(/^0+/, '');
+  }
   // Fire-and-forget — never block the user lookup on a snapshot write.
   // Only live FMCSA data is a new observation. Re-recording a cached or
   // archived copy would stamp old data with today's date, and Socrata's

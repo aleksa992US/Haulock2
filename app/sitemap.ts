@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { BLOG_POSTS } from '@/lib/blog-posts';
+import { statePath, US_STATES } from '@/lib/directory-links';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://haulock.com';
 
@@ -24,5 +25,19 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
-  return [...staticEntries, ...blogEntries];
+  // The public directory: its home, the two state indexes and every state
+  // list. Company pages have their own sitemap at /company/sitemap.xml.
+  const directoryEntries: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/directory`, lastModified: now, changeFrequency: 'weekly', priority: 0.9 },
+    { url: `${SITE_URL}/directory/brokers`, lastModified: now, changeFrequency: 'weekly', priority: 0.8 },
+    { url: `${SITE_URL}/directory/carriers`, lastModified: now, changeFrequency: 'weekly', priority: 0.8 },
+    ...(['brokers', 'carriers'] as const).flatMap((kind) => US_STATES.map((s) => ({
+      url: `${SITE_URL}${statePath(kind, s.code)}`,
+      lastModified: now,
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
+    }))),
+  ];
+
+  return [...staticEntries, ...blogEntries, ...directoryEntries];
 }
