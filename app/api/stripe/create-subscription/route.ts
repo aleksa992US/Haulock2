@@ -3,6 +3,7 @@ import { isLiveSubscription, ownedCustomerId } from '@/lib/billing';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe, priceIdFor, HAULOCK_TAG, type Billing, type PaidPlan } from '@/lib/stripe';
+import { CODE_BILLING } from '@/lib/promo';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing or invalid plan/billing' }, { status: 400 });
   }
   const promoCodeRaw = typeof body.promoCode === 'string' ? body.promoCode.trim() : '';
+  // Sale codes are limited to one billing period (lib/promo.ts): BLACKFRIDAY40
+  // takes 40% off the first 3 monthly invoices, which on an annual plan would
+  // be the whole year; CYBER50 is 50% off one annual invoice.
+  const codeBilling = promoCodeRaw ? CODE_BILLING.get(promoCodeRaw.toUpperCase()) : undefined;
+  if (codeBilling && body.billing !== codeBilling) {
+    return NextResponse.json({ error: `Promo code "${promoCodeRaw}" applies to ${codeBilling} billing only.`, code: `${codeBilling}_only` }, { status: 400 });
+  }
 
   // Resolve the promo code → both the promotion_code id and its coupon id.
   // We attach via the promotion_code below so Stripe increments

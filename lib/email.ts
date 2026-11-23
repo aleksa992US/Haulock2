@@ -99,7 +99,7 @@ export type SendArgs = {
 
 // weekly_digest / fraud_trends let those jobs skip people who already got
 // this week's issue (a re-run or retry used to send it again).
-export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'other';
+export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'sale_bf' | 'sale_cm' | 'sale_cm_last' | 'other';
 
 export type BatchEmail = { to: string; subject: string; html: string; kind?: EmailKind };
 
@@ -1119,6 +1119,59 @@ ${divider()}
     subject: angle.subject,
     html: baseLayout({ preview: angle.preview, body, unsubEmail: args.recipientEmail }),
   };
+}
+
+// Black Friday / Cyber Monday emails (lib/promo.ts SALE_EMAILS), sent by
+// /api/cron/sale-emails to opted-in Free users. The code applies at checkout
+// by itself, so the button goes straight there.
+export function saleEmailTemplate(args: {
+  stage: 'bf-launch' | 'cm-launch' | 'cm-last';
+  firstName?: string;
+  recipientEmail: string;
+  siteUrl: string;
+}): { subject: string; html: string } {
+  const site = args.siteUrl.replace(/\/$/, '');
+  const hi = args.firstName ? `${escapeHtml(args.firstName)}, ` : '';
+  const mono = "font-family:'SF Mono',Menlo,Consolas,monospace;";
+  const pill = (text: string) => `<div style="display:inline-block;padding:4px 10px;background:#FF6B35;color:#ffffff;border-radius:999px;font-size:11px;${mono}letter-spacing:0.14em;text-transform:uppercase;margin-bottom:16px;">${text}</div>`;
+  const offer = (big: string, small: string) => `
+<div style="background:#0B1E3F;border-radius:14px;padding:22px 24px;margin:6px 0 24px 0;color:#ffffff;">
+  <div style="font-size:11px;${mono}letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.6);margin-bottom:6px;">Carrier plan</div>
+  <div style="font-size:26px;font-weight:700;color:#ffffff;line-height:1.2;">${big}</div>
+  <div style="font-size:14px;color:rgba(255,255,255,0.8);margin-top:6px;">${small}</div>
+</div>`;
+  const s = {
+    'bf-launch': {
+      subject: 'Black Friday: 40% off Haulock for 3 months',
+      preview: 'Carrier is $29.40/mo instead of $49 until Sunday. No code needed.',
+      body: `${pill('Black Friday')}
+${h1(`${hi}peak season is ${italicAccent('peak fraud')}.`)}
+${p('Double-brokers and fake carriers work hardest in the busiest freight weeks of the year. One bad load costs more than a year of Haulock.')}
+${p('This weekend only: <strong>40% off your first 3 months</strong> of any paid plan. Unlimited broker and carrier checks, PDF tamper checks and rate con scans.')}
+${offer('$29.40/mo <span style="font-size:16px;font-weight:400;color:rgba(255,255,255,0.55);text-decoration:line-through;">$49</span>', 'for your first 3 months &middot; no code needed &middot; ends Sunday at midnight ET')}
+${button(`${site}/checkout/carrier`, 'Claim 40% off →')}`,
+    },
+    'cm-launch': {
+      subject: 'Cyber Monday: a year of Haulock for the price of 6 months',
+      preview: 'Carrier annual is $245 instead of $490. Today only.',
+      body: `${pill('Cyber Monday')}
+${h1(`${hi}a full year for ${italicAccent('half price')}.`)}
+${p('Today only: <strong>50% off any annual plan.</strong> That&rsquo;s twelve months of unlimited broker and carrier checks for the price of six.')}
+${p('A single unpaid load is $1,500 or more. A year of Haulock Carrier is now $245.')}
+${offer('$245/yr <span style="font-size:16px;font-weight:400;color:rgba(255,255,255,0.55);text-decoration:line-through;">$490</span>', 'your first year &middot; no code needed &middot; ends tonight at midnight ET')}
+${button(`${site}/checkout/carrier?billing=annual`, 'Get the year for $245 →')}`,
+    },
+    'cm-last': {
+      subject: 'Last hours: $245 for a whole year of Haulock',
+      preview: 'Cyber Monday ends at midnight ET.',
+      body: `${pill('Ends at midnight')}
+${h1(`${hi}last few hours of ${italicAccent('Cyber Monday')}.`)}
+${p('50% off any annual plan ends at midnight ET tonight. After that, Carrier annual goes back to $490.')}
+${offer('$245/yr <span style="font-size:16px;font-weight:400;color:rgba(255,255,255,0.55);text-decoration:line-through;">$490</span>', 'your first year &middot; no code needed')}
+${button(`${site}/checkout/carrier?billing=annual`, 'Get the year for $245 →')}`,
+    },
+  }[args.stage];
+  return { subject: s.subject, html: baseLayout({ preview: s.preview, body: s.body, unsubEmail: args.recipientEmail }) };
 }
 
 // "What's new" product update: three features with a screenshot (public/email/
