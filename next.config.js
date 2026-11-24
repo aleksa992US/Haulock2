@@ -81,6 +81,13 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
+  // One host. www served the site too, but a login is per host, so someone
+  // signed in on haulock.com was signed out on www (checkout → 401).
+  async redirects() {
+    return [
+      { source: '/:path*', has: [{ type: 'host', value: 'www.haulock.com' }], destination: 'https://haulock.com/:path*', permanent: true },
+    ];
+  },
   async headers() {
     return [
       {

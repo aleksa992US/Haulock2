@@ -56,6 +56,12 @@ export default function CheckoutPage() {
         body: JSON.stringify({ plan: plan!.id, billing, ...(code ? { promoCode: code } : {}) }),
       });
       const j = await r.json().catch(() => ({} as any));
+      // Signed out (or the session expired): log in, then come back here.
+      if (r.status === 401) {
+        try { sessionStorage.setItem('haulock:postLoginRedirect', window.location.pathname + window.location.search); } catch { /* ignore */ }
+        window.location.href = '/login';
+        return;
+      }
       if (!r.ok) throw new Error(j?.error || `Checkout init failed (${r.status})`);
       setPromoNote(null);
       if (j.totals) setTotals(j.totals);
