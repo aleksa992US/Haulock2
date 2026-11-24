@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { enforcedPlanId } from '@/lib/plans';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { getEmailSiteUrl, isResendConfigured, recentlySentTo, saleEmailTemplate, sendEmailBatch } from '@/lib/email';
+import { getEmailSiteUrl, isResendConfigured, recentlySentTo, saleEarlyEmailTemplate, saleEmailTemplate, sendEmailBatch } from '@/lib/email';
 import { dueSaleEmail, SALE_EMAILS } from '@/lib/promo';
 
 export const runtime = 'nodejs';
@@ -18,7 +18,8 @@ export const maxDuration = 300;
 //   - and haven't had this email yet (email_log kind), so retries and the
 //     following hours never send it twice.
 // ?dryRun=1 counts recipients without sending. An admin can force a stage
-// with ?stage=bf-launch (still only to the same audience, once).
+// with ?stage=bf-launch (still only to the same audience, once), or send
+// one test copy with ?stage=...&testTo=address.
 
 export async function GET(req: Request) { return run(req); }
 export async function POST(req: Request) { return run(req); }
@@ -34,6 +35,20 @@ async function run(req: Request) {
   if (!due) return NextResponse.json({ ok: true, skipped: 'no sale email due' });
 
   if (!isResendConfigured()) return NextResponse.json({ skipped: 'Resend not configured' });
+
+  // ?testTo=you@example.com (with ?stage=) sends one copy, marked [TEST], to
+  // that address only. Logged as 'other', so the real send still reaches it.
+  const testTo = (url.searchParams.get('testTo') || '').trim();
+  if (testTo) {
+    if (!forced) return NextResponse.json({ error: 'testTo needs ?stage=' }, { status: 400 });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testTo)) return NextResponse.json({ error: 'testTo is not an email address' }, { status: 400 });
+    const tpl = due.stage === 'early-launch'
+      ? saleEarlyEmailTemplate({ firstName: '', recipientEmail: testTo, siteUrl: getEmailSiteUrl() })
+      : saleEmailTemplate({ stage: due.stage, firstName: '', recipientEmail: testTo, siteUrl: getEmailSiteUrl() });
+    const res = await sendEmailBatch([{ to: testTo, subject: `[TEST] ${tpl.subject}`, html: tpl.html, kind: 'other' }]);
+    return NextResponse.json({ ok: true, test: true, stage: due.stage, to: testTo, ...res });
+  }
+
   const svc = getServiceSupabase();
   if (!svc) return NextResponse.json({ error: 'Service role not configured' }, { status: 500 });
 
@@ -66,7 +81,9 @@ async function run(req: Request) {
     if (meta.notify_fraud_trends === false) { skip('opted-out'); continue; }
     if (already.has(email)) { skip('already-sent'); continue; }
     const firstName = String(meta.full_name || meta.name || '').trim().split(/\s+/)[0] || '';
-    const tpl = saleEmailTemplate({ stage: due.stage, firstName, recipientEmail: u.email, siteUrl });
+    const tpl = due.stage === 'early-launch'
+      ? saleEarlyEmailTemplate({ firstName, recipientEmail: u.email, siteUrl })
+      : saleEmailTemplate({ stage: due.stage, firstName, recipientEmail: u.email, siteUrl });
     items.push({ to: u.email, subject: tpl.subject, html: tpl.html, kind: due.kind });
   }
 
