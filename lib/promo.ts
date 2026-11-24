@@ -70,6 +70,11 @@ export function liveCampaigns(now: number = Date.now()): Campaign[] {
   return CAMPAIGNS.filter((c) => now >= Date.parse(c.start) && now < Date.parse(c.end));
 }
 
+// True while any sale is on. The everyday NEW20 offers (checkout exit popup,
+// abandoned-cart and free-user nudge emails) pause then, so they don't
+// undercut the sale; they come back by themselves when it ends.
+export const saleIsLive = (now: number = Date.now()) => liveCampaigns(now).length > 0;
+
 // The live sale for one billing period, if any.
 export function campaignFor(billing: 'monthly' | 'annual', now: number = Date.now()): Campaign | null {
   return liveCampaigns(now).find((c) => c.billing === billing) || null;

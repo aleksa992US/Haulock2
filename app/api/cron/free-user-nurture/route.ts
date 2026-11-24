@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { saleIsLive } from '@/lib/promo';
 import { enforcedPlanId } from '@/lib/plans';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -32,6 +33,8 @@ export async function POST(req: Request) { return run(req); }
 async function run(req: Request) {
   const denied = await authorizeCronOrAdmin(req);
   if (denied) return denied;
+  // These emails offer NEW20; paused while a sale is on (lib/promo.ts).
+  if (saleIsLive()) return NextResponse.json({ ok: true, skipped: 'paused during sale' });
 
   if (!isResendConfigured()) {
     return NextResponse.json({ skipped: 'Resend not configured' }, { status: 200 });

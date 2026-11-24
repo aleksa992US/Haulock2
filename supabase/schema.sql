@@ -302,9 +302,19 @@ create table if not exists public.email_log (
   subject text,
   kind text,
   resend_id text,
-  sent_at timestamptz not null default now()
+  sent_at timestamptz not null default now(),
+  -- filled by the Resend webhook (/api/resend/events), migrations/20261124_email_events.sql
+  delivered_at timestamptz,
+  opened_at timestamptz,
+  clicked_at timestamptz,
+  bounced_at timestamptz,
+  complained_at timestamptz,
+  open_count integer not null default 0,
+  click_count integer not null default 0
 );
 create index if not exists email_log_to_email_idx on public.email_log(lower(to_email));
+create index if not exists email_log_resend_id_idx on public.email_log(resend_id);
+create index if not exists email_log_kind_sent_at_idx on public.email_log(kind, sent_at desc);
 create index if not exists email_log_sent_at_idx on public.email_log(sent_at desc);
 alter table public.email_log enable row level security;
 

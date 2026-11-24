@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import {
+  RefreshCw,
   Shield, Search, AlertTriangle, CheckCircle2, XCircle, TrendingUp, FileText, Bell,
   Users, Settings, LogOut, ChevronRight, ArrowRight, Lock, Zap, Database, Eye, EyeOff, Flag,
   Clock, MapPin, Phone, Mail, Building2, Download, Share2, Plus, BarChart3, Menu,
@@ -7042,6 +7043,205 @@ function SupabaseStorageCard() {
   );
 }
 
+// ---------- Admin: Email stats (/api/admin/email-stats) ----------
+const EMAIL_KIND_LABELS: Record<string, string> = {
+  welcome: 'Welcome', high_risk_alert: 'High-risk alert', report_share: 'Shared report', newsletter: 'Newsletter',
+  weekly_digest: 'Weekly digest', fraud_trends: 'Fraud trends', team_invite: 'Team invite',
+  support_received: 'Support: received', support_reply: 'Support: reply', support_working: 'Support: working', support_solved: 'Support: solved',
+  abandoned_1h: 'Cart reminder (1h)', abandoned_7d: 'Cart reminder (7d)', nurture: 'Free-user nudge', inbound_scan: 'Emailed rate con scan',
+  sale_early: 'Sale: both deals (early)', sale_bf: 'Sale: Black Friday', sale_cm: 'Sale: Cyber Monday', sale_cm_last: 'Sale: last hours',
+  other: 'Other / tests',
+};
+const SALE_STAGE_LABELS: Record<string, string> = {
+  'early-launch': 'Both deals + new checks', 'bf-launch': 'Black Friday launch', 'cm-launch': 'Cyber Monday launch', 'cm-last': 'Cyber Monday last hours',
+};
+
+function EmailStatsPanel() {
+  const [data, setData] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [action, setAction] = useState<Record<string, string>>({});
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch('/api/admin/email-stats');
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `Failed (${res.status})`);
+      setData(json);
+    } catch (e: any) { setError(e?.message || 'Failed to load'); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const tracking = Boolean(data?.tracking?.receivingEvents);
+  const pct = (n: number, d: number) => (!tracking || !d ? '—' : `${Math.round((n / d) * 1000) / 10}%`);
+  const base = (a: any) => a.delivered || a.sent;
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET' : 'Manual');
+
+  const saleAction = async (stage: string, kind: 'count' | 'test') => {
+    const key = `${stage}:${kind}`;
+    setAction((m) => ({ ...m, [key]: '…' }));
+    try {
+      const qs = kind === 'count' ? 'dryRun=1' : `testTo=${encodeURIComponent(data?.me || '')}`;
+      const res = await fetch(`/api/cron/sale-emails?stage=${stage}&${qs}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `Failed (${res.status})`);
+      const msg = kind === 'count'
+        ? json.skipped ? String(json.skipped) : `${json.recipients} would get it${json.skips?.['already-sent'] ? ` · ${json.skips['already-sent']} already have it` : ''}`
+        : json.sent ? `Test sent to ${data?.me}` : `Not sent: ${(json.errors || []).join(', ') || json.skipped || 'unknown'}`;
+      setAction((m) => ({ ...m, [key]: msg }));
+    } catch (e: any) {
+      setAction((m) => ({ ...m, [key]: e?.message || 'Failed' }));
+    }
+  };
+
+  if (error) return <div className="p-4 rounded-xl bg-[#DC2626]/10 text-[#DC2626] text-sm">{error}</div>;
+  if (!data) return <div className="p-6 text-sm text-[#0B1E3F]/60">Loading email stats…</div>;
+
+  const maxDay = Math.max(1, ...data.daily.map((d: any) => d.sent));
+  const l30 = data.last30;
+  const tile = (label: string, value: React.ReactNode, sub?: string, tone?: string) => (
+    <div className="p-4 bg-white border border-[#0B1E3F]/10 rounded-xl">
+      <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/55">{label}</div>
+      <div className={`text-2xl font-semibold mt-1 ${tone || ''}`}>{value}</div>
+      {sub && <div className="text-[10px] mono mt-1 text-[#0B1E3F]/50">{sub}</div>}
+    </div>
+  );
+  const statusChip = (st: string) => {
+    const c: Record<string, string> = { sent: 'bg-[#16A34A]/10 text-[#16A34A]', scheduled: 'bg-[#0B1E3F]/5 text-[#0B1E3F]/70', sending: 'bg-[#FF6B35]/15 text-[#E8551F]', missed: 'bg-[#DC2626]/10 text-[#DC2626]', manual: 'bg-[#0B1E3F]/5 text-[#0B1E3F]/60' };
+    return <span className={`px-2 py-0.5 rounded-full text-[10px] mono uppercase tracking-wider ${c[st] || c.manual}`}>{st}</span>;
+  };
+
+  return (
+    <div className="space-y-8">
+      {!tracking && (
+        <div className="p-4 rounded-xl bg-[#FF6B35]/10 border border-[#FF6B35]/30 text-sm text-[#0B1E3F]">
+          <div className="font-semibold mb-1">Opens, clicks and bounces aren&rsquo;t connected yet</div>
+          <div className="text-[#0B1E3F]/75">
+            {!data.tracking.migrated ? 'Run supabase/migrations/20261124_email_events.sql in Supabase, then: ' : ''}
+            in Resend, add a webhook to <span className="mono">https://haulock.com/api/resend/events</span> with the delivered, opened, clicked, bounced and complained events, put its signing secret in Vercel as <span className="mono">RESEND_EVENTS_WEBHOOK_SECRET</span>, and turn on open and click tracking for the sending domain. Send counts below work already.
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-[#0B1E3F]/60">Last {data.windowDays} days{data.truncated ? ' (first 100,000 emails)' : ''}</div>
+        <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#0B1E3F]/15 text-xs hover:bg-[#0B1E3F]/5 disabled:opacity-50">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {tile('Sent 24h', data.totals.last24h)}
+        {tile('Sent 7 days', data.totals.last7d)}
+        {tile('Sent 30 days', data.totals.last30d)}
+        {tile('Delivered', pct(l30.delivered, l30.sent), '30 days')}
+        {tile('Opened', pct(l30.opened, base(l30)), '30 days, of delivered')}
+        {tile('Clicked', pct(l30.clicked, base(l30)), '30 days, of delivered')}
+        {tile('Bounced / spam', tracking ? `${l30.bounced} / ${l30.complained}` : '—', '30 days', l30.complained > 0 ? 'text-[#DC2626]' : '')}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow p-5">
+        <div className="flex items-baseline justify-between mb-4">
+          <div className="font-semibold">Black Friday / Cyber Monday emails</div>
+          <div className="text-xs text-[#0B1E3F]/55">Free users with a confirmed email who get marketing email · once each</div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50">
+              <th className="py-2 pr-3">Email</th><th className="py-2 pr-3">When</th><th className="py-2 pr-3">Status</th>
+              <th className="py-2 pr-3 text-right">Sent</th><th className="py-2 pr-3 text-right">Opened</th><th className="py-2 pr-3 text-right">Clicked</th><th className="py-2 pr-3 text-right">Bounced</th><th className="py-2"></th>
+            </tr></thead>
+            <tbody>
+              {data.sale.map((e: any) => (
+                <tr key={e.stage} className="border-t border-[#0B1E3F]/5 align-top">
+                  <td className="py-3 pr-3"><div className="font-medium">{SALE_STAGE_LABELS[e.stage] || e.stage}</div><div className="text-xs text-[#0B1E3F]/50">{e.campaign}</div></td>
+                  <td className="py-3 pr-3 whitespace-nowrap">{when(e.at)}</td>
+                  <td className="py-3 pr-3">{statusChip(e.status)}</td>
+                  <td className="py-3 pr-3 text-right tabular-nums">{e.sent || '—'}</td>
+                  <td className="py-3 pr-3 text-right tabular-nums">{e.sent ? pct(e.opened, e.delivered || e.sent) : '—'}</td>
+                  <td className="py-3 pr-3 text-right tabular-nums">{e.sent ? pct(e.clicked, e.delivered || e.sent) : '—'}</td>
+                  <td className="py-3 pr-3 text-right tabular-nums">{e.sent && tracking ? e.bounced : '—'}</td>
+                  <td className="py-3 text-right whitespace-nowrap">
+                    {e.status !== 'sent' && (
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex gap-1.5">
+                          <button onClick={() => saleAction(e.stage, 'count')} className="px-2.5 py-1 rounded-full border border-[#0B1E3F]/15 text-xs hover:bg-[#0B1E3F]/5">Count recipients</button>
+                          <button onClick={() => saleAction(e.stage, 'test')} className="px-2.5 py-1 rounded-full border border-[#0B1E3F]/15 text-xs hover:bg-[#0B1E3F]/5">Send test to me</button>
+                        </div>
+                        {(action[`${e.stage}:count`] || action[`${e.stage}:test`]) && (
+                          <div className="text-[11px] text-[#0B1E3F]/60 max-w-[260px] whitespace-normal text-right">{[action[`${e.stage}:count`], action[`${e.stage}:test`]].filter(Boolean).join(' · ')}</div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-5 pt-4 border-t border-[#0B1E3F]/5">
+          <div className="text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50 mb-2">Promo code redemptions (Stripe)</div>
+          {data.codesError ? <div className="text-xs text-[#DC2626]">{data.codesError}</div> : (
+            <div className="flex flex-wrap gap-3">
+              {data.codes.map((c: any) => (
+                <div key={c.code} className="px-3 py-2 rounded-xl bg-[#0B1E3F]/[0.03] border border-[#0B1E3F]/10">
+                  <div className="mono text-xs font-semibold">{c.code} {!c.active && <span className="text-[#0B1E3F]/40 font-normal">· inactive</span>}</div>
+                  <div className="text-xl font-semibold tabular-nums">{c.redeemed}</div>
+                  <div className="text-[10px] text-[#0B1E3F]/50">{c.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow p-5">
+        <div className="font-semibold mb-4">Emails sent per day <span className="text-xs font-normal text-[#0B1E3F]/50">· last 30 days</span></div>
+        <div className="flex items-end gap-1 h-32">
+          {data.daily.map((d: any) => (
+            <div key={d.day} className="flex-1 flex flex-col items-center justify-end h-full group relative" title={`${d.day}: ${d.sent}`}>
+              <div className="w-full rounded-t bg-[#0B1E3F] group-hover:bg-[#FF6B35] transition" style={{ height: `${Math.max(d.sent ? 3 : 0, (d.sent / maxDay) * 100)}%` }} />
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between text-[10px] mono text-[#0B1E3F]/45 mt-2">
+          <span>{data.daily[0]?.day}</span><span>peak {maxDay}/day</span><span>{data.daily[data.daily.length - 1]?.day}</span>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#0B1E3F]/10 card-shadow overflow-hidden">
+        <div className="px-5 pt-5 pb-3 font-semibold">By email type <span className="text-xs font-normal text-[#0B1E3F]/50">· last {data.windowDays} days</span></div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-[10px] mono uppercase tracking-wider text-[#0B1E3F]/50 border-b border-[#0B1E3F]/5">
+              <th className="px-5 py-2">Email</th><th className="px-3 py-2 text-right">Sent</th><th className="px-3 py-2 text-right">7 days</th><th className="px-3 py-2 text-right">People</th>
+              <th className="px-3 py-2 text-right">Delivered</th><th className="px-3 py-2 text-right">Opened</th><th className="px-3 py-2 text-right">Clicked</th><th className="px-3 py-2 text-right">Bounced</th><th className="px-3 py-2 text-right">Spam</th><th className="px-5 py-2 text-right">Last sent</th>
+            </tr></thead>
+            <tbody>
+              {data.kinds.length === 0 && <tr><td colSpan={10} className="px-5 py-6 text-center text-[#0B1E3F]/50">No emails logged yet.</td></tr>}
+              {data.kinds.map((k: any) => (
+                <tr key={k.kind} className="border-b border-[#0B1E3F]/5 last:border-0">
+                  <td className="px-5 py-2.5"><div className="font-medium">{EMAIL_KIND_LABELS[k.kind] || k.kind}</div><div className="text-[10px] mono text-[#0B1E3F]/40">{k.kind}</div></td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{k.sent.toLocaleString()}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{k.last7d.toLocaleString()}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{k.recipients.toLocaleString()}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{pct(k.delivered, k.sent)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{pct(k.opened, base(k))}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{pct(k.clicked, base(k))}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{tracking ? k.bounced : '—'}</td>
+                  <td className={`px-3 py-2.5 text-right tabular-nums ${k.complained ? 'text-[#DC2626] font-semibold' : ''}`}>{tracking ? k.complained : '—'}</td>
+                  <td className="px-5 py-2.5 text-right whitespace-nowrap text-[#0B1E3F]/60">{when(k.lastSent)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NewsletterAdminPanel() {
   type NlContact = {
     id: string;
@@ -8493,7 +8693,7 @@ function SalesCampaigns() {
   );
 }
 
-type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsletter' | 'support' | 'reports';
+type AdminTab = 'overview' | 'users' | 'affiliates' | 'fmcsa' | 'data' | 'newsletter' | 'emails' | 'support' | 'reports';
 
 type PlanFilter = 'all' | 'free' | 'carrier' | 'team' | 'fleet';
 type RoleFilter = 'all' | 'admin' | 'affiliate' | 'regular';
@@ -8857,6 +9057,7 @@ function AdminPage({ navigate }: any) {
     { id: 'fmcsa',      label: 'FMCSA' },
     { id: 'data',       label: 'Data & storage' },
     { id: 'newsletter', label: 'Newsletter' },
+    { id: 'emails',     label: 'Email stats' },
     { id: 'support',    label: 'Support tickets' },
     ...(REPORTS_ON ? [{ id: 'reports' as AdminTab, label: 'Reports' }] : []),
   ];
@@ -8956,6 +9157,9 @@ function AdminPage({ navigate }: any) {
 
       {/* NEWSLETTER: Resend contacts + email_log per-contact send count */}
       {tab === 'newsletter' && <NewsletterAdminPanel />}
+
+      {/* EMAIL STATS: sends per email type, Resend delivery/opens/clicks, sale emails + code redemptions */}
+      {tab === 'emails' && <EmailStatsPanel />}
 
       {/* SUPPORT: every user's support tickets, replies, status changes */}
       {tab === 'support' && <SupportAdminPanel />}

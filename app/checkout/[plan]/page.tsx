@@ -6,7 +6,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { PLANS, type PlanId } from '@/lib/plans';
-import { campaignFor } from '@/lib/promo';
+import { campaignFor, saleIsLive } from '@/lib/promo';
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 let stripePromise: Promise<Stripe | null> | null = null;
@@ -143,8 +143,9 @@ export default function CheckoutPage() {
   //   1. Desktop: mouse leaves the viewport via the top edge.
   //   2. Mobile/desktop: pagehide / visibility change (back button, tab switch).
   //   3. Idle fallback: 30s on the page with no interaction.
+  // Paused while a sale is on (lib/promo.ts saleIsLive).
   useEffect(() => {
-    if (!clientSecret || appliedCode) return;
+    if (!clientSecret || appliedCode || saleIsLive()) return;
     try {
       if (sessionStorage.getItem(EXIT_OFFER_KEY) === '1') return;
     } catch { /* ignore */ }
