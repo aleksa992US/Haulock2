@@ -17,7 +17,7 @@ import { timeAgo } from '@/lib/timeago';
 import { PLANS, getPlan, formatLimit, type PlanId } from '@/lib/plans';
 import { useCachedFetch, invalidateCache } from '@/lib/data-cache';
 import { COI_CHECK_ON, DRIVER_REPORTS_ON, REPORTS_ON, SCAN_EMAIL_ON } from '@/lib/features';
-import { activeCampaign, checkoutPath, salePrice, type Campaign } from '@/lib/promo';
+import { campaignFor, checkoutPath, liveCampaigns, salePrice, type Campaign } from '@/lib/promo';
 import { BLOG_POSTS, type BlogPost } from '@/lib/blog-posts';
 import { track, identify, trackPurchase } from '@/lib/analytics';
 import { recommendationFor, carrierAuthorityLabel } from '@/lib/recommendation';
@@ -2736,9 +2736,10 @@ function FeatureCard({ icon: Icon, iconBg, title, desc, stat, statLabel, isNew }
 }
 
 function PriceCard({ tier, price, annual, desc, features, popular, cta, onClick, planId }: any) {
-  const sale = activeCampaign();
-  const salePriceText = sale && sale.billing === 'monthly' && planId ? salePrice(planId, sale) : null;
-  const saleTag = sale && planId && salePrice(planId, sale) ? sale : null;
+  const monthlySale = campaignFor('monthly');
+  const annualSale = campaignFor('annual');
+  const salePriceText = monthlySale && planId ? salePrice(planId, monthlySale) : null;
+  const saleTags = planId ? liveCampaigns().filter((c) => salePrice(planId, c)) : [];
   if (popular) {
     return (
       <div className="relative p-7 rounded-2xl border bg-white text-[#0B1E3F] border-[#FF6B35] lg:scale-105 card-shadow-lg">
@@ -2749,8 +2750,8 @@ function PriceCard({ tier, price, annual, desc, features, popular, cta, onClick,
           {salePriceText && <div className="text-lg text-[#0B1E3F]/40 line-through">{price}</div>}
           <div className="text-[#0B1E3F]/60">/mo</div>
         </div>
-        {saleTag && <SalePriceTag planId={planId} c={saleTag} />}
-        {annual && annual !== '$0' && saleTag?.billing !== 'annual' && <div className="text-xs mono text-[#16A34A] mb-2">or {annual}/yr</div>}
+        {saleTags.map((c) => <SalePriceTag key={c.id} planId={planId} c={c} />)}
+        {annual && annual !== '$0' && !(annualSale && saleTags.length) && <div className="text-xs mono text-[#16A34A] mb-2">or {annual}/yr</div>}
         {(!annual || annual === '$0') && <div className="mb-2" />}
         <div className="text-sm mb-6 text-[#0B1E3F]/70">{desc}</div>
         <button onClick={onClick} className="w-full py-3 rounded-full font-medium mb-6 transition bg-[#0B1E3F] text-white hover:bg-[#0B1E3F]/90">{cta}</button>
@@ -2772,8 +2773,8 @@ function PriceCard({ tier, price, annual, desc, features, popular, cta, onClick,
         {salePriceText && <div className="text-lg text-white/40 line-through">{price}</div>}
         <div className="text-white/70">/mo</div>
       </div>
-      {saleTag && <SalePriceTag planId={planId} c={saleTag} dark />}
-      {annual && annual !== '$0' && saleTag?.billing !== 'annual' && <div className="text-xs mono text-[#FF6B35] mb-2">or {annual}/yr</div>}
+      {saleTags.map((c) => <SalePriceTag key={c.id} planId={planId} c={c} dark />)}
+      {annual && annual !== '$0' && !(annualSale && saleTags.length) && <div className="text-xs mono text-[#FF6B35] mb-2">or {annual}/yr</div>}
       {(!annual || annual === '$0') && <div className="mb-2" />}
       <div className="text-sm mb-6 text-white/80">{desc}</div>
       <button onClick={onClick} className="w-full py-3 rounded-full font-medium mb-6 transition bg-white text-[#0B1E3F] hover:bg-white/90">{cta}</button>
@@ -2824,23 +2825,29 @@ function FaqItem({ q, a }: any) {
 // The live sale (lib/promo.ts), as a bar above the nav. Signed-in users go
 // straight to checkout (the code applies there by itself); visitors sign up.
 function SaleBanner({ navigate, user }: { navigate: any; user?: any }) {
-  const c = activeCampaign();
-  if (!c) return null;
-  const carrier = salePrice('carrier', c);
-  const list = c.billing === 'annual' ? `${PLANS.carrier.priceAnnual}/yr` : `${PLANS.carrier.price}/mo`;
-  const claim = () => {
+  const sales = liveCampaigns();
+  if (!sales.length) return null;
+  const claim = (c: Campaign) => {
     if (user) { window.location.href = checkoutPath('carrier', c); return; }
     navigate('signup');
   };
   return (
     <div className="bg-[#0B1E3F] text-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-center gap-x-3 gap-y-1 flex-wrap text-sm">
-        <span className="px-2 py-0.5 rounded-full bg-[#FF6B35] text-white text-[10px] mono uppercase tracking-wider font-bold">{c.name}</span>
-        <span><strong className="font-semibold">{c.headline}</strong><span className="hidden sm:inline text-white/70"> · Carrier {carrier}{c.billing === 'annual' ? '/yr' : '/mo'} instead of {list}</span></span>
-        <span className="hidden md:inline text-white/50 mono text-xs uppercase tracking-wider">{c.endsLabel}</span>
-        <button onClick={claim} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white text-[#0B1E3F] text-xs font-semibold hover:bg-white/90 transition">
-          Claim {c.percentOff}% off <ArrowRight className="w-3.5 h-3.5" />
-        </button>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-center gap-x-4 gap-y-1.5 flex-wrap text-sm">
+        <span className="px-2 py-0.5 rounded-full bg-[#FF6B35] text-white text-[10px] mono uppercase tracking-wider font-bold">{sales[0].name}</span>
+        {sales.map((c, i) => {
+          const list = c.billing === 'annual' ? `${PLANS.carrier.priceAnnual}/yr` : `${PLANS.carrier.price}/mo`;
+          return (
+            <span key={c.id} className="inline-flex items-center gap-2 flex-wrap justify-center">
+              {i > 0 && <span className="text-white/40">or</span>}
+              <span><strong className="font-semibold">{c.headline}</strong><span className="hidden lg:inline text-white/70"> · Carrier {salePrice('carrier', c)}{c.billing === 'annual' ? '/yr' : '/mo'} instead of {list}</span></span>
+              <span className="hidden md:inline text-white/50 mono text-xs uppercase tracking-wider">{c.endsLabel}</span>
+              <button onClick={() => claim(c)} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white text-[#0B1E3F] text-xs font-semibold hover:bg-white/90 transition">
+                {sales.length > 1 ? `${c.billing === 'annual' ? 'Annual' : 'Monthly'} −${c.percentOff}%` : `Claim ${c.percentOff}% off`} <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          );
+        })}
       </div>
     </div>
   );
@@ -3592,7 +3599,9 @@ function GoogleIcon() {
 }
 
 function Pricing({ navigate, user }: any) {
-  const sale = activeCampaign();
+  const sales = liveCampaigns();
+  const monthlySale = campaignFor('monthly');
+  const annualSale = campaignFor('annual');
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
       <Nav navigate={navigate} user={user} />
@@ -3610,12 +3619,12 @@ function Pricing({ navigate, user }: any) {
                 {p.popular && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[#FF6B35] text-white text-xs mono uppercase tracking-wider rounded-full">Most popular</div>}
                 <div className="text-sm uppercase tracking-wider mb-2 text-[#0B1E3F]/60">{p.label}</div>
                 <div className="flex items-baseline gap-1">
-                  <div className="text-5xl serif italic text-[#0B1E3F]">{(sale?.billing === 'monthly' && salePrice(p.id, sale)) || p.price}</div>
-                  {sale?.billing === 'monthly' && salePrice(p.id, sale) && <div className="text-lg text-[#0B1E3F]/40 line-through">{p.price}</div>}
+                  <div className="text-5xl serif italic text-[#0B1E3F]">{(monthlySale && salePrice(p.id, monthlySale)) || p.price}</div>
+                  {monthlySale && salePrice(p.id, monthlySale) && <div className="text-lg text-[#0B1E3F]/40 line-through">{p.price}</div>}
                   <div className="text-[#0B1E3F]/60">/mo</div>
                 </div>
-                {sale && <SalePriceTag planId={p.id} c={sale} />}
-                {p.priceAnnualNum > 0 && sale?.billing !== 'annual'
+                {sales.map((c) => <SalePriceTag key={c.id} planId={p.id} c={c} />)}
+                {p.priceAnnualNum > 0 && !annualSale
                   ? <div className="text-xs mono text-[#16A34A] mb-2">or {p.priceAnnual}/yr (save 2 months)</div>
                   : <div className="mb-2" />}
                 <div className="text-sm mb-6 text-[#0B1E3F]/70">{p.desc}</div>

@@ -9,7 +9,7 @@
 // checkout falls back to full price, so nothing breaks if the site goes live
 // first.
 //
-// NEXT_PUBLIC_PROMO_PREVIEW=<campaign id> shows a campaign outside its dates
+// NEXT_PUBLIC_PROMO_PREVIEW=<campaign id>[,<id>] shows campaigns outside their dates
 // (for checking a preview deploy). Never set it in production.
 
 import { PLANS, type PlanId } from './plans';
@@ -34,7 +34,7 @@ export const CAMPAIGNS: Campaign[] = [
     billing: 'monthly',
     percentOff: 40,
     months: 3,
-    start: '2026-11-27T05:00:00Z', // Fri Nov 27, 00:00 ET
+    start: '2026-11-23T05:00:00Z', // Mon Nov 23, 00:00 ET (early start)
     end: '2026-11-30T05:00:00Z',   // Mon Nov 30, 00:00 ET (through Sunday)
     name: 'Black Friday',
     headline: '40% off your first 3 months',
@@ -45,11 +45,11 @@ export const CAMPAIGNS: Campaign[] = [
     code: 'CYBER50',
     billing: 'annual',
     percentOff: 50,
-    start: '2026-11-30T05:00:00Z', // Mon Nov 30, 00:00 ET
-    end: '2026-12-01T05:00:00Z',   // Tue Dec 1, 00:00 ET (Monday only)
+    start: '2026-11-23T05:00:00Z', // Mon Nov 23, 00:00 ET (alongside Black Friday)
+    end: '2026-12-01T05:00:00Z',   // Tue Dec 1, 00:00 ET (through Cyber Monday)
     name: 'Cyber Monday',
     headline: 'A full year for the price of 6 months',
-    endsLabel: 'today only',
+    endsLabel: 'ends Monday',
   },
 ];
 
@@ -58,13 +58,21 @@ export const CAMPAIGNS: Campaign[] = [
 // 50% annual coupon on a monthly plan would be one cheap month.
 export const CODE_BILLING = new Map(CAMPAIGNS.map((c) => [c.code.toUpperCase(), c.billing] as const));
 
-export function activeCampaign(now: number = Date.now()): Campaign | null {
+// Every sale live now (they can overlap: a monthly one and an annual one),
+// in CAMPAIGNS order.
+export function liveCampaigns(now: number = Date.now()): Campaign[] {
   const preview = process.env.NEXT_PUBLIC_PROMO_PREVIEW;
   if (preview) {
-    const c = CAMPAIGNS.find((x) => x.id === preview);
-    if (c) return c;
+    const ids = preview.split(',').map((s) => s.trim());
+    const list = CAMPAIGNS.filter((x) => ids.includes(x.id));
+    if (list.length) return list;
   }
-  return CAMPAIGNS.find((c) => now >= Date.parse(c.start) && now < Date.parse(c.end)) || null;
+  return CAMPAIGNS.filter((c) => now >= Date.parse(c.start) && now < Date.parse(c.end));
+}
+
+// The live sale for one billing period, if any.
+export function campaignFor(billing: 'monthly' | 'annual', now: number = Date.now()): Campaign | null {
+  return liveCampaigns(now).find((c) => c.billing === billing) || null;
 }
 
 const money = (v: number) => {

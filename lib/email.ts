@@ -1153,10 +1153,10 @@ ${button(`${site}/checkout/carrier`, 'Claim 40% off →')}`,
     },
     'cm-launch': {
       subject: 'Cyber Monday: a year of Haulock for the price of 6 months',
-      preview: 'Carrier annual is $245 instead of $490. Today only.',
+      preview: 'Carrier annual is $245 instead of $490. Ends tonight.',
       body: `${pill('Cyber Monday')}
 ${h1(`${hi}a full year for ${italicAccent('half price')}.`)}
-${p('Today only: <strong>50% off any annual plan.</strong> That&rsquo;s twelve months of unlimited broker and carrier checks for the price of six.')}
+${p('Last day: <strong>50% off any annual plan.</strong> That&rsquo;s twelve months of unlimited broker and carrier checks for the price of six.')}
 ${p('A single unpaid load is $1,500 or more. A year of Haulock Carrier is now $245.')}
 ${offer('$245/yr <span style="font-size:16px;font-weight:400;color:rgba(255,255,255,0.55);text-decoration:line-through;">$490</span>', 'your first year &middot; no code needed &middot; ends tonight at midnight ET')}
 ${button(`${site}/checkout/carrier?billing=annual`, 'Get the year for $245 →')}`,

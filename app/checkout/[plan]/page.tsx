@@ -6,7 +6,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { PLANS, type PlanId } from '@/lib/plans';
-import { activeCampaign } from '@/lib/promo';
+import { campaignFor } from '@/lib/promo';
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 let stripePromise: Promise<Stripe | null> | null = null;
@@ -82,8 +82,8 @@ export default function CheckoutPage() {
     // emails), else the live sale's code when the billing period matches it
     // (lib/promo.ts).
     const fromLink = (search.get('promoCode') || '').trim();
-    const sale = activeCampaign();
-    const auto = fromLink || (sale && billing === sale.billing ? sale.code : '');
+    const sale = campaignFor(billing);
+    const auto = fromLink || sale?.code || '';
     createSubscription(auto || null, Boolean(auto));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, billing]);
