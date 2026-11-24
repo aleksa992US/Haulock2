@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { saleIsLive } from '@/lib/promo';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe, planFromPriceId, type Billing, type PaidPlan } from '@/lib/stripe';
@@ -45,6 +46,8 @@ export async function POST(req: Request) { return run(req); }
 async function run(req: Request) {
   const denied = await authorizeCronOrAdmin(req);
   if (denied) return denied;
+  // These emails offer NEW20; paused while a sale is on (lib/promo.ts).
+  if (saleIsLive()) return NextResponse.json({ ok: true, skipped: 'paused during sale' });
 
   const stripe = getStripe();
   if (!stripe) return NextResponse.json({ error: 'Stripe not configured' }, { status: 500 });
