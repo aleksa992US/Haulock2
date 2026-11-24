@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
+import { saleIsLive } from '@/lib/promo';
 import { listContacts, isAudienceConfigured } from '@/lib/resend-audience';
 import { fraudTrendsTemplate, isResendConfigured, recentlySentTo, sendEmailBatch } from '@/lib/email';
 import { getServiceSupabase } from '@/lib/supabase/service';
@@ -27,6 +28,9 @@ export async function POST(req: Request) {
 async function run(req: Request) {
   const denied = await authorizeCronOrAdmin(req);
   if (denied) return denied;
+  // The weekly briefing is paused during a sale week (lib/promo.ts), so
+  // subscribers get the sale emails instead of both.
+  if (saleIsLive()) return NextResponse.json({ ok: true, skipped: 'paused during sale' });
 
   if (!isResendConfigured() || !isAudienceConfigured()) {
     return NextResponse.json({ error: 'Resend not configured' }, { status: 503 });

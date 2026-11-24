@@ -99,7 +99,7 @@ export type SendArgs = {
 
 // weekly_digest / fraud_trends let those jobs skip people who already got
 // this week's issue (a re-run or retry used to send it again).
-export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'sale_bf' | 'sale_cm' | 'sale_cm_last' | 'sale_early' | 'other';
+export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'sale_bf' | 'sale_cm' | 'sale_cm_last' | 'sale_early' | 'watchlist_update' | 'safety_alert' | 'other';
 
 export type BatchEmail = { to: string; subject: string; html: string; kind?: EmailKind };
 
