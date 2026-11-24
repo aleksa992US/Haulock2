@@ -310,7 +310,7 @@ async function run(req: Request) {
                   recipientEmail: toAddress,
                   siteUrl,
                 });
-                await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
+                await sendEmail({ to: toAddress, subject, html, kind: 'safety_alert' });
                 sent += 1;
               } catch (err: any) {
                 sendFailed = true;
@@ -415,7 +415,7 @@ async function run(req: Request) {
           siteUrl,
           own: saved.own === true,
         });
-        await sendEmail({ to: toAddress, subject, html, kind: 'newsletter' });
+        await sendEmail({ to: toAddress, subject, html, kind: 'watchlist_update' });
         sent += 1;
       } catch (err: any) {
         // Keep the old baseline so the change is emailed on tomorrow's run.

@@ -7053,8 +7053,9 @@ function SupabaseStorageCard() {
 
 // ---------- Admin: Email stats (/api/admin/email-stats) ----------
 const EMAIL_KIND_LABELS: Record<string, string> = {
-  welcome: 'Welcome', high_risk_alert: 'High-risk alert', report_share: 'Shared report', newsletter: 'Newsletter',
-  weekly_digest: 'Weekly digest', fraud_trends: 'Fraud trends', team_invite: 'Team invite',
+  welcome: 'Welcome', high_risk_alert: 'High-risk alert', report_share: 'Shared report', newsletter: 'Briefing welcome + older watchlist alerts',
+  watchlist_update: 'Watchlist: carrier changed', safety_alert: 'Watchlist: new inspection/crash',
+  weekly_digest: 'Weekly digest', fraud_trends: 'Fraud trends (weekly briefing)', team_invite: 'Team invite',
   support_received: 'Support: received', support_reply: 'Support: reply', support_working: 'Support: working', support_solved: 'Support: solved',
   abandoned_1h: 'Cart reminder (1h)', abandoned_7d: 'Cart reminder (7d)', nurture: 'Free-user nudge', inbound_scan: 'Emailed rate con scan',
   sale_early: 'Sale: both deals (early)', sale_bf: 'Sale: Black Friday', sale_cm: 'Sale: Cyber Monday', sale_cm_last: 'Sale: last hours',
