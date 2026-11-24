@@ -24,7 +24,7 @@ if (!env.STRIPE_SECRET_KEY) {
 }
 const dry = process.argv.includes('--dry-run');
 const stripe = new Stripe(env.STRIPE_SECRET_KEY);
-const live = env.STRIPE_SECRET_KEY.startsWith('sk_live');
+const live = /^(sk|rk)_live_/.test(env.STRIPE_SECRET_KEY);
 
 const SALES = [
   { code: 'BLACKFRIDAY40', name: 'Black Friday: 40% off 3 months', percent_off: 40, duration: 'repeating', duration_in_months: 3, billing: 'MONTHLY', redeemBy: '2026-11-30T05:00:00Z' },

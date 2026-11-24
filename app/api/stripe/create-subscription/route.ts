@@ -3,7 +3,7 @@ import { isLiveSubscription, ownedCustomerId } from '@/lib/billing';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { getServiceSupabase } from '@/lib/supabase/service';
 import { getStripe, priceIdFor, HAULOCK_TAG, type Billing, type PaidPlan } from '@/lib/stripe';
-import { CODE_BILLING } from '@/lib/promo';
+import { activeCampaign, CAMPAIGNS, CODE_BILLING } from '@/lib/promo';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +37,12 @@ export async function POST(req: Request) {
   const codeBilling = promoCodeRaw ? CODE_BILLING.get(promoCodeRaw.toUpperCase()) : undefined;
   if (codeBilling && body.billing !== codeBilling) {
     return NextResponse.json({ error: `Promo code "${promoCodeRaw}" applies to ${codeBilling} billing only.`, code: `${codeBilling}_only` }, { status: 400 });
+  }
+  // Stripe promotion codes have an end date but no start date, so a sale code
+  // created ahead of time would work early; it only counts while its sale is on.
+  const saleCampaign = promoCodeRaw ? CAMPAIGNS.find((c) => c.code.toUpperCase() === promoCodeRaw.toUpperCase()) : undefined;
+  if (saleCampaign && activeCampaign()?.id !== saleCampaign.id) {
+    return NextResponse.json({ error: `Promo code "${promoCodeRaw}" is only valid during the ${saleCampaign.name} sale.`, code: 'sale_not_live' }, { status: 400 });
   }
 
   // Resolve the promo code → both the promotion_code id and its coupon id.
