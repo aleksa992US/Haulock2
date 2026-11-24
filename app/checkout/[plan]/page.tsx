@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { PLANS, type PlanId } from '@/lib/plans';
+import { campaignFor } from '@/lib/promo';
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 let stripePromise: Promise<Stripe | null> | null = null;
@@ -43,7 +44,9 @@ export default function CheckoutPage() {
     total: number | null;
   } | null>(null);
 
-  const createSubscription = async (code: string | null) => {
+  // `fallback`: a code the page applied by itself (from the link, or the live
+  // sale). If Stripe rejects it, carry on at full price instead of an error.
+  const createSubscription = async (code: string | null, fallback = false) => {
     setLoading(true); setError(null); setClientSecret(null);
     try {
       const r = await fetch('/api/stripe/create-subscription', {
@@ -60,8 +63,9 @@ export default function CheckoutPage() {
         return;
       }
       setClientSecret(j.clientSecret);
-      if (code) setAppliedCode(code); else setAppliedCode(null);
+      if (code) { setAppliedCode(code); setPromoCode(code); } else setAppliedCode(null);
     } catch (err: any) {
+      if (fallback && code) { await createSubscription(null); return; }
       setError(err?.message || 'Checkout init failed');
     } finally {
       setLoading(false);
@@ -74,7 +78,13 @@ export default function CheckoutPage() {
       setLoading(false);
       return;
     }
-    createSubscription(null);
+    // A code in the link (?promoCode=, e.g. the NEW20 and cart-recovery
+    // emails), else the live sale's code when the billing period matches it
+    // (lib/promo.ts).
+    const fromLink = (search.get('promoCode') || '').trim();
+    const sale = campaignFor(billing);
+    const auto = fromLink || sale?.code || '';
+    createSubscription(auto || null, Boolean(auto));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, billing]);
 

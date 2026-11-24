@@ -1,4 +1,4 @@
-import { COI_CHECK_ON } from './features';
+import { COI_CHECK_ON, REPORTS_ON } from './features';
 
 export type PlanId = 'free' | 'carrier' | 'team' | 'fleet';
 
@@ -46,7 +46,7 @@ export const PLANS: Record<PlanId, Plan> = {
       '3 PDF tamper detections / month',
       '10 load plans / month (empty miles, fuel, profit)',
       '1 watchlist entry',
-      'File and read verified reports on brokers, carriers and shippers',
+      ...(REPORTS_ON ? ['File and read verified reports on brokers, carriers and shippers'] : []),
       'Basic risk score',
       'Web reputation scan across 50+ trusted sources',
       'No rate con scans (upgrade for AI extraction)',
@@ -72,7 +72,7 @@ export const PLANS: Record<PlanId, Plan> = {
       'Full risk reports',
       'Email & in-app alerts',
       'Daily monitoring of your own FMCSA record, inspections & crashes',
-      'Report alerts: an email when a report is filed about your company or one you watch',
+      ...(REPORTS_ON ? ['Report alerts: an email when a report is filed about your company or one you watch'] : []),
       'See how often your company is checked (counts, never who)',
       'API access',
       '1 user · 1 computer + 1 phone',
