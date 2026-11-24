@@ -99,7 +99,7 @@ export const checkoutPath = (planId: PlanId, c: Campaign) => `/checkout/${planId
 // (?stage=<stage>), once someone has signed off on it.
 export type SaleEmail = { stage: 'early-launch' | 'bf-launch' | 'cm-launch' | 'cm-last'; campaign: string; at?: string; kind: 'sale_early' | 'sale_bf' | 'sale_cm' | 'sale_cm_last' };
 export const SALE_EMAILS: SaleEmail[] = [
-  { stage: 'early-launch', campaign: 'blackfriday', kind: 'sale_early' },                         // both offers + new checks; manual
+  { stage: 'early-launch', campaign: 'blackfriday', at: '2026-11-24T14:00:00Z', kind: 'sale_early' }, // Tue 9am ET: both offers + new checks
   { stage: 'bf-launch', campaign: 'blackfriday', at: '2026-11-27T14:00:00Z', kind: 'sale_bf' },      // Fri 9am ET
   { stage: 'cm-launch', campaign: 'cybermonday', at: '2026-11-30T14:00:00Z', kind: 'sale_cm' },      // Mon 9am ET
   { stage: 'cm-last', campaign: 'cybermonday', at: '2026-11-30T23:00:00Z', kind: 'sale_cm_last' },   // Mon 6pm ET

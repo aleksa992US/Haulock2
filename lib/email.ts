@@ -1176,7 +1176,7 @@ ${button(`${site}/checkout/carrier?billing=annual`, 'Get the year for $245 →')
 
 // Early-start sale email: both offers (lib/promo.ts) plus the two newest
 // checks, with the What's New screenshots (public/email/whats-new/). Sent once,
-// by hand: /api/cron/sale-emails?stage=early-launch (kind 'sale_early').
+// by /api/cron/sale-emails on its schedule in lib/promo.ts (kind 'sale_early').
 export function saleEarlyEmailTemplate(args: {
   firstName?: string;
   recipientEmail: string;
