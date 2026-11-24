@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { enforcedPlanId } from '@/lib/plans';
 import { authorizeCronOrAdmin } from '@/lib/cron-auth';
 import { getServiceSupabase } from '@/lib/supabase/service';
-import { getEmailSiteUrl, isResendConfigured, recentlySentTo, saleEmailTemplate, sendEmailBatch } from '@/lib/email';
+import { getEmailSiteUrl, isResendConfigured, recentlySentTo, saleEarlyEmailTemplate, saleEmailTemplate, sendEmailBatch } from '@/lib/email';
 import { dueSaleEmail, SALE_EMAILS } from '@/lib/promo';
 
 export const runtime = 'nodejs';
@@ -66,7 +66,9 @@ async function run(req: Request) {
     if (meta.notify_fraud_trends === false) { skip('opted-out'); continue; }
     if (already.has(email)) { skip('already-sent'); continue; }
     const firstName = String(meta.full_name || meta.name || '').trim().split(/\s+/)[0] || '';
-    const tpl = saleEmailTemplate({ stage: due.stage, firstName, recipientEmail: u.email, siteUrl });
+    const tpl = due.stage === 'early-launch'
+      ? saleEarlyEmailTemplate({ firstName, recipientEmail: u.email, siteUrl })
+      : saleEmailTemplate({ stage: due.stage, firstName, recipientEmail: u.email, siteUrl });
     items.push({ to: u.email, subject: tpl.subject, html: tpl.html, kind: due.kind });
   }
 

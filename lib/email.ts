@@ -99,7 +99,7 @@ export type SendArgs = {
 
 // weekly_digest / fraud_trends let those jobs skip people who already got
 // this week's issue (a re-run or retry used to send it again).
-export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'sale_bf' | 'sale_cm' | 'sale_cm_last' | 'other';
+export type EmailKind = 'welcome' | 'high_risk_alert' | 'report_share' | 'newsletter' | 'weekly_digest' | 'fraud_trends' | 'team_invite' | 'support_received' | 'support_reply' | 'support_working' | 'support_solved' | 'abandoned_1h' | 'abandoned_7d' | 'nurture' | 'inbound_scan' | 'sale_bf' | 'sale_cm' | 'sale_cm_last' | 'sale_early' | 'other';
 
 export type BatchEmail = { to: string; subject: string; html: string; kind?: EmailKind };
 
@@ -1172,6 +1172,80 @@ ${button(`${site}/checkout/carrier?billing=annual`, 'Get the year for $245 →')
     },
   }[args.stage];
   return { subject: s.subject, html: baseLayout({ preview: s.preview, body: s.body, unsubEmail: args.recipientEmail }) };
+}
+
+// Early-start sale email: both offers (lib/promo.ts) plus the two newest
+// checks, with the What's New screenshots (public/email/whats-new/). Sent once,
+// by hand: /api/cron/sale-emails?stage=early-launch (kind 'sale_early').
+export function saleEarlyEmailTemplate(args: {
+  firstName?: string;
+  recipientEmail: string;
+  siteUrl: string;
+}): { subject: string; html: string } {
+  const site = args.siteUrl.replace(/\/$/, '');
+  const mono = "font-family:'SF Mono',Menlo,Consolas,monospace;";
+  const hi = args.firstName ? `${escapeHtml(args.firstName)}, ` : '';
+  const strike = (t: string) => `<span style="font-size:16px;font-weight:400;color:rgba(255,255,255,0.55);text-decoration:line-through;">${t}</span>`;
+  const offer = (o: { label: string; big: string; deal: string; price: string; ends: string; href: string; cta: string }) => `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px 0;background:#0B1E3F;border-radius:14px;border-collapse:separate;">
+  <tr><td style="padding:22px 24px;color:#ffffff;">
+    <div style="font-size:11px;${mono}letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.6);">${o.label}</div>
+    <div style="margin-top:6px;font-size:32px;font-weight:700;line-height:1.1;color:#FF6B35;">${o.big}</div>
+    <div style="margin-top:4px;font-size:15px;color:rgba(255,255,255,0.85);">${o.deal}</div>
+    <div style="margin-top:12px;font-size:20px;font-weight:700;color:#ffffff;">${o.price}</div>
+    <div style="margin-top:4px;font-size:11px;${mono}letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.55);">${o.ends}</div>
+    <a href="${o.href}" style="display:inline-block;margin-top:16px;padding:11px 20px;background:#ffffff;color:#0B1E3F;border-radius:999px;font-size:14px;font-weight:600;text-decoration:none;">${o.cta}</a>
+  </td></tr>
+</table>`;
+  const feature = (f: { img: string; alt: string; kicker: string; title: string; text: string; href: string; cta: string }) => `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0;border:1px solid rgba(11,30,63,0.1);border-radius:14px;border-collapse:separate;overflow:hidden;">
+  <tr><td style="background:#F5F3EE;font-size:0;line-height:0;"><img src="${site}/email/whats-new/${f.img}.jpg" width="478" alt="${escapeHtml(f.alt)}" style="display:block;width:100%;max-width:478px;height:auto;border:0;"></td></tr>
+  <tr><td style="padding:18px 20px 20px;">
+    <div style="font-size:11px;${mono}letter-spacing:0.12em;text-transform:uppercase;color:#E8551F;">${f.kicker}</div>
+    <div style="margin:8px 0 6px 0;font-size:19px;line-height:1.3;font-weight:600;color:#0B1E3F;">${f.title}</div>
+    <div style="font-size:15px;line-height:1.6;color:rgba(11,30,63,0.75);">${f.text}</div>
+    <a href="${f.href}" style="display:inline-block;margin-top:12px;font-size:14px;font-weight:600;color:#0B1E3F;text-decoration:underline;">${f.cta} &rarr;</a>
+  </td></tr>
+</table>`;
+
+  const body = `
+<div style="display:inline-block;padding:4px 10px;background:#FF6B35;color:#ffffff;border-radius:999px;font-size:11px;${mono}letter-spacing:0.14em;text-transform:uppercase;margin-bottom:16px;">Black Friday + Cyber Monday &middot; early</div>
+${h1(`${hi}our sale ${italicAccent('starts today')}.`)}
+${p('Peak season is peak fraud. Double brokers, fake carriers and edited rate cons all pick up in the busiest freight weeks of the year, so we&rsquo;re not waiting for Friday. Pick the deal that fits you:')}
+${offer({ label: 'Monthly plans', big: '40% off', deal: 'your first 3 months', price: `Carrier $29.40/mo ${strike('$49')}`, ends: 'Ends Sunday, Nov 29 &middot; midnight ET', href: `${site}/checkout/carrier`, cta: 'Claim 40% off &rarr;' })}
+${offer({ label: 'Annual plans', big: '50% off', deal: 'a full year for the price of 6 months', price: `Carrier $245/yr ${strike('$490')}`, ends: 'Ends Monday, Nov 30 &middot; midnight ET', href: `${site}/checkout/carrier?billing=annual`, cta: 'Get the year for $245 &rarr;' })}
+<div style="margin:0 0 28px 0;font-size:13px;line-height:1.6;color:rgba(11,30,63,0.6);">No code needed: the discount is applied at checkout. Team and Fleet plans are included too.</div>
+<div style="margin:0 0 12px 0;font-size:11px;${mono}letter-spacing:0.12em;text-transform:uppercase;color:rgba(11,30,63,0.55);">New in Haulock</div>
+${feature({
+  img: 'pdf-edits',
+  alt: 'Haulock PDF check: the line haul changed from $1,400.00 to $1,100.00',
+  kicker: 'PDF forensics',
+  title: 'See exactly what was changed on your rate con',
+  text: 'Upload the rate con. Haulock reads every saved version of the PDF and shows each changed value, before and after (like a line haul edited from $1,400 to $1,100), plus white-out, hidden or moved text, removed pages and edits made after signing, boxed right on the page.',
+  href: `${site}/verify`,
+  cta: 'Check a rate con',
+})}
+${feature({
+  img: 'inspections',
+  alt: 'Inspections per month and the latest roadside inspections',
+  kicker: 'Inspections, crashes &amp; alerts',
+  title: 'Every roadside inspection. Every crash.',
+  text: 'Every carrier check now lists the last 24 months of roadside inspections and crashes: when, where, each violation, and whether a driver or truck was put out of service. On a paid plan, we email you as soon as FMCSA posts a new inspection or crash on your own DOT.',
+  href: `${site}/verify`,
+  cta: 'Look up a carrier',
+})}
+${button(`${site}/pricing`, 'See both deals &rarr;')}
+${divider()}
+<div style="font-size:13px;color:rgba(11,30,63,0.55);line-height:1.6;">For new subscribers. Monthly: 40% off the first 3 monthly payments, then the regular price. Annual: 50% off the first year, then the regular annual price. Cancel anytime.</div>`;
+
+  return {
+    subject: 'Our Black Friday sale starts today: 40% off, or 50% off a year',
+    html: baseLayout({
+      preview: 'Carrier $29.40/mo or $245 for the whole year. Plus: see exactly what was changed on a rate con.',
+      body,
+      unsubEmail: args.recipientEmail,
+    }),
+  };
 }
 
 // "What's new" product update: three features with a screenshot (public/email/

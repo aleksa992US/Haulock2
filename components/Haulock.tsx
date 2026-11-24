@@ -386,6 +386,7 @@ export default function Haulock() {
 
   return (
     <div className="min-h-screen bg-[#F5F3EE] text-[#0B1E3F]">
+      <SalePopup route={route} user={user} navigate={navigate} />
       {route === 'landing' && <Landing navigate={navigate} user={user} />}
       {route === 'login' && <Login navigate={navigate} loginAs={loginAs} />}
       {route === 'signup' && <Signup navigate={navigate} loginAs={loginAs} />}
@@ -2848,6 +2849,73 @@ function SaleBanner({ navigate, user }: { navigate: any; user?: any }) {
             </span>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// The live sales as a one-time popup, a few seconds into a visit. Not for
+// paying users, not on sign-in/sign-up/legal pages; once closed (or claimed) it
+// stays closed for that sale on this browser.
+const SALE_POPUP_HIDDEN_ON = ['login', 'signup', 'terms', 'privacy'];
+function SalePopup({ route, user, navigate }: { route: string; user: any; navigate: any }) {
+  const [open, setOpen] = useState(false);
+  const sales = liveCampaigns();
+  const key = `haulock:salePopup:${sales.map((c) => c.id).join('+')}`;
+  const paid = Boolean(user?.plan && user.plan !== 'free');
+  const blocked = !sales.length || paid || SALE_POPUP_HIDDEN_ON.includes(route);
+  useEffect(() => {
+    if (blocked) { setOpen(false); return; }
+    try { if (localStorage.getItem(key)) return; } catch { /* storage blocked: show once per load */ }
+    const t = setTimeout(() => setOpen(true), 6000);
+    return () => clearTimeout(t);
+  }, [blocked, key]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+  if (!open || blocked) return null;
+  function close() {
+    try { localStorage.setItem(key, '1'); } catch { /* ignore */ }
+    setOpen(false);
+  }
+  const claim = (c: Campaign) => {
+    close();
+    if (user) { window.location.href = checkoutPath('carrier', c); return; }
+    navigate('signup');
+  };
+  return (
+    <div className="fixed inset-0 z-[70] bg-[#040B1A]/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={close} role="dialog" aria-modal="true" aria-label="Haulock sale">
+      <div className="relative w-full max-w-lg rounded-3xl bg-[#0B1E3F] text-white overflow-hidden card-shadow-lg" style={{ animation: 'fadeIn 0.3s ease-out' }} onClick={(e) => e.stopPropagation()}>
+        <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(60% 45% at 50% 0%, rgba(255,107,53,0.35) 0%, rgba(11,30,63,0) 100%)' }} />
+        <button onClick={close} aria-label="Close" className="absolute z-10 top-4 right-4 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition">
+          <X className="w-4 h-4" />
+        </button>
+        <div className="relative px-6 sm:px-8 pt-8 pb-7 text-center">
+          <span className="inline-block px-3 py-1 rounded-full bg-[#FF6B35] text-white text-[11px] mono uppercase tracking-[0.18em] font-bold">{sales.map((c) => c.name).join(' + ')} · early</span>
+          <h2 className="mt-4 text-3xl sm:text-4xl serif italic leading-tight">Check every load for less.</h2>
+          <p className="mt-2 text-white/70 text-sm">Pick a deal. It&rsquo;s applied at checkout, no code needed.</p>
+          <div className={`mt-6 grid gap-3 ${sales.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+            {sales.map((c) => (
+              <div key={c.id} className="rounded-2xl bg-white/[0.06] border border-white/15 p-5 text-left flex flex-col">
+                <div className="text-[11px] mono uppercase tracking-wider text-white/50">{c.billing === 'annual' ? 'Annual plans' : 'Monthly plans'}</div>
+                <div className="mt-1 text-4xl font-bold tracking-tight text-[#FF6B35]">{c.percentOff}% off</div>
+                <div className="mt-1 text-sm text-white/85">{c.billing === 'annual' ? 'your first year' : `your first ${c.months} months`}</div>
+                <div className="mt-3 text-sm">
+                  Carrier <strong>{salePrice('carrier', c)}{c.billing === 'annual' ? '/yr' : '/mo'}</strong>{' '}
+                  <span className="text-white/45 line-through">{c.billing === 'annual' ? PLANS.carrier.priceAnnual : PLANS.carrier.price}</span>
+                </div>
+                <div className="mt-1 text-[11px] mono uppercase tracking-wider text-white/50">{c.endsLabel}</div>
+                <button onClick={() => claim(c)} className="mt-4 inline-flex items-center justify-center gap-1.5 w-full py-2.5 rounded-full bg-white text-[#0B1E3F] text-sm font-semibold hover:bg-white/90 transition">
+                  Claim {c.percentOff}% off <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button onClick={close} className="mt-5 text-xs text-white/50 hover:text-white/80 transition">No thanks</button>
+        </div>
       </div>
     </div>
   );
