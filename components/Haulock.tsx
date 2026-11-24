@@ -55,6 +55,12 @@ function peekPostLoginRedirect(): string | null {
   try { return sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY); } catch { return null; }
 }
 
+// A saved return path outside this single-page app (e.g. /checkout/carrier),
+// which needs a real page load rather than a route change.
+function leavesApp(path: string | null): boolean {
+  return Boolean(path && path.startsWith('/checkout/'));
+}
+
 function consumePostLoginRedirect(): string | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -259,6 +265,7 @@ export default function Haulock() {
         // If they were sent to /login from a gated page, honor that target
         // rather than the default dashboard landing.
         const redirect = consumePostLoginRedirect();
+        if (leavesApp(redirect)) { window.location.href = redirect!; return; }
         const target = redirect ? pathToRoute(redirect) : 'dashboard';
         if (typeof window !== 'undefined') window.history.replaceState({}, '', routeToPath(target));
         setRoute(target);
@@ -285,6 +292,7 @@ export default function Haulock() {
           const r = pathToRoute(window.location.pathname);
           if (r === 'landing' || r === 'login' || r === 'signup') {
             const redirect = consumePostLoginRedirect();
+            if (leavesApp(redirect)) { window.location.href = redirect!; return; }
             const target = redirect ? pathToRoute(redirect) : 'dashboard';
             window.history.replaceState({}, '', routeToPath(target));
             setRoute(target);

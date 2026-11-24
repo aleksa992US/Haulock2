@@ -16,7 +16,25 @@ function isBilling(x: any): x is Billing {
   return x === 'monthly' || x === 'annual';
 }
 
+// Any error Stripe throws below (a declined promo restriction, a bad price,
+// an outage) comes back as JSON the checkout page can show, not an empty 500.
 export async function POST(req: Request) {
+  try {
+    return await createSubscription(req);
+  } catch (err: any) {
+    const msg = String(err?.message || 'unknown error');
+    console.error('[create-subscription]', err?.code || '', msg);
+    if (/prior transactions|first[- ]time/i.test(msg)) {
+      return NextResponse.json({ error: 'That promo code is for first-time subscribers only, and this account has paid before.', code: 'promo_not_eligible' }, { status: 400 });
+    }
+    if (err?.type === 'StripeInvalidRequestError' && /promotion|coupon|discount/i.test(msg)) {
+      return NextResponse.json({ error: `That promo code can't be used here: ${msg}`, code: 'promo_rejected' }, { status: 400 });
+    }
+    return NextResponse.json({ error: `Checkout could not start: ${msg}` }, { status: 502 });
+  }
+}
+
+async function createSubscription(req: Request) {
   const stripe = getStripe();
   if (!stripe) return NextResponse.json({ error: 'Stripe is not configured on the server.' }, { status: 500 });
 

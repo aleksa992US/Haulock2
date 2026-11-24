@@ -2,7 +2,7 @@
 //   BLACKFRIDAY40  40% off, repeats for 3 monthly invoices, redeem by Nov 30 00:00 ET
 //   CYBER50        50% off once (the first annual invoice), redeem by Dec 1 00:00 ET
 // Both are limited to Haulock's own plan products (the account also bills
-// other products) and to first-time customers. Safe to run again: a code
+// other products). Checkout turns away anyone already paying. Safe to run again: a code
 // that already exists is left alone.
 //
 // Usage: node scripts/stripe-sale-codes.mjs [--dry-run]
@@ -68,7 +68,6 @@ for (const s of SALES) {
     coupon: coupon.id,
     code: s.code,
     expires_at: redeem_by,
-    restrictions: { first_time_transaction: true },
     metadata: { product: 'haulock', sale: s.code },
   });
   console.log(`  created coupon ${coupon.id}, promotion code ${promo.id}`);
