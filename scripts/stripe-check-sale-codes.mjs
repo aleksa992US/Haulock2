@@ -20,7 +20,7 @@ if (!env.STRIPE_SECRET_KEY) {
   console.error('STRIPE_SECRET_KEY is not set (environment or .env.local).');
   process.exit(1);
 }
-const stripe = new Stripe(env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(env.STRIPE_SECRET_KEY, { apiVersion: '2025-01-27.acacia' }); // same as lib/stripe.ts
 
 const EXPECT = [
   { code: 'BLACKFRIDAY40', percent_off: 40, duration: 'repeating', months: 3, billing: 'MONTHLY', notBefore: '2026-11-30T05:00:00Z', label: 'Black Friday' },

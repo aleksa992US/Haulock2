@@ -23,7 +23,7 @@ if (!env.STRIPE_SECRET_KEY) {
   process.exit(1);
 }
 const dry = process.argv.includes('--dry-run');
-const stripe = new Stripe(env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(env.STRIPE_SECRET_KEY, { apiVersion: '2025-01-27.acacia' }); // same as lib/stripe.ts
 const live = /^(sk|rk)_live_/.test(env.STRIPE_SECRET_KEY);
 
 const SALES = [
