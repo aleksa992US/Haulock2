@@ -53,7 +53,8 @@ for (const e of EXPECT) {
   ok(c.percent_off === e.percent_off, `${c.percent_off ?? `$${(c.amount_off || 0) / 100}`}% off (want ${e.percent_off}%)`);
   ok(c.duration === e.duration && (e.months ? c.duration_in_months === e.months : true),
     `duration ${c.duration}${c.duration_in_months ? ` × ${c.duration_in_months} months` : ''} (want ${e.duration}${e.months ? ` × ${e.months} months` : ''})`);
-  ok(Boolean(pc.restrictions?.first_time_transaction), 'first-time customers only');
+  // Anyone not paying now gets the sale (checkout already turns away active subscribers).
+  ok(!pc.restrictions?.first_time_transaction, pc.restrictions?.first_time_transaction ? 'limited to first-time customers (should be off: free users who paid before are blocked)' : 'open to past customers too');
   const want = Date.parse(e.notBefore) / 1000;
   const ends = [pc.expires_at, c.redeem_by].filter(Boolean);
   ok(ends.every((t) => t >= want), `code expires ${fmt(pc.expires_at)}, coupon redeem by ${fmt(c.redeem_by)} (must not be before ${fmt(want)})`);
