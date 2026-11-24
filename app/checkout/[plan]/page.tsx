@@ -32,6 +32,7 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [promoCode, setPromoCode] = useState('');
+  const [promoNote, setPromoNote] = useState<string | null>(null);
   const [appliedCode, setAppliedCode] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [showExitOffer, setShowExitOffer] = useState(false);
@@ -54,8 +55,9 @@ export default function CheckoutPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: plan!.id, billing, ...(code ? { promoCode: code } : {}) }),
       });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(j?.error || `Checkout init failed (${r.status})`);
+      setPromoNote(null);
       if (j.totals) setTotals(j.totals);
       // 100%-off coupon — subscription already active, no card needed.
       if (j.noPaymentNeeded) {
@@ -65,7 +67,11 @@ export default function CheckoutPage() {
       setClientSecret(j.clientSecret);
       if (code) { setAppliedCode(code); setPromoCode(code); } else setAppliedCode(null);
     } catch (err: any) {
-      if (fallback && code) { await createSubscription(null); return; }
+      if (fallback && code) {
+        await createSubscription(null);
+        setPromoNote(`${code} couldn't be applied: ${err?.message || 'not valid for this account'}`);
+        return;
+      }
       setError(err?.message || 'Checkout init failed');
     } finally {
       setLoading(false);
@@ -317,6 +323,7 @@ export default function CheckoutPage() {
                       {applying ? '…' : 'Apply'}
                     </button>
                   </div>
+                  {promoNote && <div className="mt-2 text-xs text-[#0B1E3F]/60">{promoNote}</div>}
                 </form>
               )}
             </div>
